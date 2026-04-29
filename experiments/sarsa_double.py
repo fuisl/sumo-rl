@@ -17,7 +17,7 @@ from linear_rl.true_online_sarsa import TrueOnlineSarsaLambda
 from sumo_rl import SumoEnvironment
 
 
-def run(use_gui=True, runs=1):
+def run(use_gui=False, runs=1):
     out_csv = "outputs/double/sarsa-double"
 
     env = SumoEnvironment(
