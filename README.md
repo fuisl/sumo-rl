@@ -184,6 +184,12 @@ In the folder [nets/RESCO](https://github.com/LucasAlegre/sumo-rl/tree/main/sumo
 
 Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent.
 
+Graph-based discrete SAC baseline for RESCO scenarios:
+
+```bash
+python experiments/local_neighbor_gat_discrete_sac_resco.py --scenario grid4x4 --episodes 10
+```
+
 ### [Q-learning](https://github.com/LucasAlegre/sumo-rl/blob/main/agents/ql_agent.py) in a one-way single intersection:
 ```bash
 python experiments/ql_single-intersection.py
