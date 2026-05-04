@@ -137,11 +137,11 @@ def _maybe_init_wandb(args: argparse.Namespace, out_dir: Path) -> Any | None:
     if wandb_api_key:
         wandb.login(key=wandb_api_key, relogin=True)
 
-    # Auto-generate a default run name if none supplied.
+    # Auto-generate a default run name if none supplied: algorithm-scenario
     if not wandb_name:
-        # include scenario and timestamp for traceability
         scen = getattr(args, "scenario", "run") if hasattr(args, "scenario") else "run"
-        wandb_name = f"{scen}-{int(time.time())}-{os.getpid()}"
+        algo = getattr(args, "algo_name", "baselinev1")
+        wandb_name = f"{algo}-{scen}"
 
     config = {k: v for k, v in vars(args).items() if k != "wandb_api_key"}
     config["wandb_env_file"] = str(env_path) if env_path is not None else None
@@ -493,6 +493,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-project", default="")
     parser.add_argument("--wandb-entity", default="")
     parser.add_argument("--wandb-name", default="")
+    parser.add_argument("--algo-name", default="local_neighbor_gat_discrete_sac")
     parser.add_argument("--wandb-api-key", default="")
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--fixed-ts", action="store_true")
