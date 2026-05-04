@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
+import time
 import random
 from collections import deque
 from dataclasses import dataclass
@@ -68,6 +70,92 @@ def _resolve_base_env(env: Any) -> Any:
         else:
             break
     raise RuntimeError("Unable to resolve the underlying SUMO environment.")
+
+
+def _resolve_env_file(explicit_path: str | None) -> Path | None:
+    candidates: list[Path] = []
+    if explicit_path:
+        path = Path(explicit_path).expanduser()
+        candidates.append(path if path.is_absolute() else Path.cwd() / path)
+        candidates.append(Path(__file__).resolve().parents[1] / path.name)
+    candidates.append(Path.cwd() / ".env")
+    candidates.append(Path(__file__).resolve().parents[1] / ".env")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_env_file(env_path: Path | None) -> None:
+    if env_path is None:
+        return
+
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        for raw_line in env_path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if value and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+        return
+
+    load_dotenv(env_path, override=False)
+
+
+def _maybe_init_wandb(args: argparse.Namespace, out_dir: Path) -> Any | None:
+    """Initialize wandb with a minimal required config.
+
+    Only `project`, `entity`, `name`, and `api_key` are required; other run metadata
+    (run id, timestamps, groups, tags) are left to wandb to generate.
+    """
+    env_path = _resolve_env_file(args.wandb_env_file)
+    _load_env_file(env_path)
+
+    wandb_project = args.wandb_project or os.getenv("WANDB_PROJECT")
+    wandb_entity = args.wandb_entity or os.getenv("WANDB_ENTITY")
+    wandb_name = args.wandb_name or os.getenv("WANDB_NAME")
+    wandb_api_key = args.wandb_api_key or os.getenv("WANDB_API_KEY")
+
+    should_enable = args.wandb == "on" or (args.wandb == "auto" and (wandb_project or wandb_api_key))
+    if not should_enable:
+        return None
+
+    try:
+        import wandb
+    except ImportError as exc:
+        raise RuntimeError("WandB logging was requested, but the 'wandb' package is not installed.") from exc
+
+    if wandb_api_key:
+        wandb.login(key=wandb_api_key, relogin=True)
+
+    # Auto-generate a default run name if none supplied.
+    if not wandb_name:
+        # include scenario and timestamp for traceability
+        scen = getattr(args, "scenario", "run") if hasattr(args, "scenario") else "run"
+        wandb_name = f"{scen}-{int(time.time())}-{os.getpid()}"
+
+    config = {k: v for k, v in vars(args).items() if k != "wandb_api_key"}
+    config["wandb_env_file"] = str(env_path) if env_path is not None else None
+
+    init_kwargs: dict[str, Any] = {
+        "project": wandb_project or "sumo-rl",
+        "entity": wandb_entity,
+        "name": wandb_name,
+        "dir": str(out_dir / "wandb"),
+        "config": config,
+        "reinit": True,
+    }
+
+    return wandb.init(**init_kwargs)
 
 
 def _make_env(name: str, *, use_gui: bool, out_csv_name: str, fixed_ts: bool = False):
@@ -234,6 +322,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "train_log.csv"
+    wandb_run = _maybe_init_wandb(args, out_dir)
 
     env = _make_env(args.scenario, use_gui=args.gui, out_csv_name=str(out_dir / "resco"), fixed_ts=args.fixed_ts)
     observations, _ = env.reset(seed=args.seed)
@@ -353,7 +442,28 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     f"alpha={last_metrics['alpha']:.4f} entropy={last_metrics['entropy']:.4f}"
                 )
 
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        "episode": episode,
+                        "episode_reward": float(episode_reward),
+                        "episode_steps": episode_steps,
+                        "critic_loss": float(last_metrics["critic_loss"]),
+                        "actor_loss": float(last_metrics["actor_loss"]),
+                        "alpha_loss": float(last_metrics["alpha_loss"]),
+                        "entropy": float(last_metrics["entropy"]),
+                        "alpha": float(last_metrics["alpha"]),
+                        "best_reward": float(best_reward),
+                    },
+                    step=episode,
+                )
+
     env.close()
+    if wandb_run is not None:
+        wandb_run.summary["best_reward"] = float(best_reward)
+        wandb_run.summary["best_checkpoint"] = str(best_path)
+        wandb_run.summary["log_path"] = str(log_path)
+        wandb_run.finish()
     return {"best_checkpoint": str(best_path), "log_path": str(log_path), "best_reward": float(best_reward)}
 
 
@@ -378,6 +488,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--device", default="")
     parser.add_argument("--out-dir", default="outputs/local_neighbor_gat_discrete_sac/grid4x4")
+    parser.add_argument("--wandb", choices=["auto", "on", "off"], default="auto")
+    parser.add_argument("--wandb-env-file", default=".env")
+    parser.add_argument("--wandb-project", default="")
+    parser.add_argument("--wandb-entity", default="")
+    parser.add_argument("--wandb-name", default="")
+    parser.add_argument("--wandb-api-key", default="")
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--fixed-ts", action="store_true")
     return parser.parse_args()

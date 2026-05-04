@@ -190,6 +190,14 @@ Graph-based discrete SAC baseline for RESCO scenarios:
 python experiments/local_neighbor_gat_discrete_sac_resco.py --scenario grid4x4 --episodes 10
 ```
 
+If you want to push runs to Weights & Biases, put the credentials/config in a local `.env` at the repo root, for example:
+
+```bash
+WANDB_API_KEY=...
+WANDB_PROJECT=sumo-rl
+WANDB_ENTITY=your-entity
+```
+
 ### [Q-learning](https://github.com/LucasAlegre/sumo-rl/blob/main/agents/ql_agent.py) in a one-way single intersection:
 ```bash
 python experiments/ql_single-intersection.py
