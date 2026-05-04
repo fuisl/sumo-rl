@@ -1,0 +1,30 @@
+defaults:
+  - logging: wandb
+  - _self_
+
+experiment:
+  name: base
+  project: marl-traffic-gat
+  group: null
+  tags: []
+  seed: 42
+  runs: 1
+  episodes: 1
+  total_timesteps: 1000
+  eval_episodes: 1
+  fixed_ts: false
+
+env:
+  factory: sumo_env
+  kwargs: {}
+
+algorithm:
+  kind: q_learning
+  params: {}
+
+hydra:
+  run:
+    dir: outputs/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: false
+

@@ -61,5 +61,8 @@ examples/publications
 :hidden:
 :caption: Development
 
+thesis/experiments
+thesis/manual_control
+thesis/third_party_sb3
 Github <https://github.com/LucasAlegre/sumo-rl>
 ```

@@ -16,7 +16,7 @@ SUMO-RL provides a simple interface to instantiate Reinforcement Learning (RL) e
 Goals of this repository:
 - Provide a simple interface to work with Reinforcement Learning for Traffic Signal Control using SUMO
 - Support Multiagent RL
-- Compatibility with gymnasium.Env and popular RL libraries such as [stable-baselines3](https://github.com/DLR-RM/stable-baselines3) and [RLlib](https://docs.ray.io/en/main/rllib.html)
+- Compatibility with gymnasium.Env and popular RL libraries such as [stable-baselines3](https://github.com/DLR-RM/stable-baselines3)
 - Easy customisation: state and reward definitions are easily modifiable
 
 The main class is [SumoEnvironment](https://github.com/LucasAlegre/sumo-rl/blob/main/sumo_rl/environment/env.py).
@@ -182,17 +182,18 @@ In the folder [nets/RESCO](https://github.com/LucasAlegre/sumo-rl/tree/main/sumo
 
 ### Experiments
 
-Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent.
+Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent. In the thesis configs, the 4x4 grid presets use the RESCO `grid4x4` assets rather than the older Lucas `4x4-Lucas` network. Thesis-specific Hydra and W&B notes are documented separately in [docs/thesis/experiments.md](docs/thesis/experiments.md).
 
 ### [Q-learning](https://github.com/LucasAlegre/sumo-rl/blob/main/agents/ql_agent.py) in a one-way single intersection:
 ```bash
 python experiments/ql_single-intersection.py
 ```
 
-### [RLlib PPO](https://docs.ray.io/en/latest/_modules/ray/rllib/algorithms/ppo/ppo.html) multiagent in a 4x4 grid:
+### [stable-baselines3 PPO](https://github.com/DLR-RM/stable-baselines3) multiagent in the RESCO 4x4 grid:
 ```bash
 python experiments/ppo_4x4grid.py
 ```
+The alternate launcher `python experiments/sb3_grid4x4.py` runs the same SB3-based setup.
 
 ### [stable-baselines3 DQN](https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/dqn/dqn.py) in a 2-way single intersection:
 Obs: you need to install stable-baselines3 with ```pip install "stable_baselines3[extra]>=2.0.0a9"``` for [Gymnasium compatibility](https://stable-baselines3.readthedocs.io/en/master/guide/install.html).

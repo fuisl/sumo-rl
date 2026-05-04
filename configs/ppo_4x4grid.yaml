@@ -1,0 +1,6 @@
+defaults:
+  - sb3_grid4x4
+  - _self_
+
+experiment:
+  name: ppo_4x4grid

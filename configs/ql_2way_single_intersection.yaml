@@ -1,0 +1,32 @@
+defaults:
+  - base
+  - _self_
+
+experiment:
+  name: ql_2way_single_intersection
+  seed: 42
+  runs: 1
+  episodes: 1
+  fixed_ts: false
+
+env:
+  factory: sumo_env
+  kwargs:
+    net_file: sumo_rl/nets/2way-single-intersection/single-intersection.net.xml
+    route_file: sumo_rl/nets/2way-single-intersection/single-intersection-vhvh.rou.xml
+    single_agent: false
+    use_gui: false
+    num_seconds: 100000
+    min_green: 10
+    max_green: 30
+    sumo_warnings: false
+
+algorithm:
+  kind: q_learning
+  params:
+    alpha: 0.1
+    gamma: 0.99
+    epsilon: 0.05
+    min_epsilon: 0.005
+    decay: 1.0
+

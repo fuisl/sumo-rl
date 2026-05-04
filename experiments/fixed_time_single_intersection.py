@@ -1,5 +1,7 @@
 import os
 import sys
+
+
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")
     sys.path.append(tools)
@@ -12,7 +14,7 @@ from omegaconf import DictConfig
 from sumo_rl.experiments.runner import run
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="ql_single_intersection")
+@hydra.main(version_base=None, config_path="../configs", config_name="fixed_time_single_intersection")
 def main(cfg: DictConfig) -> None:
     run(cfg)
 

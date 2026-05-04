@@ -1,0 +1,29 @@
+defaults:
+  - base
+  - _self_
+
+experiment:
+  name: fixed_time_single_intersection
+  seed: 42
+  runs: 1
+  episodes: 5
+  fixed_ts: true
+  total_timesteps: 0
+  eval_episodes: 0
+
+env:
+  factory: sumo_env
+  kwargs:
+    net_file: sumo_rl/nets/single-intersection/single-intersection.net.xml
+    route_file: sumo_rl/nets/single-intersection/single-intersection.rou.xml
+    single_agent: true
+    use_gui: false
+    num_seconds: 3600
+    min_green: 10
+    max_green: 50
+    fixed_ts: true
+
+algorithm:
+  kind: fixed_time
+  params: {}
+
