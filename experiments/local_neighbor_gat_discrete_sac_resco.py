@@ -244,6 +244,10 @@ def sac_update(
     q1_values: list[float] = []
     q2_values: list[float] = []
     entropies: list[float] = []
+    
+    # Cache graph tensors (same for all transitions)
+    edge_index = batch[0].edge_index.to(device)
+    edge_attr = None if batch[0].edge_attr is None else batch[0].edge_attr.to(device)
 
     for transition in batch:
         obs = transition.obs.to(device)
@@ -253,8 +257,6 @@ def sac_update(
         action_mask = transition.action_mask.to(device)
         next_obs = transition.next_obs.to(device)
         next_action_mask = transition.next_action_mask.to(device)
-        edge_index = transition.edge_index.to(device)
-        edge_attr = None if transition.edge_attr is None else transition.edge_attr.to(device)
 
         q1_all, q2_all = agent.critic_values(obs, edge_index, edge_attr)
         q1 = q1_all.gather(-1, action.unsqueeze(-1))
@@ -319,10 +321,16 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    out_dir = Path(args.out_dir)
+    if args.out_dir:
+        out_dir = Path(args.out_dir.format(scenario=args.scenario, algo_name=args.algo_name))
+    else:
+        out_dir = Path("outputs") / args.algo_name / args.scenario
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "train_log.csv"
     wandb_run = _maybe_init_wandb(args, out_dir)
+    
+    # Timing instrumentation
+    timers = {"env_step": [], "policy": [], "update": [], "log": []}
 
     env = _make_env(args.scenario, use_gui=args.gui, out_csv_name=str(out_dir / "resco"), fixed_ts=args.fixed_ts)
     observations, _ = env.reset(seed=args.seed)
@@ -379,11 +387,17 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             last_metrics: dict[str, float] = {"critic_loss": 0.0, "actor_loss": 0.0, "alpha_loss": 0.0, "entropy": 0.0, "alpha": float(agent.alpha.item())}
 
             while env.agents:
+                # Policy forward pass
+                t_policy_start = time.perf_counter()
                 obs_tensor = obs_tensor.to(device)
                 actions, _ = agent.select_action(obs_tensor, topology.edge_index.to(device), None if topology.edge_attr is None else topology.edge_attr.to(device), action_mask.to(device), deterministic=False)
+                timers["policy"].append(time.perf_counter() - t_policy_start)
+                
+                # Environment step
+                t_env_start = time.perf_counter()
                 action_dict = {agent_id: int(actions[idx].item()) for idx, agent_id in enumerate(agent_ids)}
-
                 next_observations, rewards, terminated, truncated, infos = env.step(action_dict)
+                timers["env_step"].append(time.perf_counter() - t_env_start)
                 next_agent_ids = _ordered_agent_ids(env, next_observations) if next_observations else agent_ids
                 next_obs_tensor = _stack_obs(next_observations, next_agent_ids) if next_observations else obs_tensor.detach().cpu()
                 next_action_mask = _build_action_mask(env, next_agent_ids, agent.num_actions)
@@ -410,7 +424,9 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 agent_ids = next_agent_ids
 
                 if len(replay) >= int(args.warmup):
+                    t_update_start = time.perf_counter()
                     update_metrics = sac_update(agent, replay, int(args.batch_size), float(args.gamma), device, optimizers)
+                    timers["update"].append(time.perf_counter() - t_update_start)
                     if update_metrics is not None:
                         last_metrics = update_metrics
 
@@ -436,10 +452,15 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             file_handle.flush()
 
             if episode == 1 or episode % int(args.log_interval) == 0:
+                # Log timing stats
+                avg_env_step = np.mean(timers["env_step"][-episode_steps:]) * 1000 if timers["env_step"] else 0
+                avg_policy = np.mean(timers["policy"][-episode_steps:]) * 1000 if timers["policy"] else 0
+                avg_update = np.mean(timers["update"][-episode_steps:]) * 1000 if timers["update"] else 0
                 print(
                     f"ep={episode:04d} reward={episode_reward:.2f} steps={episode_steps:04d} "
                     f"critic={last_metrics['critic_loss']:.4f} actor={last_metrics['actor_loss']:.4f} "
-                    f"alpha={last_metrics['alpha']:.4f} entropy={last_metrics['entropy']:.4f}"
+                    f"alpha={last_metrics['alpha']:.4f} entropy={last_metrics['entropy']:.4f} "
+                    f"| env_step={avg_env_step:.2f}ms policy={avg_policy:.2f}ms update={avg_update:.2f}ms"
                 )
 
             if wandb_run is not None:
@@ -487,7 +508,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-interval", type=int, default=1)
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--device", default="")
-    parser.add_argument("--out-dir", default="outputs/local_neighbor_gat_discrete_sac/grid4x4")
+    parser.add_argument("--out-dir", default="")
     parser.add_argument("--wandb", choices=["auto", "on", "off"], default="auto")
     parser.add_argument("--wandb-env-file", default=".env")
     parser.add_argument("--wandb-project", default="")

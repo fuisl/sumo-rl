@@ -25,8 +25,16 @@ dynamic = ["version"]
 [project.optional-dependencies]
 # Update dependencies in `all` if any are added or removed
 rendering = ["pyvirtualdisplay"]
+rllib = [
+   "ray[rllib]>=2.7",
+   "torch>=2.0",
+   "torch-geometric>=2.5",
+]
 all = [
    "pyvirtualdisplay",
+   "ray[rllib]>=2.7",
+   "torch>=2.0",
+   "torch-geometric>=2.5",
 ]
 testing = ["pytest ==7.1.3"]
 
