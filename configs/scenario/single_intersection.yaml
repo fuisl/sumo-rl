@@ -1,0 +1,9 @@
+# @package _global_
+env:
+  kwargs:
+    net_file: sumo_rl/nets/single-intersection/single-intersection.net.xml
+    route_file: sumo_rl/nets/single-intersection/single-intersection.rou.xml
+    single_agent: true
+    use_gui: false
+    min_green: 10
+    max_green: 50

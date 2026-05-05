@@ -2,6 +2,7 @@
 
 import os
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
 
@@ -35,6 +36,10 @@ from .traffic_signal import TrafficSignal
 
 
 LIBSUMO = "LIBSUMO_AS_TRACI" in os.environ
+
+
+def _is_ghost_vehicle(vehicle_id: str) -> bool:
+    return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
 
 
 def env(**kwargs):
@@ -77,6 +82,7 @@ class SumoEnvironment(gym.Env):
         observation_class (ObservationFunction): Inherited class which has both the observation function and observation space.
         add_system_info (bool): If true, it computes system metrics (total queue, total waiting time, average speed) in the info dictionary.
         add_per_agent_info (bool): If true, it computes per-agent (per-traffic signal) metrics (average accumulated waiting time, average queue) in the info dictionary.
+        tripinfo_output_name (Optional[str]): Prefix used for per-episode tripinfo XML output files.
         sumo_seed (int/string): Random seed for sumo. If 'random' it uses a randomly chosen seed.
         ts_ids (Optional[List[str]]): List of traffic light IDs to be controlled by SUMO-RL. If None, all traffic lights in the simulation are controlled.
         fixed_ts (bool): If true, it will follow the phase configuration in the route_file and ignore the actions given in the :meth:`step` method.
@@ -113,7 +119,8 @@ class SumoEnvironment(gym.Env):
         reward_weights: Optional[List[float]] = None,
         observation_class: type[ObservationFunction] = DefaultObservationFunction,
         add_system_info: bool = True,
-        add_per_agent_info: bool = True,
+        add_per_agent_info: bool = False,
+        tripinfo_output_name: Optional[str] = None,
         sumo_seed: Union[str, int] = "random",
         ts_ids: Optional[List[str]] = None,
         fixed_ts: bool = False,
@@ -159,6 +166,8 @@ class SumoEnvironment(gym.Env):
         self.additional_sumo_cmd = additional_sumo_cmd
         self.add_system_info = add_system_info
         self.add_per_agent_info = add_per_agent_info
+        self.tripinfo_output_name = tripinfo_output_name
+        self.last_episode_summary = {}
         self.label = str(SumoEnvironment.CONNECTION_LABEL)
         SumoEnvironment.CONNECTION_LABEL += 1
         self.sumo = None
@@ -185,6 +194,7 @@ class SumoEnvironment(gym.Env):
         self.episode = 0
         self.metrics = []
         self.out_csv_name = out_csv_name
+        self.num_emergency_brakes = 0
         self.observations = {ts: None for ts in self.ts_ids}
         self.rewards = {ts: None for ts in self.ts_ids}
 
@@ -233,6 +243,10 @@ class SumoEnvironment(gym.Env):
             sumo_cmd.append("--no-warnings")
         if self.additional_sumo_cmd is not None:
             sumo_cmd.extend(self.additional_sumo_cmd.split())
+        tripinfo_output = self._build_tripinfo_output_path()
+        if tripinfo_output is not None and "--tripinfo-output" not in sumo_cmd:
+            tripinfo_output.parent.mkdir(parents=True, exist_ok=True)
+            sumo_cmd.extend(["--tripinfo-output", str(tripinfo_output)])
         if self.use_gui or self.render_mode is not None:
             sumo_cmd.extend(["--start", "--quit-on-end"])
             if self.render_mode == "rgb_array":
@@ -262,6 +276,7 @@ class SumoEnvironment(gym.Env):
 
         if self.episode != 0:
             self.close()
+            self.finalize_episode_summary()
             self.save_csv(self.out_csv_name, self.episode)
         self.episode += 1
         self.metrics = []
@@ -276,6 +291,7 @@ class SumoEnvironment(gym.Env):
         self.num_arrived_vehicles = 0
         self.num_departed_vehicles = 0
         self.num_teleported_vehicles = 0
+        self.num_emergency_brakes = 0
 
         if self.single_agent:
             return self._compute_observations()[self.ts_ids[0]], self._compute_info()
@@ -421,21 +437,35 @@ class SumoEnvironment(gym.Env):
         self.num_arrived_vehicles += self.sumo.simulation.getArrivedNumber()
         self.num_departed_vehicles += self.sumo.simulation.getDepartedNumber()
         self.num_teleported_vehicles += self.sumo.simulation.getEndingTeleportNumber()
+        self.num_emergency_brakes += self.sumo.simulation.getEmergencyStoppingVehiclesNumber()
 
     def _get_system_info(self):
-        vehicles = self.sumo.vehicle.getIDList()
+        vehicles = [vehicle for vehicle in self.sumo.vehicle.getIDList() if not _is_ghost_vehicle(vehicle)]
         speeds = [self.sumo.vehicle.getSpeed(vehicle) for vehicle in vehicles]
         waiting_times = [self.sumo.vehicle.getWaitingTime(vehicle) for vehicle in vehicles]
-        num_backlogged_vehicles = len(self.sumo.simulation.getPendingVehicles())
+        num_backlogged_vehicles = len(
+            [vehicle for vehicle in self.sumo.simulation.getPendingVehicles() if not _is_ghost_vehicle(vehicle)]
+        )
+        queued_per_signal = [self.traffic_signals[ts].get_total_queued() for ts in self.ts_ids]
+        pressure_per_signal = [self.traffic_signals[ts].get_pressure() for ts in self.ts_ids]
+        average_speed_per_signal = [self.traffic_signals[ts].get_average_speed() for ts in self.ts_ids]
         return {
             "system_total_running": len(vehicles),
             "system_total_backlogged": num_backlogged_vehicles,
             "system_total_stopped": sum(
                 int(speed < 0.1) for speed in speeds
             ),  # In SUMO, a vehicle is considered halting if its speed is below 0.1 m/s
+            "system_total_queued": sum(queued_per_signal),
+            "system_mean_queued": 0.0 if len(queued_per_signal) == 0 else float(np.mean(queued_per_signal)),
+            "system_mean_pressure": 0.0 if len(pressure_per_signal) == 0 else float(np.mean(pressure_per_signal)),
+            "system_mean_average_speed": 0.0
+            if len(average_speed_per_signal) == 0
+            else float(np.mean(average_speed_per_signal)),
+            "system_max_queue": 0 if len(queued_per_signal) == 0 else max(queued_per_signal),
             "system_total_arrived": self.num_arrived_vehicles,
             "system_total_departed": self.num_departed_vehicles,
             "system_total_teleported": self.num_teleported_vehicles,
+            "system_total_emergency_brake": self.num_emergency_brakes,
             "system_total_waiting_time": sum(waiting_times),
             "system_mean_waiting_time": 0.0 if len(vehicles) == 0 else np.mean(waiting_times),
             "system_mean_speed": 0.0 if len(vehicles) == 0 else np.mean(speeds),
@@ -458,7 +488,7 @@ class SumoEnvironment(gym.Env):
 
     def close(self):
         """Close the environment and stop the SUMO simulation."""
-        if self.sumo is None:
+        if getattr(self, "sumo", None) is None:
             return
 
         if not LIBSUMO:
@@ -470,6 +500,104 @@ class SumoEnvironment(gym.Env):
             self.disp = None
 
         self.sumo = None
+
+    def _build_tripinfo_output_path(self) -> Optional[Path]:
+        if not self.tripinfo_output_name:
+            return None
+        return Path(f"{self.tripinfo_output_name}_conn{self.label}_ep{self.episode}.xml")
+
+    def _parse_tripinfo_summary(self, tripinfo_path: Path) -> dict:
+        if not tripinfo_path.exists():
+            return {
+                "resco_avg_delay": 0.0,
+                "resco_trip_time": 0.0,
+                "resco_wait": 0.0,
+                "resco_tripinfo_count": 0.0,
+            }
+
+        try:
+            tree = ET.parse(tripinfo_path)
+        except (ET.ParseError, OSError):
+            return {
+                "resco_avg_delay": 0.0,
+                "resco_trip_time": 0.0,
+                "resco_wait": 0.0,
+                "resco_tripinfo_count": 0.0,
+            }
+        vehicles = tree.getroot().findall(".//tripinfo")
+        if not vehicles:
+            return {
+                "resco_avg_delay": 0.0,
+                "resco_trip_time": 0.0,
+                "resco_wait": 0.0,
+                "resco_tripinfo_count": 0.0,
+            }
+
+        delays = []
+        trip_times = []
+        waits = []
+        tripinfo_count = 0
+        for vehicle in vehicles:
+            vehicle_id = vehicle.attrib.get("id", "")
+            if _is_ghost_vehicle(vehicle_id):
+                continue
+            tripinfo_count += 1
+            time_loss = float(vehicle.attrib.get("timeLoss", 0.0))
+            depart_delay = float(vehicle.attrib.get("departDelay", 0.0))
+            delays.append(time_loss + depart_delay)
+            trip_times.append(float(vehicle.attrib.get("duration", 0.0)))
+            waits.append(float(vehicle.attrib.get("waitingTime", 0.0)))
+
+        return {
+            "resco_avg_delay": float(np.mean(delays)) if delays else 0.0,
+            "resco_trip_time": float(np.mean(trip_times)) if trip_times else 0.0,
+            "resco_wait": float(np.mean(waits)) if waits else 0.0,
+            "resco_tripinfo_count": float(tripinfo_count),
+        }
+
+    def _parse_queue_summary(self) -> dict:
+        if not self.metrics:
+            return {"resco_queue": 0.0, "resco_max_queue": 0.0}
+
+        queue_values = []
+        max_queue_values = []
+        num_signals = max(1, len(self.ts_ids))
+        for row in self.metrics:
+            if "system_mean_queued" in row:
+                queue_values.append(float(row["system_mean_queued"]))
+            elif "system_total_queued" in row:
+                queue_values.append(float(row["system_total_queued"]) / num_signals)
+            elif "system_total_stopped" in row:
+                queue_values.append(float(row["system_total_stopped"]) / num_signals)
+            if "system_max_queue" in row:
+                max_queue_values.append(float(row["system_max_queue"]))
+
+        return {
+            "resco_queue": float(np.mean(queue_values)) if queue_values else 0.0,
+            "resco_max_queue": float(np.max(max_queue_values)) if max_queue_values else 0.0,
+        }
+
+    def finalize_episode_summary(self):
+        """Build and cache the RESCO-style summary for the current episode."""
+        last_step = 0.0
+        if self.metrics:
+            last_step = float(self.metrics[-1].get("step", 0.0))
+        elif getattr(self, "sumo", None) is not None:
+            last_step = float(self.sim_step)
+
+        summary = {
+            "episode/index": float(self.episode),
+            "episode/steps": last_step,
+            "sim_step": last_step,
+        }
+        if self.metrics:
+            summary.update({key: value for key, value in self.metrics[-1].items() if key.startswith("system_")})
+        tripinfo_output = self._build_tripinfo_output_path()
+        if tripinfo_output is not None:
+            summary.update(self._parse_tripinfo_summary(tripinfo_output))
+        summary.update(self._parse_queue_summary())
+        self.last_episode_summary = summary
+        return summary
 
     def __del__(self):
         """Close the environment and stop the SUMO simulation."""

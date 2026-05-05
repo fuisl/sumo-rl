@@ -1,12 +1,14 @@
 defaults:
   - base
+  - scenario: resco_grid4x4
+  - algorithm: fixed_time
   - _self_
 
 experiment:
   name: fixed_time_4x4grid
-  seed: 42
-  runs: 1
-  episodes: 5
+  seeds: [1, 2, 3, 4, 5]
+  runs: 5
+  episodes: 1
   fixed_ts: true
   total_timesteps: 0
   eval_episodes: 0
@@ -14,14 +16,5 @@ experiment:
 env:
   factory: fixed_time_env
   kwargs:
-    net_file: sumo_rl/nets/RESCO/grid4x4/grid4x4.net.xml
-    route_file: sumo_rl/nets/RESCO/grid4x4/grid4x4_1.rou.xml
-    use_gui: false
     num_seconds: 3600
-    min_green: 5
-    delta_time: 5
     fixed_ts: true
-
-algorithm:
-  kind: fixed_time
-  params: {}

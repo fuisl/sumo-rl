@@ -1,0 +1,10 @@
+# @package _global_
+env:
+  kwargs:
+    net_file: sumo_rl/nets/big-intersection/big-intersection.net.xml
+    route_file: sumo_rl/nets/big-intersection/routes.rou.xml
+    single_agent: true
+    use_gui: true
+    yellow_time: 4
+    min_green: 5
+    max_green: 60

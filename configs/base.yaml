@@ -16,7 +16,10 @@ experiment:
 
 env:
   factory: sumo_env
-  kwargs: {}
+  kwargs:
+    add_system_info: true
+    add_per_agent_info: false
+    tripinfo_output_name: null
 
 algorithm:
   kind: q_learning
@@ -27,4 +30,3 @@ hydra:
     dir: outputs/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
   job:
     chdir: false
-

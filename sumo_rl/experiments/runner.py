@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import random
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -10,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 
 
 def _as_plain_dict(value: Any) -> Any:
-    if isinstance(value, DictConfig):
+    if OmegaConf.is_config(value):
         return OmegaConf.to_container(value, resolve=True)
     if isinstance(value, dict):
         return {key: _as_plain_dict(item) for key, item in value.items()}
@@ -41,11 +43,30 @@ def _prepare_env_kwargs(cfg: DictConfig, run_dir: Path) -> Dict[str, Any]:
 
     if not kwargs.get("out_csv_name"):
         kwargs["out_csv_name"] = str(run_dir / "csv" / cfg.experiment.name)
+    if not kwargs.get("tripinfo_output_name"):
+        kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / cfg.experiment.name)
 
     if "sumo_seed" not in kwargs and cfg.experiment.seed is not None:
         kwargs["sumo_seed"] = int(cfg.experiment.seed)
 
     return kwargs
+
+
+def _get_run_seeds(cfg: DictConfig) -> list[int]:
+    seeds = _as_plain_dict(getattr(cfg.experiment, "seeds", None))
+    if isinstance(seeds, list) and seeds:
+        return [int(seed) for seed in seeds]
+
+    total_runs = int(getattr(cfg.experiment, "runs", 1))
+    base_seed = int(cfg.experiment.seed) if cfg.experiment.seed is not None else 0
+    return [base_seed for _ in range(total_runs)]
+
+
+def _get_log_every_seconds(cfg: DictConfig) -> int:
+    logging_cfg = getattr(cfg, "logging", None)
+    if logging_cfg is None:
+        return 200
+    return max(1, int(getattr(logging_cfg, "log_every_seconds", 200)))
 
 
 def _get_run_dir() -> Path:
@@ -92,6 +113,40 @@ def _init_wandb(cfg: DictConfig, run_dir: Path):
     )
 
 
+class _LocalMetricsCsvLogger:
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._rows = []
+        self._fieldnames = ["timestamp", "step"]
+
+    def log(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
+        row = {
+            "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "step": step,
+        }
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, str, bool)) or value is None:
+                row[key] = value
+            elif isinstance(value, (np.integer, np.floating)):
+                row[key] = float(value)
+            else:
+                row[key] = str(value)
+
+        self._rows.append(row)
+        for key in row.keys():
+            if key not in self._fieldnames:
+                self._fieldnames.append(key)
+        self._flush()
+
+    def _flush(self) -> None:
+        with self.path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self._fieldnames)
+            writer.writeheader()
+            for row in self._rows:
+                writer.writerow({key: row.get(key, "") for key in self._fieldnames})
+
+
 def _numeric_metrics(data: Any, prefix: str = "") -> Dict[str, float]:
     metrics: Dict[str, float] = {}
     if isinstance(data, dict):
@@ -104,17 +159,58 @@ def _numeric_metrics(data: Any, prefix: str = "") -> Dict[str, float]:
     return metrics
 
 
-def _log_wandb(run, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
-    if run is None or not metrics:
+def _split_resco_metrics(info: Any, include_agent_metrics: bool = False) -> tuple[Dict[str, float], Dict[str, float]]:
+    flat_metrics = _numeric_metrics(info)
+    system_metrics: Dict[str, float] = {}
+    agent_metrics: Dict[str, float] = {}
+
+    for key, value in flat_metrics.items():
+        if key == "step":
+            continue
+        if key.startswith("system_"):
+            system_metrics[f"resco_{key}"] = value
+        elif include_agent_metrics:
+            agent_metrics[f"resco_{key}"] = value
+
+    return system_metrics, agent_metrics
+
+
+def _log_resco_metrics(
+    wandb_run,
+    csv_run,
+    shared_metrics: Dict[str, Any],
+    info: Any,
+    step: Optional[int] = None,
+    include_agent_metrics_local: bool = False,
+) -> None:
+    system_metrics, agent_metrics = _split_resco_metrics(info, include_agent_metrics_local)
+    wandb_metrics = dict(shared_metrics)
+    wandb_metrics.update(system_metrics)
+    csv_metrics = dict(wandb_metrics)
+    csv_metrics.update(agent_metrics)
+
+    if wandb_run is not None:
+        wandb_run.log(wandb_metrics, step=step)
+    if csv_run is not None:
+        csv_run.log(csv_metrics, step=step)
+
+
+def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
+    if (wandb_run is None and csv_run is None) or not metrics:
         return
-    run.log(metrics, step=step)
+    if wandb_run is not None:
+        wandb_run.log(metrics, step=step)
+    if csv_run is not None:
+        csv_run.log(metrics, step=step)
 
 
-def _build_env(cfg: DictConfig, run_dir: Path):
+def _build_env(cfg: DictConfig, run_dir: Path, seed: Optional[int] = None):
     import sumo_rl
     from sumo_rl import SumoEnvironment
 
     kwargs = _prepare_env_kwargs(cfg, run_dir)
+    if seed is not None:
+        kwargs["sumo_seed"] = int(seed)
     factory = cfg.env.factory
 
     if factory == "sumo_env":
@@ -152,6 +248,133 @@ def _get_final_info(env):
     if getattr(env, "metrics", None):
         return env.metrics[-1]
     return {}
+
+
+def _get_env_step(env) -> int:
+    if hasattr(env, "unwrapped") and hasattr(env.unwrapped, "env") and hasattr(env.unwrapped.env, "sim_step"):
+        return int(env.unwrapped.env.sim_step)
+    if hasattr(env, "sim_step"):
+        return int(env.sim_step)
+    return 0
+
+
+def _get_base_env(env):
+    current = env
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if hasattr(current, "finalize_episode_summary"):
+            return current
+        if hasattr(current, "unwrapped") and hasattr(current.unwrapped, "env"):
+            current = current.unwrapped.env
+            continue
+        if hasattr(current, "venv"):
+            current = current.venv
+            continue
+        if hasattr(current, "envs") and current.envs:
+            current = current.envs[0]
+            continue
+        if hasattr(current, "env"):
+            current = current.env
+            continue
+        break
+    return env
+
+
+def _get_episode_summary(env) -> Dict[str, Any]:
+    base_env = _get_base_env(env)
+    summary = dict(getattr(base_env, "last_episode_summary", {}) or {})
+    if not summary and hasattr(base_env, "finalize_episode_summary"):
+        summary = dict(base_env.finalize_episode_summary() or {})
+    return summary
+
+
+def _build_episode_summary_row(
+    env,
+    run_idx: int,
+    episode_idx: int,
+    run_seed: Optional[int] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    summary = _get_episode_summary(env)
+    row: Dict[str, Any] = {
+        "run/index": run_idx,
+        "episode/index": episode_idx,
+    }
+    if run_seed is not None:
+        row["run_seed"] = float(run_seed)
+    if extra:
+        row.update(extra)
+    row.update(summary)
+    return row
+
+
+def _build_resco_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    summary = _get_episode_summary(env)
+    allowed_keys = {
+        "sim_step",
+        "system_mean_pressure",
+        "system_mean_average_speed",
+        "system_mean_speed",
+        "system_total_stopped",
+        "system_total_departed",
+        "system_total_arrived",
+        "system_total_emergency_brake",
+        "system_total_queued",
+        "system_mean_queued",
+        "system_max_queue",
+    }
+    row = {
+        key: value
+        for key, value in summary.items()
+        if key.startswith("resco_") or key in allowed_keys
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+
+def _log_episode_summary(wandb_run, csv_run, row: Dict[str, Any], step: Optional[int] = None) -> None:
+    if wandb_run is not None:
+        wandb_run.log(row, step=step)
+    if csv_run is not None:
+        csv_run.log(row, step=step)
+
+
+def _aggregate_numeric_rows(
+    rows: list[Dict[str, Any]],
+    prefix: str = "summary",
+    include_agent_metrics: bool = False,
+) -> Dict[str, float]:
+    values = defaultdict(list)
+    for row in rows:
+        for key, value in row.items():
+            if key in {"run/index", "episode/index", "seed", "run_seed"}:
+                continue
+            if isinstance(value, (int, float, np.integer, np.floating)):
+                if not include_agent_metrics and key.startswith("resco_") and not key.startswith("resco_system_"):
+                    continue
+                if not include_agent_metrics and key not in {"episode/reward"} and not key.startswith("resco_system_"):
+                    continue
+                values[key].append(float(value))
+
+    summary = {f"{prefix}/run_count": float(len(rows))}
+    for key, series in values.items():
+        summary[f"{prefix}/{key}"] = float(np.mean(series))
+    return summary
+
+
+def _aggregate_numeric_row_values(rows: list[Dict[str, Any]], prefix: str = "summary") -> Dict[str, float]:
+    values = defaultdict(list)
+    for row in rows:
+        for key, value in row.items():
+            if isinstance(value, (int, float, np.integer, np.floating)):
+                values[key].append(float(value))
+
+    summary = {f"{prefix}/run_count": float(len(rows))}
+    for key, series in values.items():
+        summary[f"{prefix}/{key}"] = float(np.mean(series))
+    return summary
 
 
 def _build_ql_agents_direct(env, cfg: DictConfig, initial_states: Dict[str, Any]):
@@ -202,7 +425,7 @@ def _build_ql_agents_aec(env, cfg: DictConfig):
     }
 
 
-def _run_direct_q_learning(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
+def _run_direct_q_learning(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     env = _build_env(cfg, run_dir)
     csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
     total_runs = int(cfg.experiment.runs)
@@ -210,13 +433,24 @@ def _run_direct_q_learning(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
     fixed_ts = bool(cfg.experiment.fixed_ts)
 
     try:
+        run_metrics: list[Dict[str, Any]] = []
         for run_idx in range(1, total_runs + 1):
             initial_states = env.reset()
             agents = _build_ql_agents_direct(env, cfg, initial_states)
+            previous_episode_reward = 0.0
 
             for episode_idx in range(1, total_episodes + 1):
                 if episode_idx > 1:
                     initial_states = env.reset()
+                    previous_summary = _build_episode_summary_row(env, run_idx, episode_idx - 1)
+                    previous_summary["episode/reward"] = previous_episode_reward
+                    _log_episode_summary(
+                        wandb_run,
+                        csv_run,
+                        previous_summary,
+                        step=int(previous_summary.get("episode/steps", _get_env_step(env))),
+                    )
+                    run_metrics.append(previous_summary)
                     for agent_id in initial_states.keys():
                         agents[agent_id].state = env.encode(initial_states[agent_id], agent_id)
 
@@ -239,20 +473,35 @@ def _run_direct_q_learning(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
                                 reward=reward[agent_id],
                             )
 
+                previous_episode_reward = episode_reward
                 env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
-                metrics = {
-                    "run/index": run_idx,
-                    "episode/index": episode_idx,
-                    "episode/reward": episode_reward,
-                    "env/step": float(info.get("step", env.sim_step)),
-                }
-                metrics.update(_numeric_metrics(info, "env"))
-                _log_wandb(wandb_run, metrics, step=(run_idx - 1) * total_episodes + episode_idx)
+                if episode_idx == total_episodes:
+                    env.close()
+                    episode_summary = _build_episode_summary_row(
+                        env,
+                        run_idx,
+                        episode_idx,
+                        extra={"episode/reward": previous_episode_reward},
+                    )
+                    _log_episode_summary(
+                        wandb_run,
+                        csv_run,
+                        episode_summary,
+                        step=int(episode_summary.get("episode/steps", _get_env_step(env))),
+                    )
+                    run_metrics.append(episode_summary)
+
+        summary = _aggregate_numeric_rows(run_metrics)
+        summary["algorithm/kind"] = "q_learning"
+        if wandb_run is not None:
+            wandb_run.log(summary, step=len(run_metrics))
+        if csv_run is not None:
+            csv_run.log(summary, step=len(run_metrics))
     finally:
         env.close()
 
 
-def _run_aec_q_learning(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
+def _run_aec_q_learning(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     env = _build_env(cfg, run_dir)
     csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
     total_runs = int(cfg.experiment.runs)
@@ -260,13 +509,24 @@ def _run_aec_q_learning(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
     fixed_ts = bool(cfg.experiment.fixed_ts)
 
     try:
+        run_metrics: list[Dict[str, Any]] = []
         for run_idx in range(1, total_runs + 1):
             env.reset()
             agents = _build_ql_agents_aec(env, cfg)
+            previous_episode_reward = 0.0
 
             for episode_idx in range(1, total_episodes + 1):
                 if episode_idx > 1:
                     env.reset()
+                    previous_summary = _build_episode_summary_row(env, run_idx, episode_idx - 1)
+                    previous_summary["episode/reward"] = previous_episode_reward
+                    _log_episode_summary(
+                        wandb_run,
+                        csv_run,
+                        previous_summary,
+                        step=int(previous_summary.get("episode/steps", _get_env_step(env))),
+                    )
+                    run_metrics.append(previous_summary)
                     for agent_id in env.agents:
                         agents[agent_id].state = env.unwrapped.env.encode(env.observe(agent_id), agent_id)
 
@@ -289,39 +549,54 @@ def _run_aec_q_learning(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
                         env.step(action)
                         episode_reward += float(reward)
 
+                previous_episode_reward = episode_reward
                 env.unwrapped.env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
-                metrics = {
-                    "run/index": run_idx,
-                    "episode/index": episode_idx,
-                    "episode/reward": episode_reward,
-                }
-                if env.unwrapped.env.metrics:
-                    metrics.update(_numeric_metrics(env.unwrapped.env.metrics[-1], "env"))
-                _log_wandb(wandb_run, metrics, step=(run_idx - 1) * total_episodes + episode_idx)
+                if episode_idx == total_episodes:
+                    env.close()
+                    episode_summary = _build_episode_summary_row(
+                        env,
+                        run_idx,
+                        episode_idx,
+                        extra={"episode/reward": previous_episode_reward},
+                    )
+                    _log_episode_summary(
+                        wandb_run,
+                        csv_run,
+                        episode_summary,
+                        step=int(episode_summary.get("episode/steps", _get_env_step(env))),
+                    )
+                    run_metrics.append(episode_summary)
+
+        summary = _aggregate_numeric_rows(run_metrics)
+        summary["algorithm/kind"] = "q_learning"
+        if wandb_run is not None:
+            wandb_run.log(summary, step=len(run_metrics))
+        if csv_run is not None:
+            csv_run.log(summary, step=len(run_metrics))
     finally:
         env.close()
 
 
-def _run_fixed_time(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
-    env = _build_env(cfg, run_dir)
+def _run_fixed_time(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
-    total_runs = int(cfg.experiment.runs)
     total_episodes = int(cfg.experiment.episodes)
+    seeds = _get_run_seeds(cfg)
+    run_metrics: list[Dict[str, Any]] = []
+    final_step = 0
 
-    try:
-        for run_idx in range(1, total_runs + 1):
+    for run_idx, seed in enumerate(seeds, start=1):
+        env = _build_env(cfg, run_dir, seed=seed)
+        try:
             for episode_idx in range(1, total_episodes + 1):
-                episode_reward = 0.0
-
                 if hasattr(env, "agent_iter"):
-                    env.reset()
+                    env.reset(seed=seed)
                     for agent in env.agent_iter():
                         _obs, _reward, terminated, truncated, _info = env.last()
                         done = bool(terminated or truncated)
                         action = None if done else env.action_space(agent).sample()
                         env.step(action)
                 else:
-                    reset_result = env.reset()
+                    reset_result = env.reset(seed=seed)
                     if isinstance(reset_result, tuple):
                         _obs, _info = reset_result
                     done = False
@@ -333,51 +608,91 @@ def _run_fixed_time(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
                         else:
                             _obs, reward, dones, info = next_step
                             done = bool(dones["__all__"])
-                        if isinstance(reward, dict):
-                            episode_reward += float(sum(reward.values()))
-                        elif reward is not None:
-                            episode_reward += float(reward)
-
                 env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
-                final_info = _get_final_info(env)
-                metrics = {
-                    "run/index": run_idx,
-                    "episode/index": episode_idx,
-                    "episode/reward": episode_reward,
-                }
-                metrics.update(_numeric_metrics(final_info, "env"))
-                _log_wandb(wandb_run, metrics, step=(run_idx - 1) * total_episodes + episode_idx)
-    finally:
-        env.close()
+                if episode_idx == total_episodes:
+                    last_step = _get_env_step(env)
+                    final_step = max(final_step, last_step)
+                    env.close()
+                    episode_summary = _build_resco_summary_row(
+                        env,
+                        extra={"static/policy": "fixed_time"},
+                    )
+                    row_step = run_idx
+                    _log_episode_summary(
+                        wandb_run,
+                        csv_run,
+                        episode_summary,
+                        step=row_step,
+                    )
+                    run_metrics.append(episode_summary)
+        finally:
+            env.close()
+
+    wandb_summary = _aggregate_numeric_row_values(run_metrics)
+    csv_summary = _aggregate_numeric_row_values(run_metrics)
+    wandb_summary["static/policy"] = "fixed_time"
+    csv_summary["static/policy"] = "fixed_time"
+    if wandb_run is not None:
+        wandb_run.log(wandb_summary, step=final_step or None)
+    if csv_run is not None:
+        csv_run.log(csv_summary, step=final_step or None)
 
 
-class _SB3WandbCallback:
-    def __init__(self, wandb_run, log_freq: int = 1000):
-        self.wandb_run = wandb_run
-        self.log_freq = max(1, int(log_freq))
-        self._callback = None
+def _run_static_policy(cfg: DictConfig, run_dir: Path, wandb_run, csv_run, policy_name: str) -> None:
+    from sumo_rl.agents.static import GreedyPolicy, MaxPressurePolicy
 
-    def build(self):
-        from stable_baselines3.common.callbacks import BaseCallback
+    policy = MaxPressurePolicy() if policy_name == "max_pressure" else GreedyPolicy()
+    seeds = _get_run_seeds(cfg)
+    total_episodes = int(cfg.experiment.episodes)
+    csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
+    run_metrics: list[Dict[str, Any]] = []
+    final_step = 0
 
-        wandb_run = self.wandb_run
-        log_freq = self.log_freq
+    for run_idx, seed in enumerate(seeds, start=1):
+        env = _build_env(cfg, run_dir, seed=seed)
+        try:
+            for episode_idx in range(1, total_episodes + 1):
+                reset_result = env.reset(seed=seed)
+                if isinstance(reset_result, tuple):
+                    _obs = reset_result[0]
 
-        class Callback(BaseCallback):
-            def _on_step(self) -> bool:
-                if wandb_run is not None and self.n_calls % log_freq == 0:
-                    rewards = self.locals.get("rewards")
-                    metrics = {"train/num_timesteps": float(self.num_timesteps)}
-                    if rewards is not None:
-                        metrics["train/reward_mean"] = float(np.mean(rewards))
-                    wandb_run.log(metrics, step=self.num_timesteps)
-                return True
+                done = {"__all__": False}
+                info: Dict[str, Any] = {}
 
-        self._callback = Callback()
-        return self._callback
+                while not done["__all__"]:
+                    actions = {ts_id: policy.select_action(env.traffic_signals[ts_id]) for ts_id in env.ts_ids}
+                    _, reward, done, info = env.step(action=actions)
+                env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
+                if episode_idx == total_episodes:
+                    last_step = _get_env_step(env)
+                    final_step = max(final_step, last_step)
+                    env.close()
+                    episode_summary = _build_resco_summary_row(
+                        env,
+                        extra={"static/policy": policy_name},
+                    )
+                    row_step = run_idx
+                    _log_episode_summary(
+                        wandb_run,
+                        csv_run,
+                        episode_summary,
+                        step=row_step,
+                    )
+                    run_metrics.append(episode_summary)
+        finally:
+            env.close()
+
+    wandb_summary = _aggregate_numeric_row_values(run_metrics)
+    csv_summary = _aggregate_numeric_row_values(run_metrics)
+    wandb_summary["static/policy"] = policy_name
+    csv_summary["static/policy"] = policy_name
+    if wandb_run is not None:
+        wandb_run.log(wandb_summary, step=final_step or None)
+    if csv_run is not None:
+        csv_run.log(csv_summary, step=final_step or None)
 
 
-def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
+def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     from stable_baselines3 import DQN
     from stable_baselines3.common.evaluation import evaluate_policy
 
@@ -393,31 +708,38 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
             tensorboard_log=str(run_dir / "tensorboard"),
             **params,
         )
-        callback = _SB3WandbCallback(wandb_run, log_freq=int(cfg.logging.log_freq or 1000)).build()
-        model.learn(total_timesteps=int(cfg.experiment.total_timesteps), callback=callback)
+        model.learn(total_timesteps=int(cfg.experiment.total_timesteps))
 
         eval_env = None
         try:
             eval_env = _build_env(cfg, run_dir)
             mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
+            summary_env = _get_base_env(eval_env)
+            eval_env.close()
+            episode_summary = _build_episode_summary_row(
+                summary_env,
+                1,
+                1,
+                extra={
+                    "episode/reward": float(mean_reward),
+                    "algorithm/kind": "dqn_sb3",
+                    "eval/std_reward": float(std_reward),
+                },
+            )
+            _log_episode_summary(
+                wandb_run,
+                csv_run,
+                episode_summary,
+                step=int(episode_summary.get("episode/steps", _get_env_step(eval_env))),
+            )
         finally:
             if eval_env is not None:
                 eval_env.close()
-
-        _log_wandb(
-            wandb_run,
-            {
-                "eval/mean_reward": float(mean_reward),
-                "eval/std_reward": float(std_reward),
-                "train/total_timesteps": float(model.num_timesteps),
-            },
-            step=int(model.num_timesteps),
-        )
     finally:
         env.close()
 
 
-def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
+def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     import supersuit as ss
     from stable_baselines3 import PPO
     from stable_baselines3.common.evaluation import evaluate_policy
@@ -446,8 +768,7 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
             tensorboard_log=str(run_dir / "tensorboard"),
             **params,
         )
-        callback = _SB3WandbCallback(wandb_run, log_freq=int(cfg.logging.log_freq or 1000)).build()
-        model.learn(total_timesteps=int(cfg.experiment.total_timesteps), callback=callback)
+        model.learn(total_timesteps=int(cfg.experiment.total_timesteps))
 
         eval_env = None
         try:
@@ -463,19 +784,27 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run) -> None:
                 eval_env.render_mode = None
             eval_env = VecMonitor(eval_env)
             mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
+            summary_env = _get_base_env(eval_env)
+            eval_env.close()
+            episode_summary = _build_episode_summary_row(
+                summary_env,
+                1,
+                1,
+                extra={
+                    "episode/reward": float(mean_reward),
+                    "algorithm/kind": "ppo_sb3",
+                    "eval/std_reward": float(std_reward),
+                },
+            )
+            _log_episode_summary(
+                wandb_run,
+                csv_run,
+                episode_summary,
+                step=int(episode_summary.get("episode/steps", _get_env_step(eval_env))),
+            )
         finally:
             if eval_env is not None:
                 eval_env.close()
-
-        _log_wandb(
-            wandb_run,
-            {
-                "eval/mean_reward": float(mean_reward),
-                "eval/std_reward": float(std_reward),
-                "train/total_timesteps": float(model.num_timesteps),
-            },
-            step=int(model.num_timesteps),
-        )
     finally:
         env.close()
 
@@ -488,19 +817,24 @@ def run(cfg: DictConfig) -> None:
     random.seed(int(cfg.experiment.seed) if cfg.experiment.seed is not None else 0)
 
     wandb_run = _init_wandb(cfg, run_dir)
+    csv_run = _LocalMetricsCsvLogger(run_dir / "logs" / "metrics.csv")
     try:
         algorithm_kind = cfg.algorithm.kind
         if algorithm_kind == "q_learning":
             if cfg.env.factory == "env":
-                _run_aec_q_learning(cfg, run_dir, wandb_run)
+                _run_aec_q_learning(cfg, run_dir, wandb_run, csv_run)
             else:
-                _run_direct_q_learning(cfg, run_dir, wandb_run)
+                _run_direct_q_learning(cfg, run_dir, wandb_run, csv_run)
         elif algorithm_kind == "fixed_time":
-            _run_fixed_time(cfg, run_dir, wandb_run)
+            _run_fixed_time(cfg, run_dir, wandb_run, csv_run)
+        elif algorithm_kind == "static_max_pressure":
+            _run_static_policy(cfg, run_dir, wandb_run, csv_run, "max_pressure")
+        elif algorithm_kind == "static_greedy":
+            _run_static_policy(cfg, run_dir, wandb_run, csv_run, "greedy")
         elif algorithm_kind == "dqn_sb3":
-            _run_sb3_dqn(cfg, run_dir, wandb_run)
+            _run_sb3_dqn(cfg, run_dir, wandb_run, csv_run)
         elif algorithm_kind == "ppo_sb3":
-            _run_sb3_ppo(cfg, run_dir, wandb_run)
+            _run_sb3_ppo(cfg, run_dir, wandb_run, csv_run)
         else:
             raise ValueError(f"Unsupported algorithm kind: {algorithm_kind}")
     finally:

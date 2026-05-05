@@ -14,6 +14,10 @@ import numpy as np
 from gymnasium import spaces
 
 
+def _is_ghost_vehicle(vehicle_id: str) -> bool:
+    return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
+
+
 class TrafficSignal:
     """This class represents a Traffic Signal controlling an intersection.
 
@@ -251,7 +255,7 @@ class TrafficSignal:
         """
         wait_time_per_lane = []
         for lane in self.lanes:
-            veh_list = self.sumo.lane.getLastStepVehicleIDs(lane)
+            veh_list = [veh for veh in self.sumo.lane.getLastStepVehicleIDs(lane) if not _is_ghost_vehicle(veh)]
             wait_time = 0.0
             for veh in veh_list:
                 veh_lane = self.sumo.vehicle.getLaneID(veh)
@@ -281,14 +285,18 @@ class TrafficSignal:
 
     def get_pressure(self):
         """Returns the pressure (#veh leaving - #veh approaching) of the intersection."""
-        return sum(self.sumo.lane.getLastStepVehicleNumber(lane) for lane in self.out_lanes) - sum(
-            self.sumo.lane.getLastStepVehicleNumber(lane) for lane in self.lanes
+        return sum(
+            len([veh for veh in self.sumo.lane.getLastStepVehicleIDs(lane) if not _is_ghost_vehicle(veh)])
+            for lane in self.out_lanes
+        ) - sum(
+            len([veh for veh in self.sumo.lane.getLastStepVehicleIDs(lane) if not _is_ghost_vehicle(veh)])
+            for lane in self.lanes
         )
 
     def get_out_lanes_density(self) -> List[float]:
         """Returns the density of the vehicles in the outgoing lanes of the intersection."""
         lanes_density = [
-            self.sumo.lane.getLastStepVehicleNumber(lane)
+            len([veh for veh in self.sumo.lane.getLastStepVehicleIDs(lane) if not _is_ghost_vehicle(veh)])
             / (self.lanes_length[lane] / (self.MIN_GAP + self.sumo.lane.getLastStepLength(lane)))
             for lane in self.out_lanes
         ]
@@ -300,7 +308,7 @@ class TrafficSignal:
         Obs: The density is computed as the number of vehicles divided by the number of vehicles that could fit in the lane.
         """
         lanes_density = [
-            self.sumo.lane.getLastStepVehicleNumber(lane)
+            len([veh for veh in self.sumo.lane.getLastStepVehicleIDs(lane) if not _is_ghost_vehicle(veh)])
             / (self.lanes_length[lane] / (self.MIN_GAP + self.sumo.lane.getLastStepLength(lane)))
             for lane in self.lanes
         ]
@@ -312,7 +320,11 @@ class TrafficSignal:
         Obs: The queue is computed as the number of vehicles halting divided by the number of vehicles that could fit in the lane.
         """
         lanes_queue = [
-            self.sumo.lane.getLastStepHaltingNumber(lane)
+            sum(
+                1
+                for veh in self.sumo.lane.getLastStepVehicleIDs(lane)
+                if not _is_ghost_vehicle(veh) and self.sumo.vehicle.getSpeed(veh) < 0.1
+            )
             / (self.lanes_length[lane] / (self.MIN_GAP + self.sumo.lane.getLastStepLength(lane)))
             for lane in self.lanes
         ]
@@ -320,16 +332,21 @@ class TrafficSignal:
 
     def get_total_queued(self) -> int:
         """Returns the total number of vehicles halting in the intersection."""
-        return sum(self.sumo.lane.getLastStepHaltingNumber(lane) for lane in self.lanes)
+        return sum(
+            1
+            for lane in self.lanes
+            for veh in self.sumo.lane.getLastStepVehicleIDs(lane)
+            if not _is_ghost_vehicle(veh) and self.sumo.vehicle.getSpeed(veh) < 0.1
+        )
 
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""
-        return sum(self.sumo.lane.getCO2Emission(lane) for lane in self.lanes)
+        return sum(self.sumo.vehicle.getCO2Emission(veh) for veh in self._get_veh_list())
 
     def _get_veh_list(self):
         veh_list = []
         for lane in self.lanes:
-            veh_list += self.sumo.lane.getLastStepVehicleIDs(lane)
+            veh_list += [veh for veh in self.sumo.lane.getLastStepVehicleIDs(lane) if not _is_ghost_vehicle(veh)]
         return veh_list
 
     @classmethod

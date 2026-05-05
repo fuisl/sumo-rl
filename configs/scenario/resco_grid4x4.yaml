@@ -1,0 +1,8 @@
+# @package _global_
+env:
+  kwargs:
+    net_file: sumo_rl/nets/RESCO/grid4x4/grid4x4.net.xml
+    route_file: sumo_rl/nets/RESCO/grid4x4/grid4x4_1.rou.xml
+    use_gui: false
+    min_green: 5
+    delta_time: 5

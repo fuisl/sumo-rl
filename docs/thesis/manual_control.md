@@ -8,6 +8,15 @@ firstpage:
 This guide explains how to run SUMO-RL in fixed-time mode with Hydra and inspect the results in Weights & Biases.
 
 The fixed-time 4x4 preset in this thesis uses the RESCO `grid4x4` network and route files.
+Both fixed-time presets now run with five seeds, one episode per seed, and the runner writes a final average summary.
+The summary is computed with RESCO-style formulas:
+
+- `resco_avg_delay` from tripinfo `timeLoss`
+- `resco_trip_time` from tripinfo `duration`
+- `resco_wait` from tripinfo `waitingTime`
+- `resco_queue` and `resco_max_queue` from the live queue counts in the simulator
+
+The per-run identifier in the logs is `run_seed`, not the base config seed.
 
 ## How to Read These Docs
 
@@ -41,6 +50,13 @@ If you want a different seed or GUI mode, override Hydra values:
 python experiments/fixed_time_single_intersection.py experiment.seed=7 env.kwargs.use_gui=true
 ```
 
+The default preset already uses:
+
+- `seeds: [1, 2, 3, 4, 5]`
+- `runs: 5`
+- `episodes: 1`
+- `num_seconds: 3600`
+
 ## Run Grid Fixed-Time
 
 Use the dedicated grid launcher:
@@ -60,6 +76,8 @@ You can also override values directly:
 ```bash
 python experiments/fixed_time_4x4grid.py experiment.seed=13 logging.mode=online
 ```
+
+Like the single-intersection version, the grid preset runs five seeds by default and averages the final result.
 
 ## Inspect with W&B
 
@@ -83,8 +101,18 @@ If you stayed offline, you can later sync runs with:
 wandb sync <path-to-offline-run>
 ```
 
+For quick debugging, the same metrics are also written locally to:
+
+- `outputs/<experiment-name>/<timestamp>/logs/metrics.csv`
+- `outputs/<experiment-name>/<timestamp>/tripinfo/` for the raw SUMO tripinfo XML
+
+The CSV and W&B logs now use the RESCO summary fields directly so you can compare them against the benchmark formulas.
+If you turn on per-agent logging, those extra agent metrics stay in the local CSV only.
+
 ## Notes
 
 - Fixed-time presets are driven by Hydra config files in `configs/`.
+- The 4x4 fixed-time preset combines `configs/scenario/resco_grid4x4.yaml` with `configs/algorithm/fixed_time.yaml`.
+- The fixed-time presets use five seeds and one episode per seed so the final result is an average over the five runs.
 - The output CSV still lands under the Hydra run directory, alongside the W&B metadata.
 - If a run does not look right, first inspect the resolved Hydra config and then the saved CSV metrics.

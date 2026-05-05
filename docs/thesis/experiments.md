@@ -8,6 +8,7 @@ firstpage:
 This page contains the thesis-specific experiment workflow built on top of the upstream SUMO-RL examples.
 
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
+If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
 If you want the RESCO 4x4 SB3 examples, read [docs/thesis/third_party_sb3.md](third_party_sb3.md) next.
 
 The 4x4 grid presets in this thesis use the RESCO grid4x4 assets by default, not the Lucas 4x4 network.
@@ -19,6 +20,17 @@ Hydra is used as the experiment composition layer.
 - Configs define the environment, algorithm, and logging settings
 - Command-line overrides let you change seeds, paths, and hyperparameters without editing code
 - Each run gets its own output directory under `outputs/<experiment-name>/<timestamp>/`
+- A local metrics CSV is written to `outputs/<experiment-name>/<timestamp>/logs/metrics.csv` for quick debugging
+- The runner now logs episode-end RESCO summaries only, using:
+  - `resco_avg_delay` from SUMO tripinfo `timeLoss`
+  - `resco_trip_time` from SUMO tripinfo `duration`
+  - `resco_wait` from SUMO tripinfo `waitingTime`
+  - `resco_queue` and `resco_max_queue` from the live queue metrics
+  - the raw tripinfo XML files are stored under `outputs/<experiment-name>/<timestamp>/tripinfo/`
+- The config layout is split into:
+  - `configs/scenario/` for network and road-network setup
+  - `configs/algorithm/` for algorithm kind and default hyperparameters
+  - top-level preset files such as `configs/sb3_grid4x4.yaml` that combine the pieces
 
 Example:
 ```bash
@@ -50,3 +62,4 @@ pip install -e ".[experiments]"
 ## Notes
 - These additions do not replace the upstream SUMO-RL API.
 - The existing environment and algorithm examples still run through the same underlying SUMO-RL code paths.
+- The RESCO summary log is the canonical run artifact for comparing against the benchmark formulas.

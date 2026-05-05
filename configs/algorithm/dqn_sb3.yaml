@@ -1,0 +1,11 @@
+# @package _global_
+algorithm:
+  kind: dqn_sb3
+  params:
+    policy: MlpPolicy
+    learning_rate: 0.001
+    learning_starts: 0
+    train_freq: 1
+    target_update_interval: 500
+    exploration_initial_eps: 0.05
+    exploration_final_eps: 0.01

@@ -7,4 +7,4 @@ group: null
 tags: []
 job_type: train
 log_freq: 1000
-
+log_every_seconds: 200

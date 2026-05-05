@@ -1,12 +1,12 @@
+# @package _global_
 defaults:
-  - base
-  - scenario: single_intersection
-  - algorithm: fixed_time
+  - /base
+  - /scenario: ingolstadt1
+  - /algorithm: fixed_time
   - _self_
 
 experiment:
-  name: fixed_time_single_intersection
-  seed: 1
+  name: fixed_time_ingolstadt1
   seeds: [1, 2, 3, 4, 5]
   runs: 5
   episodes: 1
@@ -15,7 +15,7 @@ experiment:
   eval_episodes: 0
 
 env:
-  factory: sumo_env
+  factory: fixed_time_env
   kwargs:
     num_seconds: 3600
     fixed_ts: true

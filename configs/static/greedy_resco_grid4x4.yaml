@@ -1,21 +1,21 @@
+# @package _global_
 defaults:
-  - base
-  - scenario: single_intersection
-  - algorithm: fixed_time
+  - /base
+  - /scenario: resco_grid4x4
+  - /algorithm: static_greedy
   - _self_
 
 experiment:
-  name: fixed_time_single_intersection
-  seed: 1
+  name: static_greedy_resco_grid4x4
   seeds: [1, 2, 3, 4, 5]
   runs: 5
   episodes: 1
-  fixed_ts: true
+  fixed_ts: false
   total_timesteps: 0
   eval_episodes: 0
 
 env:
   factory: sumo_env
   kwargs:
+    single_agent: false
     num_seconds: 3600
-    fixed_ts: true
