@@ -32,11 +32,11 @@ The runner executes one episode per seed and then writes a summary average acros
 Run:
 
 ```bash
-python experiments/static_max_pressure_resco_grid4x4.py
+python experiments/static_max_pressure.py
 ```
 
 What it uses:
-- [`configs/static/max_pressure_resco_grid4x4.yaml`](../../configs/static/max_pressure_resco_grid4x4.yaml)
+- [`configs/presets/resco_grid4x4/static_max_pressure.yaml`](../../configs/presets/resco_grid4x4/static_max_pressure.yaml)
 - [`configs/scenario/resco_grid4x4.yaml`](../../configs/scenario/resco_grid4x4.yaml)
 - the new static Max Pressure controller in `sumo_rl/agents/static/`
 
@@ -45,11 +45,11 @@ What it uses:
 Run:
 
 ```bash
-python experiments/static_greedy_resco_grid4x4.py
+python experiments/static_greedy.py
 ```
 
 What it uses:
-- [`configs/static/greedy_resco_grid4x4.yaml`](../../configs/static/greedy_resco_grid4x4.yaml)
+- [`configs/presets/resco_grid4x4/static_greedy.yaml`](../../configs/presets/resco_grid4x4/static_greedy.yaml)
 - [`configs/scenario/resco_grid4x4.yaml`](../../configs/scenario/resco_grid4x4.yaml)
 - the queue-based Greedy controller in `sumo_rl/agents/static/`
 
@@ -75,3 +75,4 @@ Each run writes:
 
 - This is a static benchmark layer, separate from the RL baselines.
 - The static policies are intended to be simple, reproducible comparators against Q-learning and SB3.
+- The scenario-specific static presets now live under `configs/presets/<scenario>/`.

@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - /base
+  - /scenario: resco_grid4x4
+  - /algorithm: fixed_time
+  - _self_
+
+experiment:
+  name: ${scenario.name}__fixed_time
+  seeds: [1, 2, 3, 4, 5]
+  runs: 5
+  episodes: 1
+  fixed_ts: true
+  total_timesteps: 0
+  eval_episodes: 0
+
+env:
+  kwargs:
+    num_seconds: 3600
+    fixed_ts: true

@@ -1,0 +1,21 @@
+# @package _global_
+algorithm:
+  kind: libsignal_phase5
+  params:
+    libsignal_root: null
+    libsignal_task: tsc
+    libsignal_world: sumo
+    libsignal_dataset: onfly
+    libsignal_interface: libsumo
+    libsignal_delay_type: real
+    libsignal_thread_num: 1
+    libsignal_ngpu: "-1"
+    libsignal_episodes: 1
+    libsignal_steps: 3600
+    libsignal_test_steps: 3600
+    libsignal_learning_start: 1000
+    libsignal_buffer_size: 5000
+    libsignal_update_model_rate: 1
+    libsignal_update_target_rate: 10
+    libsignal_save_rate: 1
+

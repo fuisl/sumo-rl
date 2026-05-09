@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - /base
+  - /scenario: two_way_single_intersection
+  - /algorithm: dqn_sb3
+  - _self_
+
+experiment:
+  name: ${scenario.name}__dqn
+  seed: 42
+  total_timesteps: 100000
+  eval_episodes: 1
+
+env:
+  kwargs:
+    num_seconds: 3600
+    use_gui: false

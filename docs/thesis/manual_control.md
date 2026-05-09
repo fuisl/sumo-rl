@@ -7,8 +7,7 @@ firstpage:
 
 This guide explains how to run SUMO-RL in fixed-time mode with Hydra and inspect the results in Weights & Biases.
 
-The fixed-time 4x4 preset in this thesis uses the RESCO `grid4x4` network and route files.
-Both fixed-time presets now run with five seeds, one episode per seed, and the runner writes a final average summary.
+The fixed-time presets in this thesis use five seeds, one episode per seed, and the runner writes a final average summary.
 The summary is computed with RESCO-style formulas:
 
 - `resco_avg_delay` from tripinfo `timeLoss`
@@ -38,19 +37,19 @@ In this project, manual traffic control means fixed-time control:
 
 ## Run Single Intersection
 
-Use the dedicated fixed-time launcher:
+Use the generic fixed-time launcher with the desired scenario:
 
 ```bash
-python experiments/fixed_time_single_intersection.py
+python experiments/fixed_time.py scenario=single_intersection
 ```
 
 If you want a different seed or GUI mode, override Hydra values:
 
 ```bash
-python experiments/fixed_time_single_intersection.py experiment.seed=7 env.kwargs.use_gui=true
+python experiments/fixed_time.py scenario=single_intersection experiment.seed=7 env.kwargs.use_gui=true
 ```
 
-The default preset already uses:
+The preset uses:
 
 - `seeds: [1, 2, 3, 4, 5]`
 - `runs: 5`
@@ -59,10 +58,10 @@ The default preset already uses:
 
 ## Run Grid Fixed-Time
 
-Use the dedicated grid launcher:
+Use the RESCO grid scenario with the same generic launcher:
 
 ```bash
-python experiments/fixed_time_4x4grid.py
+python experiments/fixed_time.py scenario=resco_grid4x4
 ```
 
 This preset uses:
@@ -74,7 +73,7 @@ It does not use the Lucas `4x4-Lucas` files.
 You can also override values directly:
 
 ```bash
-python experiments/fixed_time_4x4grid.py experiment.seed=13 logging.mode=online
+python experiments/fixed_time.py scenario=resco_grid4x4 experiment.seed=13 logging.mode=online
 ```
 
 Like the single-intersection version, the grid preset runs five seeds by default and averages the final result.

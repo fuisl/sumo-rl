@@ -92,7 +92,7 @@ You can define your own observation by implementing a class that inherits from [
 The action space is discrete.
 Every 'delta_time' seconds, each traffic signal agent can choose the next green phase configuration.
 
-E.g.: In the [2-way single intersection](https://github.com/LucasAlegre/sumo-rl/blob/main/experiments/dqn_2way-single-intersection.py) there are |A| = 4 discrete actions, corresponding to the following green phase configurations:
+E.g.: In the [2-way single intersection](https://github.com/LucasAlegre/sumo-rl/blob/main/experiments/dqn.py) there are |A| = 4 discrete actions, corresponding to the following green phase configurations:
 
 <p align="center">
 <img src="docs/_static/actions.png" align="center" width="75%"/>
@@ -184,30 +184,21 @@ In the folder [nets/RESCO](https://github.com/LucasAlegre/sumo-rl/tree/main/sumo
 
 Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent. In the thesis configs, the 4x4 grid presets use the RESCO `grid4x4` assets rather than the older Lucas `4x4-Lucas` network. Thesis-specific Hydra and W&B notes are documented separately in [docs/thesis/experiments.md](docs/thesis/experiments.md).
 
-### [Q-learning](https://github.com/LucasAlegre/sumo-rl/blob/main/agents/ql_agent.py) in a one-way single intersection:
+### Discrete-control example in a one-way single intersection:
 ```bash
-python experiments/ql_single-intersection.py
+python experiments/dqn.py scenario=two_way_single_intersection
 ```
 
 ### [stable-baselines3 PPO](https://github.com/DLR-RM/stable-baselines3) multiagent in the RESCO 4x4 grid:
 ```bash
-python experiments/ppo_4x4grid.py
+python experiments/ppo.py scenario=resco_grid4x4 env.factory=grid4x4
 ```
-The alternate launcher `python experiments/sb3_grid4x4.py` runs the same SB3-based setup.
 
 ### [stable-baselines3 DQN](https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/dqn/dqn.py) in a 2-way single intersection:
 Obs: you need to install stable-baselines3 with ```pip install "stable_baselines3[extra]>=2.0.0a9"``` for [Gymnasium compatibility](https://stable-baselines3.readthedocs.io/en/master/guide/install.html).
 ```bash
-python experiments/dqn_2way-single-intersection.py
+python experiments/dqn.py scenario=two_way_single_intersection
 ```
-
-### Plotting results:
-```bash
-python outputs/plot.py -f outputs/4x4grid/ppo_conn0_ep2
-```
-<p align="center">
-<img src="outputs/result.png" align="center" width="50%"/>
-</p>
 
 ## Citing
 

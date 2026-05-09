@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import os
 import random
+import shutil
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -277,8 +279,29 @@ def _get_base_env(env):
         if hasattr(current, "env"):
             current = current.env
             continue
-        break
+            break
     return env
+
+
+def _wrap_sb3_env_if_needed(cfg: DictConfig, env, params: Dict[str, Any], default_num_envs: int):
+    if cfg.env.factory != "parallel_env" and not hasattr(env, "possible_agents"):
+        return env, 1
+
+    import supersuit as ss
+    from stable_baselines3.common.vec_env import VecMonitor
+
+    num_envs = int(params.pop("num_envs", default_num_envs))
+    env = ss.pettingzoo_env_to_vec_env_v1(env)
+    env = ss.concat_vec_envs_v1(
+        env,
+        num_envs,
+        num_cpus=1,
+        base_class="stable_baselines3",
+    )
+    if not hasattr(env, "render_mode"):
+        env.render_mode = None
+    env = VecMonitor(env)
+    return env, num_envs
 
 
 def _get_episode_summary(env) -> Dict[str, Any]:
@@ -588,6 +611,7 @@ def _run_fixed_time(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
         env = _build_env(cfg, run_dir, seed=seed)
         try:
             for episode_idx in range(1, total_episodes + 1):
+                base_env = _get_base_env(env)
                 if hasattr(env, "agent_iter"):
                     env.reset(seed=seed)
                     for agent in env.agent_iter():
@@ -601,20 +625,22 @@ def _run_fixed_time(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
                         _obs, _info = reset_result
                     done = False
                     while not done:
-                        next_step = env.step({})
+                        actions = {ts_id: base_env.action_spaces(ts_id).sample() for ts_id in base_env.ts_ids}
+                        next_step = env.step(actions)
                         if len(next_step) == 5:
                             _obs, reward, terminated, truncated, info = next_step
                             done = bool(terminated or truncated)
                         else:
                             _obs, reward, dones, info = next_step
                             done = bool(dones["__all__"])
-                env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
+                save_env = base_env if hasattr(base_env, "save_csv") else env
+                save_env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
                 if episode_idx == total_episodes:
-                    last_step = _get_env_step(env)
+                    last_step = _get_env_step(base_env)
                     final_step = max(final_step, last_step)
-                    env.close()
+                    save_env.close()
                     episode_summary = _build_resco_summary_row(
-                        env,
+                        base_env,
                         extra={"static/policy": "fixed_time"},
                     )
                     row_step = run_idx
@@ -656,19 +682,42 @@ def _run_static_policy(cfg: DictConfig, run_dir: Path, wandb_run, csv_run, polic
                 if isinstance(reset_result, tuple):
                     _obs = reset_result[0]
 
-                done = {"__all__": False}
-                info: Dict[str, Any] = {}
+                base_env = _get_base_env(env)
+                if hasattr(env, "agent_iter"):
+                    done = {"__all__": False}
+                    info: Dict[str, Any] = {}
 
-                while not done["__all__"]:
-                    actions = {ts_id: policy.select_action(env.traffic_signals[ts_id]) for ts_id in env.ts_ids}
-                    _, reward, done, info = env.step(action=actions)
-                env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
+                    while not done["__all__"]:
+                        actions = {
+                            ts_id: policy.select_action(base_env.traffic_signals[ts_id]) for ts_id in base_env.ts_ids
+                        }
+                        _, reward, done, info = env.step(action=actions)
+                else:
+                    done = False
+                    while not done:
+                        actions = {
+                            ts_id: policy.select_action(base_env.traffic_signals[ts_id]) for ts_id in base_env.ts_ids
+                        }
+                        next_step = env.step(actions)
+                        if len(next_step) == 5:
+                            _obs, reward, terminated, truncated, info = next_step
+                            if isinstance(terminated, dict):
+                                terminated_all = bool(terminated.get("__all__", False))
+                                truncated_all = bool(truncated.get("__all__", False))
+                                done = terminated_all or truncated_all
+                            else:
+                                done = bool(terminated or truncated)
+                        else:
+                            _obs, reward, dones, info = next_step
+                            done = bool(dones["__all__"])
+                save_env = base_env if hasattr(base_env, "save_csv") else env
+                save_env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
                 if episode_idx == total_episodes:
-                    last_step = _get_env_step(env)
+                    last_step = _get_env_step(base_env)
                     final_step = max(final_step, last_step)
-                    env.close()
+                    save_env.close()
                     episode_summary = _build_resco_summary_row(
-                        env,
+                        base_env,
                         extra={"static/policy": policy_name},
                     )
                     row_step = run_idx
@@ -696,11 +745,12 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     from stable_baselines3 import DQN
     from stable_baselines3.common.evaluation import evaluate_policy
 
-    env = _build_env(cfg, run_dir)
     params = _as_plain_dict(cfg.algorithm.params or {})
     eval_episodes = int(cfg.experiment.eval_episodes)
+    env = _build_env(cfg, run_dir)
 
     try:
+        env, _ = _wrap_sb3_env_if_needed(cfg, env, params, default_num_envs=1)
         model = DQN(
             policy=params.pop("policy", "MlpPolicy"),
             env=env,
@@ -713,6 +763,8 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
         eval_env = None
         try:
             eval_env = _build_env(cfg, run_dir)
+            eval_params = _as_plain_dict(cfg.algorithm.params or {})
+            eval_env, _ = _wrap_sb3_env_if_needed(cfg, eval_env, eval_params, default_num_envs=1)
             mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
             summary_env = _get_base_env(eval_env)
             eval_env.close()
@@ -740,27 +792,15 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
 
 
 def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
-    import supersuit as ss
     from stable_baselines3 import PPO
     from stable_baselines3.common.evaluation import evaluate_policy
-    from stable_baselines3.common.vec_env import VecMonitor
 
-    env = _build_env(cfg, run_dir)
     params = _as_plain_dict(cfg.algorithm.params or {})
     eval_episodes = int(cfg.experiment.eval_episodes)
-    num_envs = int(params.pop("num_envs", 2))
+    env = _build_env(cfg, run_dir)
 
     try:
-        env = ss.pettingzoo_env_to_vec_env_v1(env)
-        env = ss.concat_vec_envs_v1(
-            env,
-            num_envs,
-            num_cpus=1,
-            base_class="stable_baselines3",
-        )
-        if not hasattr(env, "render_mode"):
-            env.render_mode = None
-        env = VecMonitor(env)
+        env, num_envs = _wrap_sb3_env_if_needed(cfg, env, params, default_num_envs=2)
 
         model = PPO(
             policy=params.pop("policy", "MlpPolicy"),
@@ -773,16 +813,8 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
         eval_env = None
         try:
             eval_env = _build_env(cfg, run_dir)
-            eval_env = ss.pettingzoo_env_to_vec_env_v1(eval_env)
-            eval_env = ss.concat_vec_envs_v1(
-                eval_env,
-                num_envs,
-                num_cpus=1,
-                base_class="stable_baselines3",
-            )
-            if not hasattr(eval_env, "render_mode"):
-                eval_env.render_mode = None
-            eval_env = VecMonitor(eval_env)
+            eval_params = _as_plain_dict(cfg.algorithm.params or {})
+            eval_env, _ = _wrap_sb3_env_if_needed(cfg, eval_env, eval_params, default_num_envs=num_envs)
             mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
             summary_env = _get_base_env(eval_env)
             eval_env.close()
@@ -807,6 +839,113 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
                 eval_env.close()
     finally:
         env.close()
+
+
+def _resolve_libsignal_root(cfg: DictConfig) -> Path:
+    params = _as_plain_dict(cfg.algorithm.params or {})
+    raw_root = params.get("libsignal_root") if isinstance(params, dict) else None
+    if raw_root:
+        return Path(str(raw_root)).expanduser().resolve()
+
+    env_root = os.environ.get("LIBSIGNAL_ROOT")
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+
+    raise FileNotFoundError(
+        "Phase 5 requires a LibSignal checkout. Set `algorithm.params.libsignal_root` or `LIBSIGNAL_ROOT` to the external repository."
+    )
+
+
+def _libsignal_spec_from_cfg(cfg: DictConfig) -> Dict[str, Any]:
+    params = _as_plain_dict(cfg.algorithm.params or {})
+    spec = {
+        "agent": str(params.get("libsignal_agent", "dqn")),
+        "network": str(params.get("libsignal_network", "sumo4x4")),
+        "task": str(params.get("libsignal_task", "tsc")),
+        "world": str(params.get("libsignal_world", "sumo")),
+        "dataset": str(params.get("libsignal_dataset", "onfly")),
+        "interface": str(params.get("libsignal_interface", "libsumo")),
+        "delay_type": str(params.get("libsignal_delay_type", "real")),
+        "thread_num": int(params.get("libsignal_thread_num", 1)),
+        "ngpu": str(params.get("libsignal_ngpu", "-1")),
+        "episodes": int(params.get("libsignal_episodes", max(1, int(cfg.experiment.episodes)))),
+        "steps": int(params.get("libsignal_steps", 3600)),
+        "test_steps": int(params.get("libsignal_test_steps", 3600)),
+        "learning_start": int(params.get("libsignal_learning_start", 1000)),
+        "buffer_size": int(params.get("libsignal_buffer_size", 5000)),
+        "update_model_rate": int(params.get("libsignal_update_model_rate", 1)),
+        "update_target_rate": int(params.get("libsignal_update_target_rate", 10)),
+        "save_rate": int(params.get("libsignal_save_rate", 1)),
+    }
+    return spec
+
+
+def _run_libsignal_phase5(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
+    from sumo_rl.integrations.libsignal import (
+        LibSignalSpec,
+        build_phase5_trace_row,
+        load_phase5_summary,
+        resolve_libsignal_root,
+        run_phase5_libsignal_seed,
+    )
+
+    params = _as_plain_dict(cfg.algorithm.params or {})
+    libsignal_root = resolve_libsignal_root(params.get("libsignal_root"))
+    spec_dict = _libsignal_spec_from_cfg(cfg)
+    spec = LibSignalSpec(**spec_dict)
+    seeds = _get_run_seeds(cfg)
+    run_metrics: list[Dict[str, Any]] = []
+
+    repo_root = Path(__file__).resolve().parents[2]
+    phase5_dir = run_dir / "phase5" / "libsignal"
+    phase5_dir.mkdir(parents=True, exist_ok=True)
+
+    for run_idx, seed in enumerate(seeds, start=1):
+        seed_prefix = f"{cfg.experiment.name}_seed{seed}"
+        output_root = phase5_dir / seed_prefix / "external"
+        summary_path = phase5_dir / seed_prefix / "summary.json"
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        summary = run_phase5_libsignal_seed(
+            repo_root=repo_root,
+            libsignal_root=libsignal_root,
+            output_root=output_root,
+            summary_path=summary_path,
+            spec=spec,
+            run_seed=seed,
+            run_prefix=seed_prefix,
+        )
+        if not isinstance(summary, dict):
+            summary = load_phase5_summary(summary_path)
+
+        row = build_phase5_trace_row(summary, run_idx=run_idx, run_seed=seed, experiment_name=cfg.experiment.name)
+
+        external_log_file = summary.get("external_log_file")
+        if isinstance(external_log_file, str) and external_log_file:
+            raw_log_copy = phase5_dir / seed_prefix / Path(external_log_file).name
+            try:
+                raw_log_copy.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(external_log_file, raw_log_copy)
+                row["phase5/raw_log_copy"] = str(raw_log_copy)
+            except Exception:
+                row["phase5/raw_log_copy"] = str(external_log_file)
+
+        _log_episode_summary(
+            wandb_run,
+            csv_run,
+            row,
+            step=int(row.get("episode/steps", 0)),
+        )
+        run_metrics.append(row)
+
+    summary_row = _aggregate_numeric_row_values(run_metrics)
+    summary_row["algorithm/kind"] = "libsignal_phase5"
+    summary_row["phase5/backend"] = "libsignal"
+    summary_row["phase5/model_group"] = "idqn/mplight/ippo"
+    if wandb_run is not None:
+        wandb_run.log(summary_row, step=len(run_metrics))
+    if csv_run is not None:
+        csv_run.log(summary_row, step=len(run_metrics))
 
 
 def run(cfg: DictConfig) -> None:
@@ -835,6 +974,8 @@ def run(cfg: DictConfig) -> None:
             _run_sb3_dqn(cfg, run_dir, wandb_run, csv_run)
         elif algorithm_kind == "ppo_sb3":
             _run_sb3_ppo(cfg, run_dir, wandb_run, csv_run)
+        elif algorithm_kind == "libsignal_phase5":
+            _run_libsignal_phase5(cfg, run_dir, wandb_run, csv_run)
         else:
             raise ValueError(f"Unsupported algorithm kind: {algorithm_kind}")
     finally:

@@ -1,0 +1,11 @@
+# @package _global_
+scenario:
+  name: resco_cologne3
+
+env:
+  factory: sumo_env
+  kwargs:
+    net_file: sumo_rl/nets/RESCO/cologne3/cologne3.net.xml
+    route_file: sumo_rl/nets/RESCO/cologne3/cologne3.rou.xml
+    begin_time: 25200
+    use_gui: false

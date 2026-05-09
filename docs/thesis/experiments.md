@@ -9,9 +9,10 @@ This page contains the thesis-specific experiment workflow built on top of the u
 
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
 If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
-If you want the RESCO 4x4 SB3 examples, read [docs/thesis/third_party_sb3.md](third_party_sb3.md) next.
+If you want the SB3 examples, read [docs/thesis/third_party_sb3.md](third_party_sb3.md) next.
+If you want the third-party MARL replication path for IDQN, MPLight, and IPPO, read [docs/thesis/third_party_marl.md](third_party_marl.md) next.
 
-The 4x4 grid presets in this thesis use the RESCO grid4x4 assets by default, not the Lucas 4x4 network.
+The thesis launchers now use generic method entrypoints plus Hydra scenario overrides for the scenario-first names `resco_cologne1`, `resco_cologne3`, `resco_ingolstadt1`, and `resco_ingolstadt7`.
 
 ## Hydra
 Hydra is used as the experiment composition layer.
@@ -30,16 +31,12 @@ Hydra is used as the experiment composition layer.
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup
   - `configs/algorithm/` for algorithm kind and default hyperparameters
-  - top-level preset files such as `configs/sb3_grid4x4.yaml` that combine the pieces
+  - scenario-first presets such as `configs/presets/two_way_single_intersection/dqn.yaml`, `configs/presets/resco_cologne1/ppo.yaml`, and `configs/presets/resco_grid4x4/static_greedy.yaml`
 
 Example:
 ```bash
-python experiments/dqn_2way-single-intersection.py experiment.seed=7
+python experiments/dqn.py scenario=resco_cologne3
 ```
-
-The 4x4 presets on this repo point to:
-- RESCO `grid4x4` for the thesis configs
-- Lucas `4x4-Lucas` only in older upstream-style example paths, if you choose to use them manually
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.
@@ -50,7 +47,7 @@ Weights & Biases is used for experiment tracking.
 
 Example:
 ```bash
-python experiments/dqn_2way-single-intersection.py logging.mode=online logging.project=my-thesis
+python experiments/dqn.py scenario=resco_ingolstadt7 logging.mode=online logging.project=my-thesis
 ```
 
 ## Optional Install
@@ -63,3 +60,4 @@ pip install -e ".[experiments]"
 - These additions do not replace the upstream SUMO-RL API.
 - The existing environment and algorithm examples still run through the same underlying SUMO-RL code paths.
 - The RESCO summary log is the canonical run artifact for comparing against the benchmark formulas.
+- Run names now put the scenario first, for example `resco_grid4x4__static_greedy`, `resco_cologne3__dqn`, or `resco_grid4x4__libsignal_mplight`.

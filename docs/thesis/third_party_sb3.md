@@ -6,6 +6,7 @@ firstpage:
 # Third-Party SB3
 
 This page covers the working Stable-Baselines3 examples for the RESCO 4x4 grid.
+If you are looking for the third-party MARL replication track for `IDQN`, `MPLight`, and `IPPO`, read [docs/thesis/third_party_marl.md](third_party_marl.md) instead.
 
 ## What to Run
 
@@ -21,30 +22,36 @@ pip install -e ".[experiments]"
 
 This includes Hydra, W&B, and the extra `supersuit` dependency needed for the multi-agent PPO example.
 
+The config layout follows the same split used elsewhere in the thesis:
+
+- `configs/scenario/` for the RESCO `grid4x4` network
+- `configs/algorithm/` for the SB3 defaults
+- the scenario-first `configs/presets/resco_grid4x4/ppo.yaml` preset for the runnable command
+
 ### Stable-Baselines3 PPO on RESCO 4x4
 
 This is the main multi-agent example for the thesis:
 
 ```bash
-python experiments/ppo_4x4grid.py
+python experiments/ppo.py scenario=resco_grid4x4 env.factory=grid4x4
 ```
 
 What it uses:
-- [`configs/ppo_4x4grid.yaml`](../../configs/ppo_4x4grid.yaml)
+- [`configs/presets/resco_grid4x4/ppo.yaml`](../../configs/presets/resco_grid4x4/ppo.yaml)
 - RESCO `grid4x4` network and route files
 - PettingZoo parallel environment wrapped for SB3
 - `stable-baselines3` and `supersuit`
 
 ### Alternate Launcher for Stable-Baselines3 PPO
 
-This is the same SB3 multi-agent setup under the alternate launcher:
+This is the same SB3 multi-agent setup under the generic launcher with overrides:
 
 ```bash
-python experiments/sb3_grid4x4.py
+python experiments/ppo.py scenario=resco_grid4x4 env.factory=grid4x4
 ```
 
 What it uses:
-- [`configs/sb3_grid4x4.yaml`](../../configs/sb3_grid4x4.yaml)
+- [`configs/presets/resco_grid4x4/ppo.yaml`](../../configs/presets/resco_grid4x4/ppo.yaml) plus the `scenario=resco_grid4x4` override
 - RESCO `grid4x4` through the helper factory
 - vectorized PettingZoo -> SB3 conversion
 - `stable-baselines3` and `supersuit`

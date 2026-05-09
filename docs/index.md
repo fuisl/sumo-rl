@@ -63,6 +63,8 @@ examples/publications
 
 thesis/experiments
 thesis/manual_control
+thesis/static_baselines
 thesis/third_party_sb3
+thesis/third_party_marl
 Github <https://github.com/LucasAlegre/sumo-rl>
 ```

@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - /base
+  - /scenario: resco_grid4x4
+  - /algorithm: libsignal_phase5
+  - _self_
+
+experiment:
+  name: resco_grid4x4__libsignal_ippo
+  seed: 42
+  seeds: [1, 2, 3, 4, 5]
+  runs: 5
+  episodes: 1
+  total_timesteps: 0
+  eval_episodes: 0
+
+algorithm:
+  params:
+    libsignal_agent: ppo_pfrl
+    libsignal_network: sumo4x4
+
+env:
+  factory: sumo_env
+  kwargs:
+    single_agent: false
+    num_seconds: 3600
+    use_gui: false
