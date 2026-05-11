@@ -63,6 +63,12 @@ Example:
 python experiments/dqn.py scenario=resco_ingolstadt7 logging.mode=online logging.project=my-thesis
 ```
 
+For benchmark-style SB3 runs, use the five-seed eval pattern explicitly:
+
+```bash
+python experiments/ppo.py scenario=resco_cologne1 logging.mode=online experiment.eval_episodes=5 experiment.eval_seeds=[1,2,3,4,5]
+```
+
 ## Optional Install
 To use the Hydra and W&B experiment layer, install the optional extras:
 ```bash

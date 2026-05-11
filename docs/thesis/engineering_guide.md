@@ -204,6 +204,8 @@ The callback logs:
 - `rollout/*`
 - periodic `eval/*`
 
+For thesis-style SB3 presets, evaluation should use a reproducible seed schedule rather than repeating one seed for every eval episode. The repo now supports `experiment.eval_seeds`, and the RESCO benchmark presets use the fixed-time pattern `[1, 2, 3, 4, 5]` so eval mean/std and the final traffic summary are both computed over distinct seeded episodes.
+
 The final benchmark row is not created by the callback.
 It is created by the runner after a dedicated final evaluation pass.
 

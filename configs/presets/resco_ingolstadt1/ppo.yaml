@@ -9,7 +9,8 @@ experiment:
   name: ${scenario.name}__ppo
   seed: 42
   total_timesteps: 50000
-  eval_episodes: 1
+  eval_episodes: 5
+  eval_seeds: [1, 2, 3, 4, 5]
 
 env:
   factory: parallel_env

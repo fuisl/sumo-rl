@@ -204,7 +204,8 @@ These runners use:
 - `SB3WandbCallback` for `train/*`, `rollout/*`, and periodic `eval/*`
 - a final explicit evaluation pass after training
 
-The final episode summary row is built from the cached last completed evaluation episode.
+For multi-seed SB3 evaluation, the runner builds one cached summary per eval seed and then averages the numeric `final/*`, `tripinfo/*`, and episode-time fields into one final row.
+Warnings are kept if any eval seed shows the problem.
 
 ### SAC through SB3
 

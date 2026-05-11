@@ -9,7 +9,8 @@ experiment:
   name: ${scenario.name}__dqn
   seed: 42
   total_timesteps: 10000
-  eval_episodes: 2
+  eval_episodes: 5
+  eval_seeds: [1, 2, 3, 4, 5]
 
 env:
   factory: parallel_env
