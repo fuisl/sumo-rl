@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -67,6 +68,10 @@ class SB3WandbCallback:
         eval_env=None,
         eval_episodes: int = 0,
         eval_freq: Optional[int] = None,
+        checkpoint_dir: Optional[Path] = None,
+        checkpoint_freq: int = 0,
+        save_checkpoints: bool = False,
+        save_final_model: bool = True,
     ):
         self.wandb_run = wandb_run
         self.csv_run = csv_run
@@ -75,6 +80,10 @@ class SB3WandbCallback:
         self.eval_env = eval_env
         self.eval_episodes = max(0, int(eval_episodes))
         self.eval_freq = max(1, int(eval_freq if eval_freq is not None else self.log_freq))
+        self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir is not None else None
+        self.checkpoint_freq = max(0, int(checkpoint_freq))
+        self.save_checkpoints = bool(save_checkpoints)
+        self.save_final_model = bool(save_final_model)
         self._callback = None
 
     def build(self):
@@ -93,6 +102,7 @@ class SB3WandbCallback:
         last_train_step = -1
         last_eval_step = -1
         last_sac_metrics: Dict[str, Optional[float]] = {}
+        last_checkpoint_step = -1
 
         def _is_truthy(flag_name: str, default: bool = False) -> bool:
             if logging_cfg is None or not hasattr(logging_cfg, flag_name):
@@ -159,8 +169,23 @@ class SB3WandbCallback:
             if csv_run is not None:
                 csv_run.log(metrics, step=step)
 
+        def _save_model_checkpoint(model, step: int, *, final: bool = False) -> None:
+            if self.checkpoint_dir is None:
+                return
+            if final:
+                if not self.save_final_model:
+                    return
+            elif not self.save_checkpoints or self.checkpoint_freq <= 0:
+                return
+
+            algo_name = model.__class__.__name__.lower()
+            save_dir = self.checkpoint_dir / algo_name
+            save_dir.mkdir(parents=True, exist_ok=True)
+            file_name = "final_model" if final else f"checkpoint_step_{step:09d}"
+            model.save(str(save_dir / file_name))
+
         def _log_train_metrics(locals_dict, model, step: int, force: bool = False) -> None:
-            nonlocal last_train_step
+            nonlocal last_train_step, last_checkpoint_step
             if step <= 0:
                 return
             if not force and step % log_freq != 0:
@@ -180,6 +205,9 @@ class SB3WandbCallback:
                 metrics.update({f"train/traffic/{key}": float(value) for key, value in traffic_metrics.items()})
             _log_metrics(metrics, step)
             last_train_step = step
+            if self.save_checkpoints and self.checkpoint_freq > 0 and step % self.checkpoint_freq == 0 and step != last_checkpoint_step:
+                _save_model_checkpoint(model, step)
+                last_checkpoint_step = step
 
         def _log_eval_metrics(model, step: int, force: bool = False) -> None:
             nonlocal last_eval_step
@@ -214,6 +242,7 @@ class SB3WandbCallback:
             def _on_training_end(self) -> None:
                 _log_train_metrics(self.locals, self.model, self.num_timesteps, force=True)
                 _log_eval_metrics(self.model, self.num_timesteps, force=True)
+                _save_model_checkpoint(self.model, self.num_timesteps, final=True)
                 if _is_sac_model(self.model) and _is_truthy("log_sac_diagnostics", True):
                     warnings: Dict[str, float] = {}
                     total_timesteps = float(getattr(self.model, "num_timesteps", self.num_timesteps))

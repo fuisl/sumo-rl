@@ -316,6 +316,10 @@ def _get_sb3_final_log_step(cfg: DictConfig, model: Any) -> int:
     return max(requested_step, actual_step)
 
 
+def _get_sb3_checkpoint_dir(run_dir: Path, cfg: DictConfig) -> Path:
+    return run_dir / "checkpoints" / str(cfg.algorithm.kind)
+
+
 def _get_base_env(env):
     current = env
     visited = set()
@@ -1077,6 +1081,10 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
             eval_env=eval_env,
             eval_episodes=eval_episodes,
             eval_freq=eval_freq,
+            checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
+            checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
+            save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
+            save_final_model=_logging_flag(cfg.logging, "save_final_model", True),
         ).build()
         model = DQN(
             policy=params.pop("policy", "MlpPolicy"),
@@ -1145,6 +1153,10 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
             eval_env=eval_env,
             eval_episodes=eval_episodes,
             eval_freq=eval_freq,
+            checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
+            checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
+            save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
+            save_final_model=_logging_flag(cfg.logging, "save_final_model", True),
         ).build()
 
         model = PPO(
@@ -1213,6 +1225,10 @@ def _run_sb3_sac(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
             eval_env=eval_env,
             eval_episodes=eval_episodes,
             eval_freq=eval_freq,
+            checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
+            checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
+            save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
+            save_final_model=_logging_flag(cfg.logging, "save_final_model", True),
         ).build()
 
         model = SAC(

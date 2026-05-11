@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import types
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ _SPEC.loader.exec_module(_MODULE)
 _SB3_STUB = types.ModuleType("sumo_rl.agents.sb3")
 _SB3_STUB.JointMultiAgentActionWrapper = object
 _SB3_STUB.SB3WandbCallback = object
+_SB3_STUB.__path__ = []
 sys.modules.setdefault("sumo_rl.agents.sb3", _SB3_STUB)
 
 _RUNNER_MODULE_PATH = Path(__file__).resolve().parents[1] / "sumo_rl" / "experiments" / "runner.py"
@@ -274,6 +276,81 @@ def test_safe_scalar_accepts_scalar_values_and_skips_non_scalars() -> None:
     assert safe_scalar("nope") is None
     assert safe_scalar({"a": 1}) is None
     assert safe_scalar([1, 2]) is None
+
+
+def test_sb3_callback_saves_periodic_and_final_checkpoints(monkeypatch) -> None:
+    stable_baselines3 = types.ModuleType("stable_baselines3")
+    stable_baselines3_common = types.ModuleType("stable_baselines3.common")
+    stable_baselines3_common_callbacks = types.ModuleType("stable_baselines3.common.callbacks")
+    stable_baselines3_common_evaluation = types.ModuleType("stable_baselines3.common.evaluation")
+
+    class BaseCallback:
+        pass
+
+    def evaluate_policy(*args, **kwargs):
+        return 0.0, 0.0
+
+    stable_baselines3_common_callbacks.BaseCallback = BaseCallback
+    stable_baselines3_common_evaluation.evaluate_policy = evaluate_policy
+    sb3_wrappers = types.ModuleType("sumo_rl.agents.sb3.wrappers")
+    sb3_wrappers._resolve_base_env = lambda env: env
+    monkeypatch.setitem(sys.modules, "stable_baselines3", stable_baselines3)
+    monkeypatch.setitem(sys.modules, "stable_baselines3.common", stable_baselines3_common)
+    monkeypatch.setitem(sys.modules, "stable_baselines3.common.callbacks", stable_baselines3_common_callbacks)
+    monkeypatch.setitem(sys.modules, "stable_baselines3.common.evaluation", stable_baselines3_common_evaluation)
+    monkeypatch.setitem(sys.modules, "sumo_rl.agents.sb3.wrappers", sb3_wrappers)
+
+    class DummyLogger:
+        def __init__(self) -> None:
+            self.name_to_value = {"train/loss": 1.23}
+
+    class DummyModel:
+        def __init__(self) -> None:
+            self.logger = DummyLogger()
+            self.num_timesteps = 1
+            self.saved_paths = []
+
+        def save(self, path: str) -> None:
+            self.saved_paths.append(path)
+
+    class DummyLogSink:
+        def __init__(self) -> None:
+            self.rows = []
+
+        def log(self, metrics, step=None) -> None:
+            self.rows.append((dict(metrics), step))
+
+    with tempfile.TemporaryDirectory(dir=str(Path.cwd())) as tmp_dir:
+        callback = _CALLBACKS_MODULE.SB3WandbCallback(
+            DummyLogSink(),
+            DummyLogSink(),
+            logging_cfg=types.SimpleNamespace(
+                log_sb3_internal_metrics=True,
+                log_sac_diagnostics=False,
+                log_traffic_metrics_during_training=False,
+                save_checkpoints=True,
+                save_final_model=True,
+            ),
+            log_freq=1,
+            eval_env=None,
+            eval_episodes=0,
+            checkpoint_dir=Path(tmp_dir) / "checkpoints",
+            checkpoint_freq=1,
+            save_checkpoints=True,
+            save_final_model=True,
+        ).build()
+
+        dummy_model = DummyModel()
+        callback.model = dummy_model
+        callback.num_timesteps = 1
+        callback.locals = {}
+
+        callback._on_step()
+        callback._on_training_end()
+
+        saved_paths = [Path(path) for path in dummy_model.saved_paths]
+        assert any("checkpoint_step_000000001" in path.name for path in saved_paths)
+        assert any("final_model" in path.name for path in saved_paths)
 
 
 def test_sb3_final_log_step_uses_actual_timesteps_when_rollout_overshoots() -> None:
