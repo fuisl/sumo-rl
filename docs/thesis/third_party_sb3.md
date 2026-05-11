@@ -29,6 +29,7 @@ The canonical configs now live under the scenario-first preset folders:
 
 The DQN, Q-learning, PPO, and SAC presets use the discrete RESCO traffic-signal control setups in those folders.
 SAC uses the parallel PettingZoo environment through a thin joint-action wrapper so it can train on the same discrete traffic-signal actions as the other methods.
+For heterogeneous RESCO networks like `resco_cologne3` and `resco_ingolstadt7`, the SB3 wrapper pads agent observations and action spaces before vectorization so DQN and PPO can run through `supersuit` without shape mismatches.
 
 ## Install
 

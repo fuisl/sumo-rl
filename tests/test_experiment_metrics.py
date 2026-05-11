@@ -328,6 +328,33 @@ def test_run_model_episodes_on_seeds_uses_distinct_seeds() -> None:
     assert episode_rewards == [2.0, 3.0, 4.0, 5.0, 6.0]
 
 
+def test_run_model_episodes_on_seeds_aggregates_vectorized_rewards() -> None:
+    class DummyModel:
+        def predict(self, observation, deterministic=True):
+            return np.array([0, 0, 0]), None
+
+    class DummyEnv:
+        def __init__(self) -> None:
+            self.reset_seeds = []
+            self.step_count = 0
+            self.num_envs = 3
+
+        def reset(self, seed=None, options=None):
+            self.reset_seeds.append(seed)
+            self.step_count = 0
+            return np.zeros((3, 2)), {}
+
+        def step(self, action):
+            self.step_count += 1
+            reward = np.array([1.0, 2.0, 3.0])
+            done = np.array([True, True, True])
+            return np.zeros((3, 2)), reward, done, {}
+
+    episode_rewards = run_model_episodes_on_seeds(DummyModel(), DummyEnv(), [7])
+
+    assert episode_rewards == [6.0]
+
+
 def test_run_sb3_final_evaluation_averages_final_traffic_metrics_across_eval_seeds() -> None:
     class DummyBaseEnv:
         def __init__(self) -> None:

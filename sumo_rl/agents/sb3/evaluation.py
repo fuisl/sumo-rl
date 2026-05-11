@@ -65,10 +65,17 @@ def _step_env(env: Any, action: Any) -> tuple[Any, float, bool]:
     else:
         raise ValueError(f"Unsupported evaluation step return shape: {len(step_result)}")
 
-    reward_array = np.asarray(reward).reshape(-1)
-    done_array = np.asarray(done).reshape(-1)
-    reward_value = float(reward_array[0]) if reward_array.size else 0.0
-    done_value = bool(done_array[0]) if done_array.size else bool(done)
+    if isinstance(reward, dict):
+        reward_value = float(sum(float(value) for value in reward.values()))
+    else:
+        reward_array = np.asarray(reward, dtype=float).reshape(-1)
+        reward_value = float(reward_array.sum()) if reward_array.size else 0.0
+
+    if isinstance(done, dict):
+        done_value = bool(all(bool(value) for value in done.values()))
+    else:
+        done_array = np.asarray(done).reshape(-1)
+        done_value = bool(done_array.all()) if done_array.size else bool(done)
     return observation, reward_value, done_value
 
 
@@ -85,10 +92,6 @@ def run_model_episodes_on_seeds(
     seeds = [int(seed) for seed in eval_seeds]
     if not seeds:
         return []
-
-    num_envs = int(getattr(eval_env, "num_envs", 1) or 1)
-    if num_envs != 1:
-        raise ValueError("Seeded SB3 evaluation currently expects a single evaluation env.")
 
     episode_rewards: list[float] = []
     for seed in seeds:

@@ -554,6 +554,10 @@ def _wrap_sb3_env_if_needed(cfg: DictConfig, env, params: Dict[str, Any], defaul
     import supersuit as ss
     from stable_baselines3.common.vec_env import VecMonitor
 
+    # RESCO scenarios such as cologne3 and ingolstadt7 have heterogeneous agent
+    # observation/action spaces, so pad them before converting to a VecEnv.
+    env = ss.pad_observations_v0(env)
+    env = ss.pad_action_space_v0(env)
     env = ss.pettingzoo_env_to_vec_env_v1(env)
     env = ss.concat_vec_envs_v1(
         env,
