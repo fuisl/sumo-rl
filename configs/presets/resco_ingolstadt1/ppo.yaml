@@ -1,7 +1,7 @@
 # @package _global_
 defaults:
   - /base
-  - /scenario: resco_cologne1
+  - /scenario: resco_ingolstadt1
   - /algorithm: ppo_sb3
   - _self_
 

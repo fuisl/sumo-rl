@@ -2,14 +2,14 @@
 defaults:
   - /base
   - /scenario: resco_cologne1
-  - /algorithm: ppo_sb3
+  - /algorithm: dqn_sb3
   - _self_
 
 experiment:
-  name: ${scenario.name}__ppo
+  name: ${scenario.name}__dqn
   seed: 42
-  total_timesteps: 50000
-  eval_episodes: 1
+  total_timesteps: 10000
+  eval_episodes: 2
 
 env:
   factory: parallel_env

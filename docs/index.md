@@ -30,6 +30,7 @@ documentation/sumo_env
 documentation/pz_env
 documentation/traffic_signal
 documentation/observations
+documentation/metrics
 ```
 
 ```{toctree}
@@ -61,6 +62,7 @@ examples/publications
 :hidden:
 :caption: Development
 
+thesis/engineering_guide
 thesis/experiments
 thesis/manual_control
 thesis/static_baselines

@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 from sumo_rl.experiments.runner import run
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="presets/two_way_single_intersection/dqn")
+@hydra.main(version_base=None, config_path="../configs", config_name="presets/resco_cologne1/dqn")
 def main(cfg: DictConfig) -> None:
     run(cfg)
 

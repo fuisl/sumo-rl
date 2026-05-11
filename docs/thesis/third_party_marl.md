@@ -39,8 +39,14 @@ python experiments/libsignal_mplight.py
 python experiments/libsignal_ippo.py
 ```
 
-All three launchers use the RESCO `grid4x4` scenario, run one episode per seed by default, and keep the five-seed thesis pattern.
-Their canonical config files now live under `configs/presets/resco_grid4x4/` so the scenario-specific settings sit together in one folder.
+The canonical config files now live under the scenario-first folders:
+
+- `configs/presets/resco_cologne1/`
+- `configs/presets/resco_cologne3/`
+- `configs/presets/resco_ingolstadt1/`
+- `configs/presets/resco_ingolstadt7/`
+
+The launchers default to the `resco_cologne1` presets and can be retargeted to the other RESCO scenarios by overriding `scenario=...` when needed.
 
 The LibSignal agent names used by these launchers are:
 

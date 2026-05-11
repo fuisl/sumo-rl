@@ -2,18 +2,22 @@
 defaults:
   - /base
   - /scenario: resco_cologne1
-  - /algorithm: ppo_sb3
+  - /algorithm: q_learning
   - _self_
 
 experiment:
-  name: ${scenario.name}__ppo
+  name: ${scenario.name}__ql
   seed: 42
-  total_timesteps: 50000
-  eval_episodes: 1
+  runs: 1
+  episodes: 5
+  fixed_ts: false
+  total_timesteps: 0
+  eval_episodes: 0
 
 env:
-  factory: parallel_env
+  factory: sumo_env
   kwargs:
+    single_agent: false
     num_seconds: 3600
     use_gui: false
     add_per_agent_info: true

@@ -184,20 +184,20 @@ In the folder [nets/RESCO](https://github.com/LucasAlegre/sumo-rl/tree/main/sumo
 
 Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent. In the thesis configs, the 4x4 grid presets use the RESCO `grid4x4` assets rather than the older Lucas `4x4-Lucas` network. Thesis-specific Hydra and W&B notes are documented separately in [docs/thesis/experiments.md](docs/thesis/experiments.md).
 
-### Discrete-control example in a one-way single intersection:
+### Discrete-control example in a RESCO scenario:
 ```bash
-python experiments/dqn.py scenario=two_way_single_intersection
+python experiments/dqn.py scenario=resco_cologne1
 ```
 
-### [stable-baselines3 PPO](https://github.com/DLR-RM/stable-baselines3) multiagent in the RESCO 4x4 grid:
+### [stable-baselines3 PPO](https://github.com/DLR-RM/stable-baselines3) multiagent in a RESCO scenario:
 ```bash
-python experiments/ppo.py scenario=resco_grid4x4 env.factory=grid4x4
+python experiments/ppo.py scenario=resco_cologne1
 ```
 
-### [stable-baselines3 DQN](https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/dqn/dqn.py) in a 2-way single intersection:
+### [stable-baselines3 DQN](https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/dqn/dqn.py) in a RESCO scenario:
 Obs: you need to install stable-baselines3 with ```pip install "stable_baselines3[extra]>=2.0.0a9"``` for [Gymnasium compatibility](https://stable-baselines3.readthedocs.io/en/master/guide/install.html).
 ```bash
-python experiments/dqn.py scenario=two_way_single_intersection
+python experiments/dqn.py scenario=resco_cologne3
 ```
 
 ## Citing

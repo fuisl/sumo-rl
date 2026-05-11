@@ -5,12 +5,30 @@ firstpage:
 
 # Third-Party SB3
 
-This page covers the working Stable-Baselines3 examples for the RESCO 4x4 grid.
+This page covers the Stable-Baselines3 examples for the RESCO thesis scenarios.
 If you are looking for the third-party MARL replication track for `IDQN`, `MPLight`, and `IPPO`, read [docs/thesis/third_party_marl.md](third_party_marl.md) instead.
 
-## What to Run
+## What To Run
 
-The thesis configs use the RESCO `grid4x4` assets, not the older Lucas `4x4-Lucas` network.
+The main SB3 entrypoints are:
+
+```bash
+python experiments/dqn.py
+python experiments/ql.py
+python experiments/sac.py
+python experiments/ppo.py
+```
+
+The canonical configs now live under the scenario-first preset folders:
+
+- `configs/presets/resco_cologne1/`
+- `configs/presets/resco_cologne3/`
+- `configs/presets/resco_ingolstadt1/`
+- `configs/presets/resco_ingolstadt7/`
+- The exact folder pattern is documented in [`configs/presets/README.md`](../../configs/presets/README.md)
+
+The DQN, Q-learning, PPO, and SAC presets use the discrete RESCO traffic-signal control setups in those folders.
+SAC uses the parallel PettingZoo environment through a thin joint-action wrapper so it can train on the same discrete traffic-signal actions as the other methods.
 
 ## Install
 
@@ -20,43 +38,31 @@ To run the SB3 examples, install the optional dependencies:
 pip install -e ".[experiments]"
 ```
 
-This includes Hydra, W&B, and the extra `supersuit` dependency needed for the multi-agent PPO example.
+This includes Hydra, W&B, and the extra `supersuit` dependency needed for the multi-agent SB3 examples.
 
-The config layout follows the same split used elsewhere in the thesis:
+## Metrics
 
-- `configs/scenario/` for the RESCO `grid4x4` network
-- `configs/algorithm/` for the SB3 defaults
-- the scenario-first `configs/presets/resco_grid4x4/ppo.yaml` preset for the runnable command
+The runner logs both summary and training traces:
 
-### Stable-Baselines3 PPO on RESCO 4x4
+- `resco_*` for benchmark-style episode summaries
+- `efficiency_*` for queue, speed, and throughput aggregates
+- `fairness_*` for Jain fairness over per-agent waiting times
+- `safety_*` for emergency braking and unsafe-event proxies
+- `train/*` for learning traces
+- `eval/*` for rolling evaluation checks during training
 
-This is the main multi-agent example for the thesis:
-
-```bash
-python experiments/ppo.py scenario=resco_grid4x4 env.factory=grid4x4
-```
-
-What it uses:
-- [`configs/presets/resco_grid4x4/ppo.yaml`](../../configs/presets/resco_grid4x4/ppo.yaml)
-- RESCO `grid4x4` network and route files
-- PettingZoo parallel environment wrapped for SB3
-- `stable-baselines3` and `supersuit`
-
-### Alternate Launcher for Stable-Baselines3 PPO
-
-This is the same SB3 multi-agent setup under the generic launcher with overrides:
+## Example Runs
 
 ```bash
-python experiments/ppo.py scenario=resco_grid4x4 env.factory=grid4x4
+python experiments/dqn.py scenario=resco_cologne3
+python experiments/ql.py scenario=resco_ingolstadt1
+python experiments/ppo.py scenario=resco_ingolstadt7
+python experiments/sac.py scenario=resco_ingolstadt7
 ```
 
-What it uses:
-- [`configs/presets/resco_grid4x4/ppo.yaml`](../../configs/presets/resco_grid4x4/ppo.yaml) plus the `scenario=resco_grid4x4` override
-- RESCO `grid4x4` through the helper factory
-- vectorized PettingZoo -> SB3 conversion
-- `stable-baselines3` and `supersuit`
+The PPO example is now scenario-first as well, so you can point it at `resco_cologne1`, `resco_cologne3`, `resco_ingolstadt1`, or `resco_ingolstadt7`.
 
-## How to Read the Outputs
+## How To Read The Outputs
 
 Use the Hydra output directory for the resolved config and logs:
 
@@ -77,6 +83,6 @@ Use W&B to compare:
 
 ## Notes
 
-- The SB3 example is the primary multi-agent third-party baseline for RESCO 4x4.
-- The alternate launcher is useful as a sanity check and naming alias.
-- Both examples are already wired to the shared Hydra/W&B experiment runner.
+- The SB3 examples now focus on the scenario-first RESCO presets instead of a single legacy `grid4x4` path.
+- The SAC path is deliberately centralized through the joint-action wrapper so it can smoke-test on the same discrete action set as the other methods.
+- All examples are wired to the shared Hydra/W&B experiment runner.

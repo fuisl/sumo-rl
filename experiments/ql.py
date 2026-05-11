@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 from sumo_rl.experiments.runner import run
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="presets/resco_cologne1/libsignal_mplight")
+@hydra.main(version_base=None, config_path="../configs", config_name="presets/resco_cologne1/ql")
 def main(cfg: DictConfig) -> None:
     run(cfg)
 
