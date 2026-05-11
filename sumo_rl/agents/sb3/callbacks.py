@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 import numpy as np
 
@@ -68,6 +68,7 @@ class SB3WandbCallback:
         eval_env=None,
         eval_episodes: int = 0,
         eval_freq: Optional[int] = None,
+        eval_seeds: Optional[Iterable[int]] = None,
         checkpoint_dir: Optional[Path] = None,
         checkpoint_freq: int = 0,
         save_checkpoints: bool = False,
@@ -80,6 +81,7 @@ class SB3WandbCallback:
         self.eval_env = eval_env
         self.eval_episodes = max(0, int(eval_episodes))
         self.eval_freq = max(1, int(eval_freq if eval_freq is not None else self.log_freq))
+        self.eval_seeds = [int(seed) for seed in eval_seeds] if eval_seeds is not None else []
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir is not None else None
         self.checkpoint_freq = max(0, int(checkpoint_freq))
         self.save_checkpoints = bool(save_checkpoints)
@@ -88,8 +90,8 @@ class SB3WandbCallback:
 
     def build(self):
         from stable_baselines3.common.callbacks import BaseCallback
-        from stable_baselines3.common.evaluation import evaluate_policy
         from sumo_rl.experiments.metric_utils import build_namespaced_metrics
+        from sumo_rl.agents.sb3.evaluation import run_model_episodes_on_seeds
         from sumo_rl.agents.sb3.wrappers import _resolve_base_env
 
         wandb_run = self.wandb_run
@@ -99,6 +101,7 @@ class SB3WandbCallback:
         eval_env = self.eval_env
         eval_episodes = self.eval_episodes
         eval_freq = self.eval_freq
+        eval_seeds = list(self.eval_seeds)
         last_train_step = -1
         last_eval_step = -1
         last_sac_metrics: Dict[str, Optional[float]] = {}
@@ -217,10 +220,12 @@ class SB3WandbCallback:
                 return
             if step == last_eval_step:
                 return
-            if eval_env is None or eval_episodes <= 0:
+            if eval_env is None or eval_episodes <= 0 or not eval_seeds:
                 return
 
-            mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
+            episode_rewards = run_model_episodes_on_seeds(model, eval_env, eval_seeds)
+            mean_reward = float(np.mean(episode_rewards)) if episode_rewards else 0.0
+            std_reward = float(np.std(episode_rewards)) if episode_rewards else 0.0
             metrics = {
                 "eval/num_timesteps": float(step),
                 "eval/mean_reward": float(mean_reward),

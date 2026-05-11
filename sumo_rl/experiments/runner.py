@@ -13,6 +13,7 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
 from sumo_rl.agents.sb3 import JointMultiAgentActionWrapper, SB3WandbCallback
+from sumo_rl.agents.sb3.evaluation import resolve_eval_seeds, run_model_episodes_on_seeds
 from sumo_rl.experiments.metric_utils import (
     add_namespace_aliases as _metric_add_namespace_aliases,
     build_namespaced_metrics as _metric_build_namespaced_metrics,
@@ -316,6 +317,19 @@ def _get_sb3_final_log_step(cfg: DictConfig, model: Any) -> int:
     return max(requested_step, actual_step)
 
 
+def _get_sb3_eval_seeds(cfg: DictConfig) -> list[int]:
+    eval_episodes = int(getattr(cfg.experiment, "eval_episodes", 0) or 0)
+    explicit_eval_seeds = _as_plain_dict(getattr(cfg.experiment, "eval_seeds", None))
+    if isinstance(explicit_eval_seeds, list):
+        explicit_iterable = explicit_eval_seeds
+    elif explicit_eval_seeds is None:
+        explicit_iterable = None
+    else:
+        explicit_iterable = [explicit_eval_seeds]
+    base_seed = int(cfg.experiment.seed) if cfg.experiment.seed is not None else None
+    return resolve_eval_seeds(base_seed, eval_episodes, explicit_iterable)
+
+
 def _get_sb3_checkpoint_dir(run_dir: Path, cfg: DictConfig) -> Path:
     return run_dir / "checkpoints" / str(cfg.algorithm.kind)
 
@@ -364,6 +378,111 @@ def _get_base_env(env):
             current = next_env
             continue
     return env
+
+
+def _aggregate_final_eval_rows(
+    rows: list[Dict[str, Any]],
+    *,
+    algorithm_kind: str,
+    eval_mean_reward: float,
+    eval_std_reward: float,
+    eval_episodes: Optional[int] = None,
+) -> Dict[str, Any]:
+    aggregated: Dict[str, Any] = {
+        "algorithm/kind": algorithm_kind,
+        "final/eval/mean_reward": float(eval_mean_reward),
+        "final/eval/std_reward": float(eval_std_reward),
+    }
+
+    if not rows:
+        aggregated.update(
+            {
+                "warnings/no_finished_trips": True,
+                "warnings/no_departed_vehicles": True,
+                "warnings/no_arrived_vehicles": True,
+                "warnings/no_final_summary_metrics": True,
+                "warnings/eval_episodes_too_low": bool(eval_episodes is not None and int(eval_episodes) <= 1),
+                "warnings/all_zero_traffic_metrics": True,
+            }
+        )
+        return aggregated
+
+    numeric_values: dict[str, list[float]] = defaultdict(list)
+    warning_values: dict[str, bool] = {}
+    passthrough_keys = {
+        "final/reward/name",
+        "final/reward/formula",
+        "final/reward/scope",
+        "debug/base_env_class",
+    }
+
+    for row in rows:
+        for key, value in row.items():
+            if key in {"algorithm/kind", "final/eval/mean_reward", "final/eval/std_reward"}:
+                continue
+            if key.startswith("warnings/"):
+                warning_values[key] = warning_values.get(key, False) or bool(value)
+                continue
+            if key in passthrough_keys:
+                aggregated.setdefault(key, value)
+                continue
+            if isinstance(value, (bool, int, float, np.integer, np.floating)):
+                numeric_value = float(value)
+                if np.isfinite(numeric_value):
+                    numeric_values[key].append(numeric_value)
+                elif key not in aggregated:
+                    aggregated[key] = float("nan")
+            elif key.startswith("debug/"):
+                aggregated.setdefault(key, value)
+
+    for key, values in numeric_values.items():
+        aggregated[key] = float(np.mean(values)) if values else float("nan")
+
+    aggregated.update(warning_values)
+    aggregated["warnings/eval_episodes_too_low"] = bool(eval_episodes is not None and int(eval_episodes) <= 1)
+    return aggregated
+
+
+def _run_sb3_final_evaluation(
+    model: Any,
+    eval_env: Any,
+    *,
+    algorithm_kind: str,
+    eval_seeds: list[int],
+    eval_episodes: Optional[int] = None,
+    logging_cfg=None,
+) -> tuple[float, float, Dict[str, Any]]:
+    seed_rows: list[Dict[str, Any]] = []
+
+    def _capture_seed_row(seed: int, episode_reward: float) -> None:
+        summary_env = _get_base_env(eval_env)
+        seed_rows.append(
+            _build_final_eval_summary_row(
+                summary_env,
+                algorithm_kind=algorithm_kind,
+                eval_mean_reward=float(episode_reward),
+                eval_std_reward=0.0,
+                eval_episodes=1,
+                logging_cfg=logging_cfg,
+            )
+        )
+
+    episode_rewards = run_model_episodes_on_seeds(model, eval_env, eval_seeds, on_episode_end=_capture_seed_row)
+    if episode_rewards:
+        eval_mean_reward = float(np.mean(episode_rewards))
+        eval_std_reward = float(np.std(episode_rewards))
+    else:
+        eval_mean_reward = 0.0
+        eval_std_reward = 0.0
+
+    final_summary = _aggregate_final_eval_rows(
+        seed_rows,
+        algorithm_kind=algorithm_kind,
+        eval_mean_reward=eval_mean_reward,
+        eval_std_reward=eval_std_reward,
+        eval_episodes=eval_episodes,
+    )
+    return eval_mean_reward, eval_std_reward, final_summary
 
 
 def _episode_index_from_summary(summary: Any) -> Optional[float]:
@@ -1059,10 +1178,10 @@ def _run_static_policy(cfg: DictConfig, run_dir: Path, wandb_run, csv_run, polic
 
 def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     from stable_baselines3 import DQN
-    from stable_baselines3.common.evaluation import evaluate_policy
 
     params = _as_plain_dict(cfg.algorithm.params or {})
     eval_episodes = int(cfg.experiment.eval_episodes)
+    eval_seeds = _get_sb3_eval_seeds(cfg)
     log_freq = int(getattr(cfg.logging, "log_freq", 1000))
     eval_freq = int(getattr(cfg.logging, "eval_freq", log_freq))
     env = _build_env(cfg, run_dir)
@@ -1081,6 +1200,7 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
             eval_env=eval_env,
             eval_episodes=eval_episodes,
             eval_freq=eval_freq,
+            eval_seeds=eval_seeds,
             checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
             checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
             save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
@@ -1097,13 +1217,11 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
         final_log_step = _get_sb3_final_log_step(cfg, model)
 
         try:
-            mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
-            summary_env = _get_base_env(eval_env)
-            episode_summary = _build_final_eval_summary_row(
-                summary_env,
+            mean_reward, std_reward, episode_summary = _run_sb3_final_evaluation(
+                model,
+                eval_env,
                 algorithm_kind="dqn_sb3",
-                eval_mean_reward=float(mean_reward),
-                eval_std_reward=float(std_reward),
+                eval_seeds=eval_seeds,
                 eval_episodes=eval_episodes,
                 logging_cfg=cfg.logging,
             )
@@ -1112,7 +1230,7 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
                 cfg.logging,
                 algorithm_kind="dqn_sb3",
                 eval_env=eval_env,
-                summary_env=summary_env,
+                summary_env=_get_base_env(eval_env),
             )
             _log_episode_summary(
                 wandb_run,
@@ -1131,10 +1249,10 @@ def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
 
 def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     from stable_baselines3 import PPO
-    from stable_baselines3.common.evaluation import evaluate_policy
 
     params = _as_plain_dict(cfg.algorithm.params or {})
     eval_episodes = int(cfg.experiment.eval_episodes)
+    eval_seeds = _get_sb3_eval_seeds(cfg)
     log_freq = int(getattr(cfg.logging, "log_freq", 1000))
     eval_freq = int(getattr(cfg.logging, "eval_freq", log_freq))
     env = _build_env(cfg, run_dir)
@@ -1153,6 +1271,7 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
             eval_env=eval_env,
             eval_episodes=eval_episodes,
             eval_freq=eval_freq,
+            eval_seeds=eval_seeds,
             checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
             checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
             save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
@@ -1169,13 +1288,11 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
         final_log_step = _get_sb3_final_log_step(cfg, model)
 
         try:
-            mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
-            summary_env = _get_base_env(eval_env)
-            episode_summary = _build_final_eval_summary_row(
-                summary_env,
+            mean_reward, std_reward, episode_summary = _run_sb3_final_evaluation(
+                model,
+                eval_env,
                 algorithm_kind="ppo_sb3",
-                eval_mean_reward=float(mean_reward),
-                eval_std_reward=float(std_reward),
+                eval_seeds=eval_seeds,
                 eval_episodes=eval_episodes,
                 logging_cfg=cfg.logging,
             )
@@ -1184,7 +1301,7 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
                 cfg.logging,
                 algorithm_kind="ppo_sb3",
                 eval_env=eval_env,
-                summary_env=summary_env,
+                summary_env=_get_base_env(eval_env),
             )
             _log_episode_summary(
                 wandb_run,
@@ -1203,13 +1320,13 @@ def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
 
 def _run_sb3_sac(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
     from stable_baselines3 import SAC
-    from stable_baselines3.common.evaluation import evaluate_policy
 
     if cfg.env.factory != "parallel_env":
         raise ValueError("The SAC runner requires `env.factory=parallel_env` so it can use the joint-action wrapper.")
 
     params = _as_plain_dict(cfg.algorithm.params or {})
     eval_episodes = int(cfg.experiment.eval_episodes)
+    eval_seeds = _get_sb3_eval_seeds(cfg)
     log_freq = int(getattr(cfg.logging, "log_freq", 1000))
     eval_freq = int(getattr(cfg.logging, "eval_freq", log_freq))
     env = _build_env(cfg, run_dir)
@@ -1225,6 +1342,7 @@ def _run_sb3_sac(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
             eval_env=eval_env,
             eval_episodes=eval_episodes,
             eval_freq=eval_freq,
+            eval_seeds=eval_seeds,
             checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
             checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
             save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
@@ -1242,13 +1360,11 @@ def _run_sb3_sac(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
         final_log_step = _get_sb3_final_log_step(cfg, model)
 
         try:
-            mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=eval_episodes)
-            summary_env = _get_base_env(eval_env)
-            episode_summary = _build_final_eval_summary_row(
-                summary_env,
+            mean_reward, std_reward, episode_summary = _run_sb3_final_evaluation(
+                model,
+                eval_env,
                 algorithm_kind="sac_sb3",
-                eval_mean_reward=float(mean_reward),
-                eval_std_reward=float(std_reward),
+                eval_seeds=eval_seeds,
                 eval_episodes=eval_episodes,
                 logging_cfg=cfg.logging,
             )
@@ -1257,7 +1373,7 @@ def _run_sb3_sac(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
                 cfg.logging,
                 algorithm_kind="sac_sb3",
                 eval_env=eval_env,
-                summary_env=summary_env,
+                summary_env=_get_base_env(eval_env),
             )
             _log_episode_summary(
                 wandb_run,

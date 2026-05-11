@@ -1,9 +1,9 @@
 import importlib.util
 import sys
 import types
-import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from sumo_rl.agents.ql_agent import QLAgent
@@ -15,11 +15,18 @@ assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 
+_EVAL_MODULE_PATH = Path(__file__).resolve().parents[1] / "sumo_rl" / "agents" / "sb3" / "evaluation.py"
+_EVAL_SPEC = importlib.util.spec_from_file_location("evaluation", _EVAL_MODULE_PATH)
+assert _EVAL_SPEC is not None and _EVAL_SPEC.loader is not None
+_EVAL_MODULE = importlib.util.module_from_spec(_EVAL_SPEC)
+_EVAL_SPEC.loader.exec_module(_EVAL_MODULE)
+
 _SB3_STUB = types.ModuleType("sumo_rl.agents.sb3")
 _SB3_STUB.JointMultiAgentActionWrapper = object
 _SB3_STUB.SB3WandbCallback = object
 _SB3_STUB.__path__ = []
 sys.modules.setdefault("sumo_rl.agents.sb3", _SB3_STUB)
+sys.modules.setdefault("sumo_rl.agents.sb3.evaluation", _EVAL_MODULE)
 
 _RUNNER_MODULE_PATH = Path(__file__).resolve().parents[1] / "sumo_rl" / "experiments" / "runner.py"
 _RUNNER_SPEC = importlib.util.spec_from_file_location("runner", _RUNNER_MODULE_PATH)
@@ -37,8 +44,12 @@ _build_namespaced_metrics = _MODULE.build_namespaced_metrics
 _jain_fairness = _MODULE.jain_fairness
 _build_resco_summary_row = _RUNNER_MODULE._build_resco_summary_row
 _build_final_eval_summary_row = _RUNNER_MODULE._build_final_eval_summary_row
+_run_sb3_final_evaluation = _RUNNER_MODULE._run_sb3_final_evaluation
 _get_sb3_final_log_step = _RUNNER_MODULE._get_sb3_final_log_step
+_get_sb3_eval_seeds = _RUNNER_MODULE._get_sb3_eval_seeds
 safe_scalar = _CALLBACKS_MODULE.safe_scalar
+resolve_eval_seeds = _EVAL_MODULE.resolve_eval_seeds
+run_model_episodes_on_seeds = _EVAL_MODULE.run_model_episodes_on_seeds
 
 
 def test_jain_fairness_prefers_equal_waiting_times() -> None:
@@ -278,27 +289,144 @@ def test_safe_scalar_accepts_scalar_values_and_skips_non_scalars() -> None:
     assert safe_scalar([1, 2]) is None
 
 
+def test_resolve_eval_seeds_prefers_explicit_list_and_is_deterministic() -> None:
+    assert resolve_eval_seeds(42, 5, [1, 2, 3, 4, 5]) == [1, 2, 3, 4, 5]
+    assert resolve_eval_seeds(42, 3, [1, 2, 3, 4, 5]) == [1, 2, 3]
+    assert resolve_eval_seeds(42, 4, None) == [42, 43, 44, 45]
+    assert resolve_eval_seeds(42, 4, []) == [42, 43, 44, 45]
+
+
+def test_get_sb3_eval_seeds_uses_configured_pattern() -> None:
+    cfg = types.SimpleNamespace(
+        experiment=types.SimpleNamespace(seed=42, eval_episodes=5, eval_seeds=[1, 2, 3, 4, 5])
+    )
+
+    assert _get_sb3_eval_seeds(cfg) == [1, 2, 3, 4, 5]
+
+
+def test_run_model_episodes_on_seeds_uses_distinct_seeds() -> None:
+    class DummyModel:
+        def predict(self, observation, deterministic=True):
+            return 0, None
+
+    class DummyEnv:
+        def __init__(self) -> None:
+            self.reset_seeds = []
+            self.current_reward = 0.0
+
+        def reset(self, seed=None, options=None):
+            self.reset_seeds.append(seed)
+            self.current_reward = float(seed or 0)
+            return 0, {}
+
+        def step(self, action):
+            reward = self.current_reward + 1.0
+            return 0, reward, True, False, {}
+
+    episode_rewards = run_model_episodes_on_seeds(DummyModel(), DummyEnv(), [1, 2, 3, 4, 5])
+
+    assert episode_rewards == [2.0, 3.0, 4.0, 5.0, 6.0]
+
+
+def test_run_sb3_final_evaluation_averages_final_traffic_metrics_across_eval_seeds() -> None:
+    class DummyBaseEnv:
+        def __init__(self) -> None:
+            self.reward_fn = "diff-waiting-time"
+            self.reward_weights = None
+            self.metrics = []
+            self.last_episode_summary = {}
+            self.last_episode_final_info = {}
+
+        def finalize_episode_summary(self):
+            return dict(self.last_episode_summary)
+
+    class DummyEvalEnv:
+        def __init__(self) -> None:
+            self.base_env = DummyBaseEnv()
+            self.current_seed = 0
+            self.num_envs = 1
+
+        def reset(self, seed=None, options=None):
+            self.current_seed = int(seed or 0)
+            return 0, {}
+
+        def step(self, action):
+            seed = float(self.current_seed)
+            self.base_env.last_episode_summary = {
+                "episode/index": seed,
+                "episode/sim_time_abs": 25800.0,
+                "episode/elapsed_seconds": 600.0,
+                "resco_avg_delay": seed,
+                "resco_trip_time": seed + 10.0,
+                "resco_wait": seed + 20.0,
+                "resco_queue": seed + 30.0,
+                "tripinfo/finished_count": seed + 1.0,
+                "tripinfo/unfinished_count": 0.0,
+                "tripinfo/total_count": seed + 1.0,
+                "tripinfo/avg_duration": seed + 10.0,
+                "tripinfo/avg_waiting_time": seed + 20.0,
+                "tripinfo/avg_time_loss": seed + 5.0,
+            }
+            self.base_env.last_episode_final_info = {
+                "system_total_running": seed,
+                "system_total_departed": seed + 1.0,
+                "system_total_arrived": seed + 2.0,
+                "system_total_teleported": seed + 3.0,
+                "system_total_emergency_brake": seed + 4.0,
+                "agent_a_accumulated_waiting_time": seed + 5.0,
+                "agent_b_accumulated_waiting_time": seed + 6.0,
+            }
+            return 0, seed, True, False, {}
+
+    class DummyModel:
+        def predict(self, observation, deterministic=True):
+            return 0, None
+
+    mean_reward, std_reward, summary = _run_sb3_final_evaluation(
+        DummyModel(),
+        DummyEvalEnv(),
+        algorithm_kind="ppo_sb3",
+        eval_seeds=[1, 2, 3, 4, 5],
+        eval_episodes=5,
+        logging_cfg=types.SimpleNamespace(log_final_traffic_metrics=True, debug_metrics=False),
+    )
+
+    assert mean_reward == pytest.approx(3.0)
+    assert std_reward == pytest.approx(np.std([1.0, 2.0, 3.0, 4.0, 5.0]))
+    assert summary["final/resco/avg_delay"] == pytest.approx(3.0)
+    assert summary["final/resco/trip_time"] == pytest.approx(13.0)
+    assert summary["final/efficiency/total_arrived"] == pytest.approx(5.0)
+    assert summary["final/safety/total_teleported"] == pytest.approx(6.0)
+    assert summary["tripinfo/finished_count"] == pytest.approx(4.0)
+    assert summary["warnings/no_finished_trips"] is False
+    assert summary["warnings/eval_episodes_too_low"] is False
+
+
 def test_sb3_callback_saves_periodic_and_final_checkpoints(monkeypatch) -> None:
     stable_baselines3 = types.ModuleType("stable_baselines3")
     stable_baselines3_common = types.ModuleType("stable_baselines3.common")
     stable_baselines3_common_callbacks = types.ModuleType("stable_baselines3.common.callbacks")
-    stable_baselines3_common_evaluation = types.ModuleType("stable_baselines3.common.evaluation")
 
     class BaseCallback:
         pass
 
-    def evaluate_policy(*args, **kwargs):
-        return 0.0, 0.0
+    captured_eval_seeds = []
+
+    def run_model_episodes_on_seeds(model, eval_env, eval_seeds, deterministic=True):
+        captured_eval_seeds.append(list(eval_seeds))
+        return [12.5, 13.5]
 
     stable_baselines3_common_callbacks.BaseCallback = BaseCallback
-    stable_baselines3_common_evaluation.evaluate_policy = evaluate_policy
+    evaluation_module = types.ModuleType("sumo_rl.agents.sb3.evaluation")
+    evaluation_module.run_model_episodes_on_seeds = run_model_episodes_on_seeds
     sb3_wrappers = types.ModuleType("sumo_rl.agents.sb3.wrappers")
     sb3_wrappers._resolve_base_env = lambda env: env
     monkeypatch.setitem(sys.modules, "stable_baselines3", stable_baselines3)
     monkeypatch.setitem(sys.modules, "stable_baselines3.common", stable_baselines3_common)
     monkeypatch.setitem(sys.modules, "stable_baselines3.common.callbacks", stable_baselines3_common_callbacks)
-    monkeypatch.setitem(sys.modules, "stable_baselines3.common.evaluation", stable_baselines3_common_evaluation)
+    monkeypatch.setitem(sys.modules, "sumo_rl.agents.sb3.evaluation", evaluation_module)
     monkeypatch.setitem(sys.modules, "sumo_rl.agents.sb3.wrappers", sb3_wrappers)
+    monkeypatch.setattr(_CALLBACKS_MODULE.Path, "mkdir", lambda self, parents=False, exist_ok=False: None)
 
     class DummyLogger:
         def __init__(self) -> None:
@@ -320,37 +448,49 @@ def test_sb3_callback_saves_periodic_and_final_checkpoints(monkeypatch) -> None:
         def log(self, metrics, step=None) -> None:
             self.rows.append((dict(metrics), step))
 
-    with tempfile.TemporaryDirectory(dir=str(Path.cwd())) as tmp_dir:
-        callback = _CALLBACKS_MODULE.SB3WandbCallback(
-            DummyLogSink(),
-            DummyLogSink(),
-            logging_cfg=types.SimpleNamespace(
-                log_sb3_internal_metrics=True,
-                log_sac_diagnostics=False,
-                log_traffic_metrics_during_training=False,
-                save_checkpoints=True,
-                save_final_model=True,
-            ),
-            log_freq=1,
-            eval_env=None,
-            eval_episodes=0,
-            checkpoint_dir=Path(tmp_dir) / "checkpoints",
-            checkpoint_freq=1,
+    class DummyEvalEnv:
+        def reset(self, seed=None, options=None):
+            return 0, {}
+
+        def step(self, action):
+            return 0, 0.0, True, False, {}
+
+    wandb_sink = DummyLogSink()
+    csv_sink = DummyLogSink()
+    callback = _CALLBACKS_MODULE.SB3WandbCallback(
+        wandb_sink,
+        csv_sink,
+        logging_cfg=types.SimpleNamespace(
+            log_sb3_internal_metrics=True,
+            log_sac_diagnostics=False,
+            log_traffic_metrics_during_training=False,
             save_checkpoints=True,
             save_final_model=True,
-        ).build()
+        ),
+        log_freq=1,
+        eval_env=DummyEvalEnv(),
+        eval_episodes=5,
+        eval_seeds=[1, 2, 3, 4, 5],
+        checkpoint_dir=Path("checkpoints"),
+        checkpoint_freq=1,
+        save_checkpoints=True,
+        save_final_model=True,
+    ).build()
 
-        dummy_model = DummyModel()
-        callback.model = dummy_model
-        callback.num_timesteps = 1
-        callback.locals = {}
+    dummy_model = DummyModel()
+    callback.model = dummy_model
+    callback.num_timesteps = 1
+    callback.locals = {}
 
-        callback._on_step()
-        callback._on_training_end()
+    callback._on_step()
+    callback._on_training_end()
 
-        saved_paths = [Path(path) for path in dummy_model.saved_paths]
-        assert any("checkpoint_step_000000001" in path.name for path in saved_paths)
-        assert any("final_model" in path.name for path in saved_paths)
+    saved_paths = [Path(path) for path in dummy_model.saved_paths]
+    assert any("checkpoint_step_000000001" in path.name for path in saved_paths)
+    assert any("final_model" in path.name for path in saved_paths)
+    assert captured_eval_seeds == [[1, 2, 3, 4, 5]]
+    assert any(row[0].get("eval/mean_reward") == pytest.approx(13.0) for row in wandb_sink.rows)
+    assert any(row[0].get("eval/std_reward") == pytest.approx(0.5) for row in wandb_sink.rows)
 
 
 def test_sb3_final_log_step_uses_actual_timesteps_when_rollout_overshoots() -> None:
