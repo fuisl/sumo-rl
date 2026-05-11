@@ -3,6 +3,7 @@ algorithm:
   kind: ppo_sb3
   params:
     policy: MlpPolicy
+    device: cuda
     gamma: 0.95
     n_steps: 256
     ent_coef: 0.0905168

@@ -1,10 +1,14 @@
 """SUMO Environment for Traffic Signal Control."""
 
-from gymnasium.envs.registration import register
+try:
+    from gymnasium.envs.registration import register
+except ModuleNotFoundError:
+    register = None
 
 
-register(
-    id="sumo-rl-v0",
-    entry_point="sumo_rl.environment.env:SumoEnvironment",
-    kwargs={"single_agent": True},
-)
+if register is not None:
+    register(
+        id="sumo-rl-v0",
+        entry_point="sumo_rl.environment.env:SumoEnvironment",
+        kwargs={"single_agent": True},
+    )

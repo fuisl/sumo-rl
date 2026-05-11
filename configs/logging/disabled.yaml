@@ -7,4 +7,13 @@ group: null
 tags: []
 job_type: train
 log_freq: 1000
+eval_freq: 5000
 log_every_seconds: 200
+log_sb3_internal_metrics: true
+log_sac_diagnostics: true
+log_traffic_metrics_during_training: false
+log_final_traffic_metrics: true
+log_namespace_aliases_to_wandb: false
+log_namespace_aliases_to_csv: false
+add_namespace_aliases_to_csv: false
+debug_metrics: false

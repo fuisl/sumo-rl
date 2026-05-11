@@ -18,7 +18,7 @@ env:
   factory: sumo_env
   kwargs:
     add_system_info: true
-    add_per_agent_info: false
+    add_per_agent_info: true
     tripinfo_output_name: null
 
 algorithm:

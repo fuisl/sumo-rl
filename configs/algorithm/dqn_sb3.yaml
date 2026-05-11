@@ -3,6 +3,7 @@ algorithm:
   kind: dqn_sb3
   params:
     policy: MlpPolicy
+    device: cuda
     learning_rate: 0.001
     learning_starts: 0
     train_freq: 1

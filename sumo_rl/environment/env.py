@@ -168,6 +168,9 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.last_episode_summary = {}
+        self.last_episode_final_info = {}
+        self.last_episode_lane_waiting_times = {}
+        self.num_seconds = num_seconds
         self.label = str(SumoEnvironment.CONNECTION_LABEL)
         SumoEnvironment.CONNECTION_LABEL += 1
         self.sumo = None
@@ -197,6 +200,7 @@ class SumoEnvironment(gym.Env):
         self.num_emergency_brakes = 0
         self.observations = {ts: None for ts in self.ts_ids}
         self.rewards = {ts: None for ts in self.ts_ids}
+        self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
 
     def _build_traffic_signals(self, conn):
         if not isinstance(self.reward_fn, dict):
@@ -247,6 +251,10 @@ class SumoEnvironment(gym.Env):
         if tripinfo_output is not None and "--tripinfo-output" not in sumo_cmd:
             tripinfo_output.parent.mkdir(parents=True, exist_ok=True)
             sumo_cmd.extend(["--tripinfo-output", str(tripinfo_output)])
+            if "--tripinfo-output.write-unfinished" not in sumo_cmd:
+                sumo_cmd.extend(["--tripinfo-output.write-unfinished", "true"])
+            if "--tripinfo-output.write-undeparted" not in sumo_cmd:
+                sumo_cmd.extend(["--tripinfo-output.write-undeparted", "true"])
         if self.use_gui or self.render_mode is not None:
             sumo_cmd.extend(["--start", "--quit-on-end"])
             if self.render_mode == "rgb_array":
@@ -292,6 +300,7 @@ class SumoEnvironment(gym.Env):
         self.num_departed_vehicles = 0
         self.num_teleported_vehicles = 0
         self.num_emergency_brakes = 0
+        self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
 
         if self.single_agent:
             return self._compute_observations()[self.ts_ids[0]], self._compute_info()
@@ -473,9 +482,12 @@ class SumoEnvironment(gym.Env):
 
     def _get_per_agent_info(self):
         stopped = [self.traffic_signals[ts].get_total_queued() for ts in self.ts_ids]
-        accumulated_waiting_time = [
-            sum(self.traffic_signals[ts].get_accumulated_waiting_time_per_lane()) for ts in self.ts_ids
-        ]
+        lane_waiting_times = {
+            ts: [float(value) for value in self.traffic_signals[ts].get_accumulated_waiting_time_per_lane()]
+            for ts in self.ts_ids
+        }
+        self.last_lane_waiting_times = lane_waiting_times
+        accumulated_waiting_time = [sum(lane_waiting_times[ts]) for ts in self.ts_ids]
         average_speed = [self.traffic_signals[ts].get_average_speed() for ts in self.ts_ids]
         info = {}
         for i, ts in enumerate(self.ts_ids):
@@ -495,6 +507,15 @@ class SumoEnvironment(gym.Env):
             traci.switch(self.label)
         traci.close()
 
+        if self.metrics and (
+            not self.last_episode_summary
+            or self.last_episode_summary.get("episode/index") != float(self.episode)
+        ):
+            try:
+                self.finalize_episode_summary()
+            except Exception:
+                pass
+
         if self.disp is not None:
             self.disp.stop()
             self.disp = None
@@ -506,12 +527,24 @@ class SumoEnvironment(gym.Env):
             return None
         return Path(f"{self.tripinfo_output_name}_conn{self.label}_ep{self.episode}.xml")
 
+    @staticmethod
+    def _is_truthy_xml_value(value: Optional[str]) -> bool:
+        return str(value).strip().lower() in {"1", "true", "yes"}
+
     def _parse_tripinfo_summary(self, tripinfo_path: Path) -> dict:
+        nan = float("nan")
         if not tripinfo_path.exists():
             return {
-                "resco_avg_delay": 0.0,
-                "resco_trip_time": 0.0,
-                "resco_wait": 0.0,
+                "tripinfo/finished_count": 0.0,
+                "tripinfo/unfinished_count": 0.0,
+                "tripinfo/total_count": 0.0,
+                "tripinfo/avg_duration": nan,
+                "tripinfo/avg_waiting_time": nan,
+                "tripinfo/avg_time_loss": nan,
+                "tripinfo/avg_delay": nan,
+                "resco_avg_delay": nan,
+                "resco_trip_time": nan,
+                "resco_wait": nan,
                 "resco_tripinfo_count": 0.0,
             }
 
@@ -519,40 +552,75 @@ class SumoEnvironment(gym.Env):
             tree = ET.parse(tripinfo_path)
         except (ET.ParseError, OSError):
             return {
-                "resco_avg_delay": 0.0,
-                "resco_trip_time": 0.0,
-                "resco_wait": 0.0,
+                "tripinfo/finished_count": 0.0,
+                "tripinfo/unfinished_count": 0.0,
+                "tripinfo/total_count": 0.0,
+                "tripinfo/avg_duration": nan,
+                "tripinfo/avg_waiting_time": nan,
+                "tripinfo/avg_time_loss": nan,
+                "tripinfo/avg_delay": nan,
+                "resco_avg_delay": nan,
+                "resco_trip_time": nan,
+                "resco_wait": nan,
                 "resco_tripinfo_count": 0.0,
             }
         vehicles = tree.getroot().findall(".//tripinfo")
         if not vehicles:
             return {
-                "resco_avg_delay": 0.0,
-                "resco_trip_time": 0.0,
-                "resco_wait": 0.0,
+                "tripinfo/finished_count": 0.0,
+                "tripinfo/unfinished_count": 0.0,
+                "tripinfo/total_count": 0.0,
+                "tripinfo/avg_duration": nan,
+                "tripinfo/avg_waiting_time": nan,
+                "tripinfo/avg_time_loss": nan,
+                "tripinfo/avg_delay": nan,
+                "resco_avg_delay": nan,
+                "resco_trip_time": nan,
+                "resco_wait": nan,
                 "resco_tripinfo_count": 0.0,
             }
 
         delays = []
         trip_times = []
         waits = []
-        tripinfo_count = 0
+        time_losses = []
+        finished_count = 0
+        unfinished_count = 0
         for vehicle in vehicles:
             vehicle_id = vehicle.attrib.get("id", "")
             if _is_ghost_vehicle(vehicle_id):
                 continue
-            tripinfo_count += 1
+            is_unfinished = self._is_truthy_xml_value(vehicle.attrib.get("vaporized")) or self._is_truthy_xml_value(
+                vehicle.attrib.get("unfinished")
+            )
+            if is_unfinished:
+                unfinished_count += 1
+                continue
+            finished_count += 1
             time_loss = float(vehicle.attrib.get("timeLoss", 0.0))
             depart_delay = float(vehicle.attrib.get("departDelay", 0.0))
             delays.append(time_loss + depart_delay)
             trip_times.append(float(vehicle.attrib.get("duration", 0.0)))
             waits.append(float(vehicle.attrib.get("waitingTime", 0.0)))
+            time_losses.append(time_loss)
 
+        total_count = finished_count + unfinished_count
+        avg_delay = float(np.mean(delays)) if delays else nan
+        avg_trip_time = float(np.mean(trip_times)) if trip_times else nan
+        avg_wait = float(np.mean(waits)) if waits else nan
+        avg_time_loss = float(np.mean(time_losses)) if time_losses else nan
         return {
-            "resco_avg_delay": float(np.mean(delays)) if delays else 0.0,
-            "resco_trip_time": float(np.mean(trip_times)) if trip_times else 0.0,
-            "resco_wait": float(np.mean(waits)) if waits else 0.0,
-            "resco_tripinfo_count": float(tripinfo_count),
+            "tripinfo/finished_count": float(finished_count),
+            "tripinfo/unfinished_count": float(unfinished_count),
+            "tripinfo/total_count": float(total_count),
+            "tripinfo/avg_duration": avg_trip_time,
+            "tripinfo/avg_waiting_time": avg_wait,
+            "tripinfo/avg_time_loss": avg_time_loss,
+            "tripinfo/avg_delay": avg_delay,
+            "resco_avg_delay": avg_delay,
+            "resco_trip_time": avg_trip_time,
+            "resco_wait": avg_wait,
+            "resco_tripinfo_count": float(finished_count),
         }
 
     def _parse_queue_summary(self) -> dict:
@@ -580,23 +648,32 @@ class SumoEnvironment(gym.Env):
     def finalize_episode_summary(self):
         """Build and cache the RESCO-style summary for the current episode."""
         last_step = 0.0
+        last_info = {}
         if self.metrics:
             last_step = float(self.metrics[-1].get("step", 0.0))
+            last_info = dict(self.metrics[-1])
         elif getattr(self, "sumo", None) is not None:
             last_step = float(self.sim_step)
 
         summary = {
             "episode/index": float(self.episode),
+            "episode/sim_time_abs": last_step,
+            "episode/elapsed_seconds": max(0.0, last_step - float(self.begin_time)),
             "episode/steps": last_step,
             "sim_step": last_step,
         }
-        if self.metrics:
-            summary.update({key: value for key, value in self.metrics[-1].items() if key.startswith("system_")})
+        if last_info:
+            summary.update({key: value for key, value in last_info.items() if key.startswith("system_")})
         tripinfo_output = self._build_tripinfo_output_path()
         if tripinfo_output is not None:
             summary.update(self._parse_tripinfo_summary(tripinfo_output))
         summary.update(self._parse_queue_summary())
         self.last_episode_summary = summary
+        self.last_episode_final_info = last_info
+        self.last_episode_lane_waiting_times = {
+            ts: [float(value) for value in values]
+            for ts, values in (self.last_lane_waiting_times or {}).items()
+        }
         return summary
 
     def __del__(self):
@@ -634,9 +711,12 @@ class SumoEnvironment(gym.Env):
 
     def encode(self, state, ts_id):
         """Encode the state of the traffic signal into a hashable object."""
-        phase = int(np.where(state[: self.traffic_signals[ts_id].num_green_phases] == 1)[0])
-        min_green = state[self.traffic_signals[ts_id].num_green_phases]
-        density_queue = [self._discretize_density(d) for d in state[self.traffic_signals[ts_id].num_green_phases + 1 :]]
+        state = np.asarray(state).reshape(-1)
+        num_green_phases = self.traffic_signals[ts_id].num_green_phases
+        phase_slice = state[:num_green_phases]
+        phase = 0 if phase_slice.size == 0 else int(np.argmax(phase_slice))
+        min_green = state[num_green_phases] if state.size > num_green_phases else 0.0
+        density_queue = [self._discretize_density(d) for d in state[num_green_phases + 1 :]]
         # tuples are hashable and can be used as key in python dictionary
         return tuple([phase, min_green] + density_queue)
 
