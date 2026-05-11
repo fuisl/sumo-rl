@@ -7,5 +7,5 @@ env:
   kwargs:
     net_file: sumo_rl/nets/RESCO/ingolstadt1/ingolstadt1.net.xml
     route_file: sumo_rl/nets/RESCO/ingolstadt1/ingolstadt1.rou.xml
-    begin_time: 25200
+    begin_time: 57600
     use_gui: false
