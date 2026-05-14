@@ -184,6 +184,29 @@ In the folder [nets/RESCO](https://github.com/LucasAlegre/sumo-rl/tree/main/sumo
 
 Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent. In the thesis configs, the 4x4 grid presets use the RESCO `grid4x4` assets rather than the older Lucas `4x4-Lucas` network. Thesis-specific Hydra and W&B notes are documented separately in [docs/thesis/experiments.md](docs/thesis/experiments.md).
 
+Graph-based discrete SAC baseline for RESCO scenarios:
+
+```bash
+python experiments/local_neighbor_gat_discrete_sac_resco.py --scenario grid4x4 --episodes 10
+```
+
+RLlib-optimized baseline training for RESCO scenarios:
+
+```bash
+pip install -e ".[rllib]"
+python experiments/baselinev1_rllib_resco.py --scenario cologne8 --num-workers 0 --max-iters 50
+```
+
+The RLlib entrypoint defaults to SAC, uses a Torch Geometric GATv2 neighbor encoder, wraps the PettingZoo parallel environment with graph observations and action masks, and logs to WandB when `WANDB_PROJECT` or `WANDB_API_KEY` is available. GPU allocation defaults to `--num-gpus auto`; use `--num-gpus 0` to force CPU. Use `--wandb on` to require WandB logging or `--wandb off` to disable it.
+
+If you want to push runs to Weights & Biases, put the credentials/config in a local `.env` at the repo root, for example:
+
+```bash
+WANDB_API_KEY=...
+WANDB_PROJECT=sumo-rl
+WANDB_ENTITY=your-entity
+```
+
 ### Discrete-control example in a RESCO scenario:
 ```bash
 python experiments/dqn.py scenario=resco_cologne1

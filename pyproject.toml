@@ -16,6 +16,7 @@ dependencies = [
     'numpy',
     'pandas',
     'pillow',
+    'wandb',
     'sumolib>=1.14.0',
     'traci>=1.14.0',
     "stable-baselines3>=2.7.1",

@@ -113,4 +113,5 @@ settings.json
 *.csv
 /logs
 /wandb
-outputs
+
+outputs/
