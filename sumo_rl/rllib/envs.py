@@ -330,12 +330,13 @@ class SumoParallelMultiAgentEnv(_RLLibMultiAgentEnv):
     """A light MultiAgentEnv wrapper around the SUMO PettingZoo parallel API."""
 
     def __init__(self, base_env: Any):
-        super().__init__()
-
         self.base_env = base_env
         self.env = base_env
         self.possible_agents = list(getattr(base_env, "possible_agents", getattr(base_env, "agents", [])))
         self.agents = list(self.possible_agents)
+        self._agent_ids = set(self.possible_agents)
+        super().__init__()
+
         self._last_obs_dict: Dict[str, Any] = {}
         self._last_info_dict: Dict[str, Any] = {}
         self._observation_spaces = {
@@ -381,14 +382,16 @@ class SumoParallelMultiAgentEnv(_RLLibMultiAgentEnv):
         self._last_info_dict = dict(infos or {})
         terminations = dict(terminations or {})
         truncations = dict(truncations or {})
-        done = bool(
+        terminated = bool(
             terminations.get("__all__", False)
-            or truncations.get("__all__", False)
             or all(bool(terminations.get(agent_id, False)) for agent_id in self.possible_agents)
+        )
+        truncated = bool(
+            truncations.get("__all__", False)
             or all(bool(truncations.get(agent_id, False)) for agent_id in self.possible_agents)
         )
-        terminations["__all__"] = done
-        truncations["__all__"] = done
+        terminations["__all__"] = terminated
+        truncations["__all__"] = truncated
         return obs_dict, rewards, terminations, truncations, infos
 
     def close(self) -> None:
@@ -401,6 +404,8 @@ class SumoParallelMultiAgentEnv(_RLLibMultiAgentEnv):
         return None
 
     def __getattr__(self, item: str) -> Any:
+        if "base_env" not in self.__dict__:
+            raise AttributeError(item)
         return getattr(self.base_env, item)
 
 
