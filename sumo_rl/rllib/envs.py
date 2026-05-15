@@ -154,7 +154,7 @@ def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None)
 
     factory = getattr(sumo_rl, factory_name, None)
     if factory is None:
-        raise ValueError(f"Unsupported RESCO factory: {factory_name}")
+        raise ValueError(f"Unsupported scenario factory: {factory_name}")
     return factory(**kwargs)
 
 

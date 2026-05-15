@@ -1,0 +1,11 @@
+# @package _global_
+scenario:
+  name: ingolstadt21
+
+env:
+  factory: ingolstadt21
+  kwargs:
+    net_file: sumo_rl/nets/RESCO/ingolstadt21/ingolstadt21.net.xml
+    route_file: sumo_rl/nets/RESCO/ingolstadt21/ingolstadt21.rou.xml
+    begin_time: 57600
+    use_gui: false
