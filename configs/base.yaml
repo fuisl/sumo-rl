@@ -10,7 +10,7 @@ experiment:
   seed: 42
   runs: 1
   episodes: 1
-  total_timesteps: 1000
+  episode_seconds: 1000
   eval_episodes: 1
   eval_seeds: null
   fixed_ts: false

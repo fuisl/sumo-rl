@@ -73,11 +73,11 @@ The runner also logs reward metadata in the final episode summary:
 
 | Metric | Producer | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `train/reward_mean` | algorithm runner | latest reward batch from the trainer result | every `logging.train_log_freq_steps` sampled env steps and on training end; default is every step |
-| `train/reward_sum` | algorithm runner | latest reward batch from the trainer result | every `logging.train_log_freq_steps` sampled env steps and on training end; default is every step |
-| `train/episode_reward` | direct or AEC Q-learning runner | sum of per-step environment rewards over the episode | once per episode |
-| `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `logging.validation_log_freq_episodes` eval episodes and once after training |
-| `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `logging.validation_log_freq_episodes` eval episodes and once after training |
+| `train/reward_mean` | algorithm runner | latest reward batch from the trainer result | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `train/episode_reward` | algorithm runner | latest episode return snapshot from the trainer result | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `train/resco/*` | algorithm runner | cached RESCO episode summary from the completed training episode | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
+| `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
 
 For SAC, the joint wrapper reduces the per-agent reward dictionary to one scalar before handing it to the learner.
 That means SAC training rewards are not directly comparable to the per-agent raw reward vector.
@@ -129,6 +129,8 @@ These come from the final cached live-info row of the completed episode, not fro
 | `safety_total_teleported` | cumulative teleported vehicles | `sumo.simulation.getEndingTeleportNumber()` | episode summary and live info |
 | `safety_total_emergency_brake` | cumulative emergency stopping events | `sumo.simulation.getEmergencyStoppingVehiclesNumber()` | episode summary and live info |
 | `safety_total_collisions` | cumulative colliding vehicles | `sumo.simulation.getCollidingVehiclesNumber()` or `sumo.simulation.getCollidingVehiclesIDList()` | episode summary and live info |
+| `final/resco_wait_std` | std of per-vehicle `waitingTime` in the eval episode | tripinfo XML | final evaluation summary |
+| `final/resco_avg_delay_std` | std of per-vehicle `timeLoss + departDelay` in the eval episode | tripinfo XML | final evaluation summary |
 
 Important interpretation note:
 

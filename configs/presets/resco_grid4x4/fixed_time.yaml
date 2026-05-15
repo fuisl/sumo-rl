@@ -11,7 +11,6 @@ experiment:
   runs: 5
   episodes: 1
   fixed_ts: true
-  total_timesteps: 0
   eval_episodes: 0
 
 env:

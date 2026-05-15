@@ -21,6 +21,7 @@ Hydra is used as the experiment composition layer.
 - Command-line overrides let you change seeds, paths, and hyperparameters without editing code
 - Each run gets its own output directory under `outputs/<experiment-name>/<timestamp>/`
 - A local metrics CSV is written to `outputs/<experiment-name>/<timestamp>/logs/metrics.csv` for quick debugging
+- Episode horizon is configured in seconds with `experiment.episode_seconds`. If you need the decision-step horizon, divide by `delta_time`; for example, `3600` seconds with `delta_time=5` is about `720` steps.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
   - `resco_avg_delay` from SUMO tripinfo `timeLoss`
   - `resco_trip_time` from SUMO tripinfo `duration`
