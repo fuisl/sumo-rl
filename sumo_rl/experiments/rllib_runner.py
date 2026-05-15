@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional
 
 import numpy as np
 from omegaconf import DictConfig
@@ -18,42 +19,24 @@ from sumo_rl.experiments.runner import (
     _build_final_eval_summary_row,
     _get_run_dir,
     _init_wandb,
+    _log_outputs,
     _log_episode_summary,
     _resolve_num_gpus,
     _update_wandb_summary,
 )
-from sumo_rl.rllib.custom_sac import build_custom_sac_module_spec
+from sumo_rl.agents.dqn import rllib as dqn_agent
+from sumo_rl.agents.ppo import rllib as ppo_agent
+from sumo_rl.agents.rllib_common import (
+    build_policy_mapping as _build_policy_mapping,
+    plain_dict as _plain_dict,
+    policy_id_for_agent as _policy_id_for_agent,
+    policy_mode as _policy_mode,
+)
+from sumo_rl.agents.sac import rllib as sac_agent
 from sumo_rl.rllib.envs import build_multi_agent_wrapper, scenario_factory_name
 
 
-SUPPORTED_RLLIB_ALGORITHMS = {
-    "ppo_rllib",
-    "dqn_rllib",
-    "sac_rllib_builtin",
-    "sac_rllib_custom",
-}
-
-
-MULTI_AGENT_RLLIB_ALGORITHMS = {
-    "ppo_rllib",
-    "dqn_rllib",
-    "sac_rllib_builtin",
-    "sac_rllib_custom",
-}
-
-
-def _plain_dict(cfg: Any) -> Dict[str, Any]:
-    if cfg is None:
-        return None
-    if isinstance(cfg, dict):
-        return dict(cfg)
-    try:
-        from omegaconf import OmegaConf
-    except ImportError:
-        return dict(cfg)
-    if OmegaConf.is_config(cfg):
-        return OmegaConf.to_container(cfg, resolve=True)
-    return dict(cfg)
+SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, *sac_agent.KINDS}
 
 
 def _eval_seeds(cfg: DictConfig) -> list[int]:
@@ -69,251 +52,35 @@ def _eval_seeds(cfg: DictConfig) -> list[int]:
     return [base_seed + index for index in range(count)]
 
 
-def _register_env(cfg: DictConfig, run_dir: Path, algorithm_kind: str, *, pad_spaces: bool = False):
-    from ray.tune.registry import register_env
-
-    env_name = f"sumo_rl_{scenario_factory_name(cfg)}_{algorithm_kind}"
-
-    def _creator(env_config):
-        env_config = dict(env_config or {})
-        seed = env_config.get("seed")
-        if seed is None:
-            base_seed = int(cfg.experiment.seed) if getattr(cfg.experiment, "seed", None) is not None else 0
-            seed = base_seed + int(env_config.get("worker_index", 0) or 0)
-        if algorithm_kind in MULTI_AGENT_RLLIB_ALGORITHMS:
-            return build_multi_agent_wrapper(cfg, run_dir, seed=seed, pad_spaces=pad_spaces)
-        raise ValueError(f"Unsupported RLlib environment kind: {algorithm_kind}")
-
-    register_env(env_name, _creator)
-    return env_name
+def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
+    scenario_name = scenario_factory_name(cfg) or str(getattr(getattr(cfg, "scenario", None), "name", "scenario"))
+    timestamp = datetime.now().strftime("%H%M%S")
+    return f"{scenario_name}__{algorithm_kind}__{timestamp}"
 
 
-def _training_iterations(cfg: DictConfig) -> int:
-    params = _plain_dict(getattr(cfg.algorithm, "params", {}) or {})
-    value = params.get("train_iterations")
-    if value is not None:
-        return max(1, int(value))
-    total_timesteps = int(getattr(cfg.experiment, "total_timesteps", 1) or 1)
-    return max(1, min(20, total_timesteps // 1000 or 1))
-
-
-def _representative_spaces(env) -> Tuple[Any, Any]:
-    if hasattr(env, "observation_spaces") and hasattr(env, "action_spaces"):
-        agent_id = next(iter(env.observation_spaces.keys()))
-        return env.observation_spaces[agent_id], env.action_spaces[agent_id]
-    return env.observation_space, env.action_space
-
-
-def _policy_mode(params: Dict[str, Any]) -> str:
-    return str(params.get("policy_mode", "independent") or "independent").strip().lower()
-
-
-def _policy_id_for_agent(agent_id: str, policy_mode: str) -> str:
-    if policy_mode == "shared":
-        return "shared_policy"
-    return str(agent_id)
-
-
-def _build_policy_mapping(policy_mode: str):
-    def _mapping_fn(agent_id, *args, **kwargs):
-        del args, kwargs
-        return _policy_id_for_agent(str(agent_id), policy_mode)
-
-    return _mapping_fn
-
-
-def _build_multi_agent_policies(
-    cfg: DictConfig,
-    run_dir: Path,
-    params: Dict[str, Any],
-    *,
-    pad_spaces: bool,
-):
-    from ray.rllib.policy.policy import PolicySpec
-
-    sample_env = build_multi_agent_wrapper(
-        cfg,
-        run_dir,
-        seed=int(getattr(cfg.experiment, "seed", 0) or 0),
-        pad_spaces=pad_spaces,
-    )
-    policies = {}
-    for agent_id in sample_env.possible_agents:
-        policies[str(agent_id)] = PolicySpec(
-            observation_space=sample_env.observation_space(agent_id),
-            action_space=sample_env.action_space(agent_id),
-        )
-    sample_env.close()
-    return policies
-
-
-def _build_shared_policy_dict(policies: Dict[str, Any]) -> Dict[str, Any]:
-    first_spec = next(iter(policies.values()))
-    return {"shared_policy": first_spec}
-
-
-def _apply_common_env_runner_settings(config, params: Dict[str, Any]):
-    num_env_runners = int(params.get("num_env_runners", 0) or 0)
-    num_envs_per_runner = int(params.get("num_envs_per_env_runner", 1) or 1)
-    if hasattr(config, "env_runners"):
-        config = config.env_runners(
-            num_env_runners=num_env_runners,
-            num_envs_per_env_runner=num_envs_per_runner,
-        )
-    if hasattr(config, "learners"):
-        learner_kwargs: Dict[str, Any] = {}
-        if params.get("num_learners") is not None:
-            learner_kwargs["num_learners"] = int(params["num_learners"])
-        if params.get("num_cpus_per_learner") is not None:
-            learner_kwargs["num_cpus_per_learner"] = float(params["num_cpus_per_learner"])
-        if params.get("num_gpus_per_learner", "auto") is not None:
-            learner_kwargs["num_gpus_per_learner"] = _resolve_num_gpus(
-                params.get("num_gpus_per_learner", "auto")
-            )
-        if params.get("local_gpu_idx") is not None:
-            learner_kwargs["local_gpu_idx"] = int(params["local_gpu_idx"])
-        if learner_kwargs:
-            config = config.learners(**learner_kwargs)
-    return config
-
-
-def _total_timesteps(cfg: DictConfig) -> int:
-    return max(1, int(getattr(cfg.experiment, "total_timesteps", 1) or 1))
-
-
-def _cap_to_horizon(value: Any, horizon: int) -> int:
-    return max(1, min(int(value), int(horizon)))
-
-
-def _apply_common_training_settings(config, params: Dict[str, Any], *, total_timesteps: int):
-    training_kwargs: Dict[str, Any] = {}
-    for key in (
-        "lr",
-        "gamma",
-        "lambda_",
-        "clip_param",
-        "entropy_coeff",
-        "grad_clip",
-        "train_batch_size_per_learner",
-        "num_epochs",
-        "minibatch_size",
-        "actor_lr",
-        "critic_lr",
-        "alpha_lr",
-        "tau",
-        "initial_alpha",
-        "target_entropy",
-        "n_step",
-        "training_intensity",
-        "num_steps_sampled_before_learning_starts",
-        "target_network_update_freq",
-        "twin_q",
-        "clip_actions",
-    ):
-        if key in params and params[key] is not None:
-            training_kwargs[key] = params[key]
-    if "train_batch_size_per_learner" in training_kwargs:
-        training_kwargs["train_batch_size_per_learner"] = _cap_to_horizon(
-            training_kwargs["train_batch_size_per_learner"],
-            total_timesteps,
-        )
-    if "num_sgd_iter" in params and params["num_sgd_iter"] is not None:
-        training_kwargs["num_epochs"] = params["num_sgd_iter"]
-    if "sgd_minibatch_size" in params and params["sgd_minibatch_size"] is not None:
-        training_kwargs["minibatch_size"] = _cap_to_horizon(
-            params["sgd_minibatch_size"],
-            int(training_kwargs.get("train_batch_size_per_learner", total_timesteps)),
-        )
-    if training_kwargs and hasattr(config, "training"):
-        config = config.training(**training_kwargs)
-    if hasattr(config, "reporting"):
-        config = config.reporting(min_sample_timesteps_per_iteration=total_timesteps)
-    return config
+def _algorithm_module(algorithm_kind: str):
+    if algorithm_kind == ppo_agent.KIND:
+        return ppo_agent
+    if algorithm_kind == dqn_agent.KIND:
+        return dqn_agent
+    if algorithm_kind in sac_agent.KINDS:
+        return sac_agent
+    raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
 
 
 def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str):
-    params = _plain_dict(getattr(cfg.algorithm, "params", {}) or {})
-    policy_mode = _policy_mode(params)
-    env_name = _register_env(cfg, run_dir, algorithm_kind, pad_spaces=(policy_mode == "shared"))
-    total_timesteps = _total_timesteps(cfg)
+    module = _algorithm_module(algorithm_kind)
+    if module is sac_agent:
+        return module.build_config(cfg, run_dir, algorithm_kind=algorithm_kind)
+    return module.build_config(cfg, run_dir)
 
-    if algorithm_kind == "ppo_rllib":
-        from ray.rllib.algorithms.ppo import PPOConfig
-        policies = _build_multi_agent_policies(cfg, run_dir, params, pad_spaces=(policy_mode == "shared"))
 
-        config = PPOConfig().framework("torch").environment(env_name)
-        config = _apply_common_env_runner_settings(config, params)
-        config = _apply_common_training_settings(config, params, total_timesteps=total_timesteps)
-        config = config.multi_agent(
-            policies=(_build_shared_policy_dict(policies) if policy_mode == "shared" else policies),
-            policy_mapping_fn=_build_policy_mapping(policy_mode),
-            policies_to_train=(["shared_policy"] if policy_mode == "shared" else list(policies.keys())),
-        )
-        return config
-
-    if algorithm_kind == "dqn_rllib":
-        from ray.rllib.algorithms.dqn import DQNConfig
-        policies = _build_multi_agent_policies(cfg, run_dir, params, pad_spaces=(policy_mode == "shared"))
-
-        config = DQNConfig().framework("torch").environment(env_name)
-        dqn_params = dict(params)
-        if "num_steps_sampled_before_learning_starts" in dqn_params:
-            dqn_params["num_steps_sampled_before_learning_starts"] = max(
-                int(dqn_params["num_steps_sampled_before_learning_starts"]),
-                total_timesteps + 1,
-            )
-        config = _apply_common_env_runner_settings(config, dqn_params)
-        config = _apply_common_training_settings(config, dqn_params, total_timesteps=total_timesteps)
-        config = config.multi_agent(
-            policies=(_build_shared_policy_dict(policies) if policy_mode == "shared" else policies),
-            policy_mapping_fn=_build_policy_mapping(policy_mode),
-            policies_to_train=(["shared_policy"] if policy_mode == "shared" else list(policies.keys())),
-        )
-        return config
-
-    if algorithm_kind == "sac_rllib_builtin":
-        from ray.rllib.algorithms.sac import SACConfig
-        policies = _build_multi_agent_policies(cfg, run_dir, params, pad_spaces=(policy_mode == "shared"))
-
-        config = SACConfig().framework("torch").environment(env_name)
-        config = _apply_common_env_runner_settings(config, params)
-        config = _apply_common_training_settings(config, params, total_timesteps=total_timesteps)
-        config = config.multi_agent(
-            policies=(_build_shared_policy_dict(policies) if policy_mode == "shared" else policies),
-            policy_mapping_fn=_build_policy_mapping(policy_mode),
-            policies_to_train=(["shared_policy"] if policy_mode == "shared" else list(policies.keys())),
-        )
-        return config
-
-    if algorithm_kind == "sac_rllib_custom":
-        from ray.rllib.algorithms.sac import SACConfig
-        from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
-
-        policies = _build_multi_agent_policies(cfg, run_dir, params, pad_spaces=(policy_mode == "shared"))
-        active_policies = _build_shared_policy_dict(policies) if policy_mode == "shared" else policies
-        rl_module_specs = {
-            policy_id: build_custom_sac_module_spec(
-                policy_spec.observation_space,
-                policy_spec.action_space,
-                model_config=params.get("model_config"),
-            )
-            for policy_id, policy_spec in active_policies.items()
-        }
-
-        config = SACConfig().framework("torch").environment(env_name)
-        config = _apply_common_env_runner_settings(config, params)
-        config = _apply_common_training_settings(config, params, total_timesteps=total_timesteps)
-        config = config.multi_agent(
-            policies=active_policies,
-            policy_mapping_fn=_build_policy_mapping(policy_mode),
-            policies_to_train=list(active_policies.keys()),
-        )
-        config = config.rl_module(
-            rl_module_spec=MultiRLModuleSpec(rl_module_specs=rl_module_specs)
-        )
-        return config
-
-    raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
+def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics) -> None:
+    module = _algorithm_module(algorithm_kind)
+    if module is sac_agent:
+        module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics)
+    else:
+        module.train(algo, cfg, emit_metrics=emit_metrics)
 
 
 def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
@@ -435,7 +202,8 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     run_dir = _get_run_dir()
     run_dir.mkdir(parents=True, exist_ok=True)
     logging_cfg = cfg.logging
-    wandb_run = _init_wandb(cfg, run_dir)
+    run_name = _rllib_run_name(cfg, algorithm_kind)
+    wandb_run = _init_wandb(cfg, run_dir, run_name=run_name)
     csv_run = _LocalMetricsCsvLogger(run_dir / "csv" / f"{cfg.experiment.name}.csv")
 
     import ray
@@ -450,12 +218,12 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         build_algo = getattr(config, "build_algo", None)
         algo = build_algo() if callable(build_algo) else config.build()
 
-        for iteration in range(_training_iterations(cfg)):
-            result = algo.train()
-            print(
-                f"[{algorithm_kind}] iteration={iteration + 1} "
-                f"result_keys={sorted(result.keys())[:8]}"
-            )
+        _train_algorithm(
+            algo,
+            cfg,
+            algorithm_kind,
+            emit_metrics=lambda metrics, step: _log_outputs(wandb_run, csv_run, metrics, step=step),
+        )
 
         final_summary = _evaluate(
             cfg,

@@ -494,7 +494,7 @@ def _get_run_dir() -> Path:
     return Path("outputs") / f"run_{timestamp}"
 
 
-def _init_wandb(cfg: DictConfig, run_dir: Path):
+def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = None):
     logging_cfg = cfg.logging
     if not logging_cfg.enabled:
         return None
@@ -509,7 +509,7 @@ def _init_wandb(cfg: DictConfig, run_dir: Path):
             "Hydra logging is enabled but `wandb` is not installed. Install the `experiments` extra first."
         ) from exc
 
-    run_name = logging_cfg.name or cfg.experiment.name
+    run_name = run_name or logging_cfg.name or cfg.experiment.name
     project = logging_cfg.project or os.environ.get("WANDB_PROJECT") or cfg.experiment.project
     entity = logging_cfg.entity or os.environ.get("WANDB_ENTITY")
     group = logging_cfg.group or os.environ.get("WANDB_RUN_GROUP") or cfg.experiment.group
