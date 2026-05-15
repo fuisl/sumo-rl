@@ -558,52 +558,36 @@ class SumoEnvironment(gym.Env):
 
     def _parse_tripinfo_summary(self, tripinfo_path: Path) -> dict:
         nan = float("nan")
+        empty_summary = {
+            "tripinfo/finished_count": 0.0,
+            "tripinfo/unfinished_count": 0.0,
+            "tripinfo/total_count": 0.0,
+            "tripinfo/avg_duration": nan,
+            "tripinfo/std_duration": nan,
+            "tripinfo/avg_waiting_time": nan,
+            "tripinfo/std_waiting_time": nan,
+            "tripinfo/avg_time_loss": nan,
+            "tripinfo/std_time_loss": nan,
+            "tripinfo/avg_delay": nan,
+            "tripinfo/std_delay": nan,
+            "resco_avg_delay": nan,
+            "resco_avg_delay_std": nan,
+            "resco_trip_time": nan,
+            "resco_trip_time_std": nan,
+            "resco_wait": nan,
+            "resco_wait_std": nan,
+            "resco_tripinfo_count": 0.0,
+        }
         if not tripinfo_path.exists():
-            return {
-                "tripinfo/finished_count": 0.0,
-                "tripinfo/unfinished_count": 0.0,
-                "tripinfo/total_count": 0.0,
-                "tripinfo/avg_duration": nan,
-                "tripinfo/avg_waiting_time": nan,
-                "tripinfo/avg_time_loss": nan,
-                "tripinfo/avg_delay": nan,
-                "resco_avg_delay": nan,
-                "resco_trip_time": nan,
-                "resco_wait": nan,
-                "resco_tripinfo_count": 0.0,
-            }
+            return empty_summary
 
         try:
             tree = ET.parse(tripinfo_path)
         except (ET.ParseError, OSError):
-            return {
-                "tripinfo/finished_count": 0.0,
-                "tripinfo/unfinished_count": 0.0,
-                "tripinfo/total_count": 0.0,
-                "tripinfo/avg_duration": nan,
-                "tripinfo/avg_waiting_time": nan,
-                "tripinfo/avg_time_loss": nan,
-                "tripinfo/avg_delay": nan,
-                "resco_avg_delay": nan,
-                "resco_trip_time": nan,
-                "resco_wait": nan,
-                "resco_tripinfo_count": 0.0,
-            }
+            return empty_summary
         vehicles = tree.getroot().findall(".//tripinfo")
         if not vehicles:
-            return {
-                "tripinfo/finished_count": 0.0,
-                "tripinfo/unfinished_count": 0.0,
-                "tripinfo/total_count": 0.0,
-                "tripinfo/avg_duration": nan,
-                "tripinfo/avg_waiting_time": nan,
-                "tripinfo/avg_time_loss": nan,
-                "tripinfo/avg_delay": nan,
-                "resco_avg_delay": nan,
-                "resco_trip_time": nan,
-                "resco_wait": nan,
-                "resco_tripinfo_count": 0.0,
-            }
+            return empty_summary
 
         delays = []
         trip_times = []
@@ -631,20 +615,31 @@ class SumoEnvironment(gym.Env):
 
         total_count = finished_count + unfinished_count
         avg_delay = float(np.mean(delays)) if delays else nan
+        std_delay = float(np.std(delays)) if delays else nan
         avg_trip_time = float(np.mean(trip_times)) if trip_times else nan
+        std_trip_time = float(np.std(trip_times)) if trip_times else nan
         avg_wait = float(np.mean(waits)) if waits else nan
+        std_wait = float(np.std(waits)) if waits else nan
         avg_time_loss = float(np.mean(time_losses)) if time_losses else nan
+        std_time_loss = float(np.std(time_losses)) if time_losses else nan
         return {
             "tripinfo/finished_count": float(finished_count),
             "tripinfo/unfinished_count": float(unfinished_count),
             "tripinfo/total_count": float(total_count),
             "tripinfo/avg_duration": avg_trip_time,
+            "tripinfo/std_duration": std_trip_time,
             "tripinfo/avg_waiting_time": avg_wait,
+            "tripinfo/std_waiting_time": std_wait,
             "tripinfo/avg_time_loss": avg_time_loss,
+            "tripinfo/std_time_loss": std_time_loss,
             "tripinfo/avg_delay": avg_delay,
+            "tripinfo/std_delay": std_delay,
             "resco_avg_delay": avg_delay,
+            "resco_avg_delay_std": std_delay,
             "resco_trip_time": avg_trip_time,
+            "resco_trip_time_std": std_trip_time,
             "resco_wait": avg_wait,
+            "resco_wait_std": std_wait,
             "resco_tripinfo_count": float(finished_count),
         }
 

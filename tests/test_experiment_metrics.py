@@ -56,8 +56,10 @@ def test_resco_summary_row_uses_standard_static_metric_names() -> None:
                 "episode/steps": 3600.0,
                 "sim_step": 3600.0,
                 "resco_avg_delay": 12.0,
+                "resco_avg_delay_std": 1.25,
                 "resco_trip_time": 34.0,
                 "resco_wait": 7.0,
+                "resco_wait_std": 0.5,
                 "resco_queue": 2.5,
                 "resco_max_queue": 9.0,
             }
@@ -82,6 +84,7 @@ def test_resco_summary_row_uses_standard_static_metric_names() -> None:
     assert row["algorithm/kind"] == "fixed_time"
     assert row["static/policy"] == "fixed_time"
     assert row["resco_avg_delay"] == 12.0
+    assert row["resco_avg_delay_std"] == 1.25
     assert row["efficiency_mean_speed"] == 8.5
     assert row["safety_total_emergency_brake"] == 3.0
     assert row["safety_total_collisions"] == 2.0
@@ -118,8 +121,10 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
                 "episode/sim_time_abs": 3600.0,
                 "episode/elapsed_seconds": 600.0,
                 "resco_avg_delay": 12.0,
+                "resco_avg_delay_std": 1.25,
                 "resco_trip_time": 34.0,
                 "resco_wait": 7.0,
+                "resco_wait_std": 0.5,
                 "resco_queue": 2.5,
                 "resco_max_queue": 9.0,
                 "tripinfo/finished_count": 4.0,
@@ -153,6 +158,8 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     assert row["algorithm/kind"] == "static_max_pressure"
     assert row["final/eval/mean_reward"] == 1.5
     assert row["final/resco/avg_delay"] == 12.0
+    assert row["final/resco/avg_delay_std"] == 1.25
+    assert row["final/resco/wait_std"] == 0.5
     assert row["final/efficiency/total_arrived"] == 8.0
     assert row["final/efficiency/total_departed"] == 6.0
     assert row["final/efficiency/total_running"] == 10.0
