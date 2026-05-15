@@ -22,12 +22,13 @@ Read the code in this order:
 1. `experiments/*.py`
 2. `sumo_rl/experiments/runner.py`
 3. `sumo_rl/experiments/rllib_runner.py`
-4. `sumo_rl/environment/env.py`
-5. `sumo_rl/environment/traffic_signal.py`
-6. `sumo_rl/experiments/metric_utils.py`
-7. `sumo_rl/rllib/envs.py`
-8. `sumo_rl/rllib/custom_sac.py`
-9. the matching config files in `configs/`
+4. `sumo_rl/agents/ppo/rllib.py`, `sumo_rl/agents/dqn/rllib.py`, or `sumo_rl/agents/sac/rllib.py`
+5. `sumo_rl/environment/env.py`
+6. `sumo_rl/environment/traffic_signal.py`
+7. `sumo_rl/experiments/metric_utils.py`
+8. `sumo_rl/rllib/envs.py`
+9. `sumo_rl/rllib/custom_sac.py`
+10. the matching config files in `configs/`
 
 If you only have one hour, read:
 
@@ -53,6 +54,9 @@ The key idea is that most methods should differ in only three places:
 - how external outputs are normalized before logging
 
 Everything else should stay shared.
+For RLlib methods, `sumo_rl/experiments/rllib_runner.py` is intentionally a thin
+orchestrator. Algorithm-specific RLlib config, training loops, settings, and
+training metrics live under `sumo_rl/agents/<algorithm>/`.
 
 ## How The Runner Works
 
@@ -84,7 +88,7 @@ The shared output layout is:
 
 - `outputs/<experiment-name>/<timestamp>/logs/metrics.csv`
 - `outputs/<experiment-name>/<timestamp>/csv/`
-- `outputs/<experiment-name>/<timestamp>/tripinfo/`
+- `outputs/<experiment-name>/<timestamp>/tripinfo/` only when `logging.save_tripinfo_output=true`
 - `outputs/<experiment-name>/<timestamp>/checkpoints/`
 - `outputs/<experiment-name>/<timestamp>/ray_results/` when Ray writes trial state
 
@@ -193,19 +197,27 @@ The flow is:
 1. build parallel env
 2. optionally pad heterogeneous spaces with SuperSuit
 3. register the env with RLlib
-4. map every traffic-signal agent to one shared policy
-5. train through the RLlib algorithm config
+4. map each traffic-signal agent to either its own policy or a shared policy
+5. train through the algorithm module under `sumo_rl/agents/`
 
 Key files:
 
 - `sumo_rl/experiments/rllib_runner.py`
+- `sumo_rl/agents/ppo/rllib.py`
+- `sumo_rl/agents/dqn/rllib.py`
 - `sumo_rl/rllib/envs.py`
 
-The runner logs:
+The algorithm modules log training metrics:
 
 - `train/*`
+- training uses `experiment.episodes` as the episode budget
+- training rows use sampled env steps as the W&B/CSV step axis and are emitted every step by default via `logging.train_log_freq_steps=1`
+
+The runner keeps validation and benchmark metrics shared:
+
 - evaluation summaries
 - final RESCO summaries
+- validation rows use evaluation episode as the W&B/CSV step axis and are throttled by `logging.validation_log_freq_episodes`
 
 For thesis-style runs, evaluation should use a reproducible seed schedule rather than repeating one seed for every eval episode. The repo supports `experiment.eval_seeds`, and the RESCO benchmark presets use the fixed-time pattern `[1, 2, 3, 4, 5]` so eval mean/std and the final traffic summary are both computed over distinct seeded episodes.
 
@@ -216,28 +228,20 @@ It is created by the runner after a dedicated final evaluation pass.
 
 RLlib SAC expects a continuous action space.
 
-For the compatibility baseline, the repo uses a joint-action adapter so the same
-traffic-signal scenario can be trained without rewriting the simulator:
-
-- flattens all agent observations into one vector
-- exposes one continuous action vector
-- decodes each action slice with `argmax` into a discrete action per signal
-- sums the per-agent rewards by default
-
-That means RLlib is not "converting" discrete actions into continuous actions on
-its own. Our adapter changes the environment interface from discrete per-signal
-actions to one continuous Box action space, and SAC learns on that Box space.
+The RLlib SAC paths are implemented under `sumo_rl/agents/sac/rllib.py`.
+The current runner hands SAC the same multi-agent RLlib wrapper used by PPO and
+DQN, and the SAC module owns SAC-specific config and training metrics.
 
 ### Custom SAC module
 
-The custom SAC path keeps the same joint-action environment but swaps in a
-project-owned RLModule boundary.
+The custom SAC path uses the same SAC agent folder but swaps in a project-owned
+RLModule boundary.
 
 This is the right place to change:
 
 - the encoder architecture
 - the policy and Q-head layout
-- the training loop cadence in `rllib_runner.py`
+- the training loop cadence in `sumo_rl/agents/sac/rllib.py`
 - checkpoint timing and evaluation behavior
 
 ## Shared Pieces Across Methods
@@ -300,13 +304,15 @@ Use this recipe if the library can already consume a Gym, VecEnv, or PettingZoo-
 1. Decide the env shape the library expects.
 2. Reuse an existing wrapper if possible.
 3. If needed, write the thinnest new wrapper in `sumo_rl/rllib/`.
-4. Add a new runner branch in `rllib_runner.py`.
-5. Reuse `_build_resco_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
-6. Make sure the method logs final summaries from the completed episode cache, not from the post-reset env state.
-7. Add the launcher script.
-8. Add the algorithm config.
-9. Add matching scenario presets.
-10. Add a short smoke-test command to your notes or docs.
+4. Add an algorithm module under `sumo_rl/agents/<algorithm>/`.
+5. Keep algorithm-specific training metrics inside that module.
+6. Register the module in `sumo_rl/experiments/rllib_runner.py` if it is an RLlib method.
+7. Reuse `_build_resco_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
+8. Make sure the method logs final summaries from the completed episode cache, not from the post-reset env state.
+9. Add the launcher script.
+10. Add the algorithm config.
+11. Add matching scenario presets.
+12. Add a short smoke-test command to your notes or docs.
 
 Good fit for this path:
 

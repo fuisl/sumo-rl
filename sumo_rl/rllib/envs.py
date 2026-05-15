@@ -125,6 +125,10 @@ def _prepare_env_kwargs(cfg: Any, run_dir: Path, seed: Optional[int] = None) -> 
         kwargs["out_csv_name"] = str(run_dir / "csv" / getattr(getattr(cfg, "experiment", None), "name", "run"))
     if not kwargs.get("tripinfo_output_name"):
         kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / getattr(getattr(cfg, "experiment", None), "name", "run"))
+    kwargs.setdefault(
+        "keep_tripinfo_output",
+        bool(getattr(getattr(cfg, "logging", None), "save_tripinfo_output", False)),
+    )
     experiment = getattr(cfg, "experiment", None)
     total_timesteps = int(getattr(experiment, "total_timesteps", 0) or 0)
     if total_timesteps > 0 and "num_seconds" not in kwargs:
@@ -154,7 +158,7 @@ def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None)
 
     factory = getattr(sumo_rl, factory_name, None)
     if factory is None:
-        raise ValueError(f"Unsupported RESCO factory: {factory_name}")
+        raise ValueError(f"Unsupported scenario factory: {factory_name}")
     return factory(**kwargs)
 
 
@@ -334,6 +338,9 @@ class SumoParallelMultiAgentEnv(_RLLibMultiAgentEnv):
         self.env = base_env
         self.possible_agents = list(getattr(base_env, "possible_agents", getattr(base_env, "agents", [])))
         self.agents = list(self.possible_agents)
+        self._agent_ids = set(self.possible_agents)
+        super().__init__()
+
         self._last_obs_dict: Dict[str, Any] = {}
         self._last_info_dict: Dict[str, Any] = {}
         self._observation_spaces = {
@@ -379,14 +386,16 @@ class SumoParallelMultiAgentEnv(_RLLibMultiAgentEnv):
         self._last_info_dict = dict(infos or {})
         terminations = dict(terminations or {})
         truncations = dict(truncations or {})
-        done = bool(
+        terminated = bool(
             terminations.get("__all__", False)
-            or truncations.get("__all__", False)
             or all(bool(terminations.get(agent_id, False)) for agent_id in self.possible_agents)
+        )
+        truncated = bool(
+            truncations.get("__all__", False)
             or all(bool(truncations.get(agent_id, False)) for agent_id in self.possible_agents)
         )
-        terminations["__all__"] = done
-        truncations["__all__"] = done
+        terminations["__all__"] = terminated
+        truncations["__all__"] = truncated
         return obs_dict, rewards, terminations, truncations, infos
 
     def close(self) -> None:
@@ -399,6 +408,8 @@ class SumoParallelMultiAgentEnv(_RLLibMultiAgentEnv):
         return None
 
     def __getattr__(self, item: str) -> Any:
+        if "base_env" not in self.__dict__:
+            raise AttributeError(item)
         return getattr(self.base_env, item)
 
 

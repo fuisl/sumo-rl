@@ -1,0 +1,11 @@
+# @package _global_
+scenario:
+  name: cologne8
+
+env:
+  factory: cologne8
+  kwargs:
+    net_file: sumo_rl/nets/RESCO/cologne8/cologne8.net.xml
+    route_file: sumo_rl/nets/RESCO/cologne8/cologne8.rou.xml
+    begin_time: 25200
+    use_gui: false

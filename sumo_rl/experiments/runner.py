@@ -55,6 +55,10 @@ def _prepare_env_kwargs(cfg: DictConfig, run_dir: Path) -> Dict[str, Any]:
         kwargs["out_csv_name"] = str(run_dir / "csv" / cfg.experiment.name)
     if not kwargs.get("tripinfo_output_name"):
         kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / cfg.experiment.name)
+    kwargs.setdefault(
+        "keep_tripinfo_output",
+        bool(getattr(getattr(cfg, "logging", None), "save_tripinfo_output", False)),
+    )
 
     if "sumo_seed" not in kwargs and cfg.experiment.seed is not None:
         kwargs["sumo_seed"] = int(cfg.experiment.seed)
@@ -225,7 +229,7 @@ def _rllib_wandb_callbacks(cfg: DictConfig, run_dir: Path, params: Dict[str, Any
         except ImportError as exc:
             raise RuntimeError("WandB logging was requested, but Ray's WandbLoggerCallback is unavailable.") from exc
 
-    os.environ.setdefault("WANDB_MODE", str(getattr(logging_cfg, "mode", "offline")))
+    os.environ.setdefault("WANDB_MODE", str(getattr(logging_cfg, "mode", "online")))
     return [
         WandbLoggerCallback(
             project=getattr(logging_cfg, "project", None) or getattr(cfg.experiment, "project", None) or "sumo-rl",
@@ -304,6 +308,10 @@ def _baselinev1_rllib_env_config(cfg: DictConfig, run_dir: Path, params: Dict[st
         env_kwargs["out_csv_name"] = str(run_dir / "csv" / cfg.experiment.name)
     if not env_kwargs.get("tripinfo_output_name"):
         env_kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / cfg.experiment.name)
+    env_kwargs.setdefault(
+        "keep_tripinfo_output",
+        bool(getattr(getattr(cfg, "logging", None), "save_tripinfo_output", False)),
+    )
     if "sumo_seed" not in env_kwargs and cfg.experiment.seed is not None:
         env_kwargs["sumo_seed"] = int(cfg.experiment.seed)
     return env_kwargs
@@ -494,10 +502,13 @@ def _get_run_dir() -> Path:
     return Path("outputs") / f"run_{timestamp}"
 
 
-def _init_wandb(cfg: DictConfig, run_dir: Path):
+def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = None):
     logging_cfg = cfg.logging
     if not logging_cfg.enabled:
         return None
+
+    env_path = _resolve_env_file(str(getattr(logging_cfg, "env_file", "")))
+    _load_env_file(env_path)
 
     try:
         import wandb
@@ -506,23 +517,36 @@ def _init_wandb(cfg: DictConfig, run_dir: Path):
             "Hydra logging is enabled but `wandb` is not installed. Install the `experiments` extra first."
         ) from exc
 
-    run_name = logging_cfg.name or cfg.experiment.name
-    project = logging_cfg.project or cfg.experiment.project
-    group = logging_cfg.group or cfg.experiment.group
+    run_name = run_name or logging_cfg.name or cfg.experiment.name
+    project = logging_cfg.project or os.environ.get("WANDB_PROJECT") or cfg.experiment.project
+    entity = logging_cfg.entity or os.environ.get("WANDB_ENTITY")
+    group = logging_cfg.group or os.environ.get("WANDB_RUN_GROUP") or cfg.experiment.group
     tags = list(logging_cfg.tags or cfg.experiment.tags or [])
+    mode = logging_cfg.mode or os.environ.get("WANDB_MODE") or "offline"
 
-    return wandb.init(
+    run = wandb.init(
         project=project,
-        entity=logging_cfg.entity,
+        entity=entity,
         name=run_name,
         group=group,
         tags=tags,
         job_type=logging_cfg.job_type,
-        mode=logging_cfg.mode,
+        mode=mode,
         dir=str(run_dir),
         config=_as_plain_dict(cfg),
         reinit="finish_previous",
     )
+    try:
+        run.define_metric("train/*", step_metric="train/env_step")
+        run.define_metric("train/env_step")
+        run.define_metric("eval/*", step_metric="eval/episode")
+        run.define_metric("final/*", step_metric="eval/episode")
+        run.define_metric("tripinfo/*", step_metric="eval/episode")
+        run.define_metric("episode/*", step_metric="eval/episode")
+        run.define_metric("warnings/*", step_metric="eval/episode")
+    except Exception:
+        pass
+    return run
 
 
 class _LocalMetricsCsvLogger:
@@ -654,7 +678,10 @@ def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int
     if (wandb_run is None and csv_run is None) or not metrics:
         return
     if wandb_run is not None:
-        wandb_run.log(metrics, step=step)
+        if "train/env_step" in metrics:
+            wandb_run.log(metrics)
+        else:
+            wandb_run.log(metrics, step=step)
     if csv_run is not None:
         csv_run.log(metrics, step=step)
 
@@ -1143,7 +1170,10 @@ def _log_episode_summary(
         include_final=include_final_to_wandb,
     )
     if wandb_run is not None:
-        wandb_run.log(wandb_row, step=step)
+        if "eval/episode" in wandb_row:
+            wandb_run.log(wandb_row)
+        else:
+            wandb_run.log(wandb_row, step=step)
         _update_wandb_summary(wandb_run, wandb_row)
     if csv_run is not None:
         csv_run.log(csv_row, step=step)

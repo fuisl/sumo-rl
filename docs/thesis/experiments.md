@@ -28,7 +28,7 @@ Hydra is used as the experiment composition layer.
   - `resco_queue` and `resco_max_queue` from the live queue metrics
   - `efficiency_*` for queue, speed, waiting-time, and throughput aggregates
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
-  - the raw tripinfo XML files are stored under `outputs/<experiment-name>/<timestamp>/tripinfo/`
+  - tripinfo XML is generated to compute metrics and deleted by default; set `logging.save_tripinfo_output=true` to keep the raw XML files under `outputs/<experiment-name>/<timestamp>/tripinfo/`
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup
   - `configs/algorithm/` for the method hyperparameters

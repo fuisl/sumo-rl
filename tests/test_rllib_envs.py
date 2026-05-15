@@ -92,3 +92,8 @@ def test_parallel_multi_agent_wrapper_keeps_spaces_and_passthroughs_actions():
 def test_scenario_factory_name_strips_resco_prefix():
     cfg = SimpleNamespace(scenario=SimpleNamespace(name="resco_grid4x4"))
     assert scenario_factory_name(cfg) == "grid4x4"
+
+
+def test_scenario_factory_name_accepts_unprefixed_resco_names():
+    cfg = SimpleNamespace(scenario=SimpleNamespace(name="ingolstadt21"))
+    assert scenario_factory_name(cfg) == "ingolstadt21"
