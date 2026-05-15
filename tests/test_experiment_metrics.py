@@ -63,6 +63,7 @@ def test_namespaced_metrics_split_efficiency_fairness_and_safety() -> None:
         "system_mean_speed": 8.5,
         "system_total_emergency_brake": 3,
         "system_total_teleported": 1,
+        "system_total_collisions": 2,
         "agent_a_accumulated_waiting_time": 5.0,
         "agent_b_accumulated_waiting_time": 10.0,
     }
@@ -72,6 +73,7 @@ def test_namespaced_metrics_split_efficiency_fairness_and_safety() -> None:
     assert metrics["efficiency_mean_speed"] == 8.5
     assert metrics["safety_total_emergency_brake"] == 3.0
     assert metrics["safety_total_teleported"] == 1.0
+    assert metrics["safety_total_collisions"] == 2.0
     assert metrics["fairness_jain_waiting_time"] == 0.9
     assert metrics["fairness_waiting_time_mean"] == 7.5
     assert agent_metrics["fairness_waiting_time_agent_a"] == 5.0
@@ -110,6 +112,7 @@ def test_sb3_summary_row_uses_cached_episode_metrics_after_auto_reset() -> None:
                 "system_mean_speed": 8.5,
                 "system_total_emergency_brake": 3.0,
                 "system_total_teleported": 1.0,
+                "system_total_collisions": 2.0,
                 "agent_a_accumulated_waiting_time": 5.0,
                 "agent_b_accumulated_waiting_time": 10.0,
             }
@@ -128,6 +131,7 @@ def test_sb3_summary_row_uses_cached_episode_metrics_after_auto_reset() -> None:
     assert row["resco_avg_delay"] == 12.0
     assert row["efficiency_mean_speed"] == 8.5
     assert row["safety_total_emergency_brake"] == 3.0
+    assert row["safety_total_collisions"] == 2.0
     assert row["fairness_jain_waiting_time"] == 0.9
     assert row["fairness_lane/agent_a/waiting_time_mean"] == 2.0
     assert row["fairness_lane/agent_b/waiting_time_mean"] == 3.0
@@ -152,6 +156,7 @@ def test_final_eval_summary_row_separates_final_and_eval_metrics() -> None:
                     "system_total_arrived": 8.0,
                     "system_total_teleported": 1.0,
                     "system_total_emergency_brake": 2.0,
+                    "system_total_collisions": 1.0,
                     "agent_a_accumulated_waiting_time": 5.0,
                     "agent_b_accumulated_waiting_time": 10.0,
                 }
@@ -202,9 +207,10 @@ def test_final_eval_summary_row_separates_final_and_eval_metrics() -> None:
     assert row["final/efficiency/total_arrived"] == 8.0
     assert row["final/efficiency/total_departed"] == 6.0
     assert row["final/efficiency/total_running"] == 10.0
-    assert row["final/fairness/jain_waiting_time"] == 0.9
     assert row["final/safety/total_teleported"] == 1.0
     assert row["final/safety/total_emergency_brake"] == 2.0
+    assert row["final/safety/total_collisions"] == 1.0
+    assert "final/fairness/jain_waiting_time" not in row
     assert row["tripinfo/finished_count"] == 4.0
     assert row["warnings/no_finished_trips"] is False
     assert row["warnings/no_final_summary_metrics"] is False
@@ -225,6 +231,7 @@ def test_final_eval_summary_uses_cached_completed_episode_after_auto_reset() -> 
                     "system_total_arrived": 0.0,
                     "system_total_teleported": 0.0,
                     "system_total_emergency_brake": 0.0,
+                    "system_total_collisions": 0.0,
                 }
             ]
             self.sumo = None
@@ -252,6 +259,7 @@ def test_final_eval_summary_uses_cached_completed_episode_after_auto_reset() -> 
                 "system_total_arrived": 8.0,
                 "system_total_teleported": 1.0,
                 "system_total_emergency_brake": 2.0,
+                "system_total_collisions": 0.0,
                 "agent_a_accumulated_waiting_time": 5.0,
                 "agent_b_accumulated_waiting_time": 10.0,
             }
@@ -400,6 +408,7 @@ def test_run_sb3_final_evaluation_averages_final_traffic_metrics_across_eval_see
                 "system_total_arrived": seed + 2.0,
                 "system_total_teleported": seed + 3.0,
                 "system_total_emergency_brake": seed + 4.0,
+                "system_total_collisions": seed + 5.0,
                 "agent_a_accumulated_waiting_time": seed + 5.0,
                 "agent_b_accumulated_waiting_time": seed + 6.0,
             }
@@ -424,6 +433,7 @@ def test_run_sb3_final_evaluation_averages_final_traffic_metrics_across_eval_see
     assert summary["final/resco/trip_time"] == pytest.approx(13.0)
     assert summary["final/efficiency/total_arrived"] == pytest.approx(5.0)
     assert summary["final/safety/total_teleported"] == pytest.approx(6.0)
+    assert summary["final/safety/total_collisions"] == pytest.approx(8.0)
     assert summary["tripinfo/finished_count"] == pytest.approx(4.0)
     assert summary["warnings/no_finished_trips"] is False
     assert summary["warnings/eval_episodes_too_low"] is False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import inspect
 import os
 import random
 import shutil
@@ -79,6 +80,408 @@ def _get_log_every_seconds(cfg: DictConfig) -> int:
     if logging_cfg is None:
         return 200
     return max(1, int(getattr(logging_cfg, "log_every_seconds", 200)))
+
+
+def _baselinev1_callbacks_class():
+    from ray.rllib.algorithms.callbacks import DefaultCallbacks
+
+    class BaselineV1Callbacks(DefaultCallbacks):
+        """Lift selected SUMO infos into RLlib custom metrics."""
+
+        INFO_KEYS = (
+            "system_total_stopped",
+            "system_total_waiting_time",
+            "system_mean_waiting_time",
+            "system_mean_speed",
+            "baselinev1_invalid_actions_total",
+        )
+
+        def on_episode_step(self, *, worker, base_env, episode, env_index: Optional[int] = None, **kwargs) -> None:
+            del worker, base_env, env_index, kwargs
+            get_agents = getattr(episode, "get_agents", None)
+            agent_ids = get_agents() if callable(get_agents) else []
+            for agent_id in agent_ids:
+                try:
+                    info = episode.last_info_for(agent_id)
+                except Exception:
+                    continue
+                if not info:
+                    continue
+                for key in self.INFO_KEYS:
+                    value = info.get(key)
+                    if isinstance(value, (int, float, np.number)):
+                        episode.custom_metrics[key] = float(value)
+
+    return BaselineV1Callbacks
+
+
+def _baselinev1_scenario_name(cfg: DictConfig) -> str:
+    scenario_name = str(getattr(cfg.scenario, "name", "") or "").strip()
+    if scenario_name.startswith("resco_"):
+        return scenario_name[len("resco_") :]
+    return scenario_name
+
+
+def _resolve_base_env(env: Any) -> Any:
+    current = env
+    seen = set()
+    for _ in range(12):
+        if hasattr(current, "_net"):
+            return current
+        for attr in ("env", "aec_env", "unwrapped"):
+            candidate = getattr(current, attr, None)
+            if candidate is not None and id(candidate) not in seen:
+                seen.add(id(candidate))
+                current = candidate
+                break
+        else:
+            break
+    raise RuntimeError("Unable to resolve the underlying SUMO environment.")
+
+
+def _make_base_env(config: Dict[str, Any]):
+    import sumo_rl
+
+    scenario = str(config["scenario"])
+    kwargs = dict(config)
+    kwargs.pop("scenario", None)
+    kwargs["parallel"] = True
+    reward_fn = kwargs.get("reward_fn")
+    if not reward_fn:
+        kwargs.pop("reward_fn", None)
+    factory = getattr(sumo_rl, scenario)
+    return factory(**kwargs)
+
+
+def make_graph_env(env_config: Dict[str, Any]):
+    config = dict(env_config)
+    out_csv_name = config.get("out_csv_name")
+    tripinfo_output_name = config.get("tripinfo_output_name")
+    if out_csv_name:
+        worker_index = getattr(env_config, "worker_index", 0)
+        vector_index = getattr(env_config, "vector_index", 0)
+        suffix = f"_w{worker_index}_v{vector_index}"
+        config["out_csv_name"] = f"{out_csv_name}{suffix}"
+        if tripinfo_output_name:
+            config["tripinfo_output_name"] = f"{tripinfo_output_name}{suffix}"
+
+    base_env = _make_base_env(config)
+    agent_ids = list(getattr(base_env, "possible_agents", getattr(base_env, "agents", [])))
+    from sumo_rl.models.topology import build_resco_topology
+
+    topology = build_resco_topology(_resolve_base_env(base_env)._net, agent_ids)
+    from sumo_rl.environment.rllib_graph_env import RLLibGraphObservationWrapper
+
+    return RLLibGraphObservationWrapper(base_env, topology)
+
+
+def _resolve_env_file(explicit_path: str) -> Optional[Path]:
+    candidates = []
+    if explicit_path:
+        path = Path(explicit_path).expanduser()
+        candidates.append(path if path.is_absolute() else Path.cwd() / path)
+        candidates.append(Path(__file__).resolve().parents[1] / path.name)
+    candidates.append(Path.cwd() / ".env")
+    candidates.append(Path(__file__).resolve().parents[1] / ".env")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_env_file(env_path: Optional[Path]) -> None:
+    if env_path is None:
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        for raw_line in env_path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if value and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+        return
+    load_dotenv(env_path, override=False)
+
+
+def _rllib_wandb_callbacks(cfg: DictConfig, run_dir: Path, params: Dict[str, Any]):
+    logging_cfg = cfg.logging
+    if not getattr(logging_cfg, "enabled", False) or str(getattr(logging_cfg, "mode", "disabled")) == "disabled":
+        return []
+
+    env_path = _resolve_env_file(str(params.get("wandb_env_file", "")))
+    _load_env_file(env_path)
+
+    try:
+        from ray.air.integrations.wandb import WandbLoggerCallback
+    except ImportError:
+        try:
+            from ray.tune.integration.wandb import WandbLoggerCallback
+        except ImportError as exc:
+            raise RuntimeError("WandB logging was requested, but Ray's WandbLoggerCallback is unavailable.") from exc
+
+    os.environ.setdefault("WANDB_MODE", str(getattr(logging_cfg, "mode", "offline")))
+    return [
+        WandbLoggerCallback(
+            project=getattr(logging_cfg, "project", None) or getattr(cfg.experiment, "project", None) or "sumo-rl",
+            entity=getattr(logging_cfg, "entity", None),
+            name=getattr(logging_cfg, "name", None) or getattr(cfg.experiment, "name", None),
+            group=getattr(logging_cfg, "group", None) or getattr(cfg.experiment, "group", None) or _baselinev1_scenario_name(cfg),
+            log_config=True,
+            upload_checkpoints=bool(getattr(logging_cfg, "save_checkpoints", True)),
+            dir=str(run_dir / "wandb"),
+            reinit="finish_previous",
+        )
+    ]
+
+
+def _tune_storage_kwargs(path: Any) -> Dict[str, str]:
+    import ray
+    from ray import tune
+
+    signature = inspect.signature(tune.run)
+    key = "storage_path" if "storage_path" in signature.parameters else "local_dir"
+    return {key: str(Path(path).expanduser().resolve())}
+
+
+def _disable_new_api_stack(config):
+    api_stack = getattr(config, "api_stack", None)
+    if callable(api_stack):
+        try:
+            return api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
+        except TypeError:
+            return api_stack(enable_rl_module_and_learner=False)
+    return config
+
+
+def _resolve_num_gpus(value: Any) -> float:
+    raw_value = str(value).strip().lower()
+    if raw_value in {"", "auto"}:
+        try:
+            import torch
+        except ImportError:
+            return 0
+        return 1 if torch.cuda.is_available() else 0
+    if raw_value == "all":
+        try:
+            import torch
+        except ImportError:
+            return 0
+        return float(torch.cuda.device_count())
+    return float(raw_value)
+
+
+def _configure_rollouts(config, params: Dict[str, Any]):
+    num_workers = int(params.pop("num_workers", 0))
+    rollout_fragment_length = int(params.pop("rollout_fragment_length", 128))
+
+    rollouts = getattr(config, "rollouts", None)
+    if callable(rollouts):
+        try:
+            return rollouts(num_rollout_workers=num_workers, rollout_fragment_length=rollout_fragment_length)
+        except (TypeError, ValueError):
+            pass
+
+    env_runners = getattr(config, "env_runners")
+    return env_runners(num_env_runners=num_workers, rollout_fragment_length=rollout_fragment_length)
+
+
+def _baselinev1_rllib_env_config(cfg: DictConfig, run_dir: Path, params: Dict[str, Any]) -> Dict[str, Any]:
+    env_kwargs = dict(_as_plain_dict(cfg.env.kwargs or {}))
+    env_kwargs["scenario"] = _baselinev1_scenario_name(cfg)
+    env_kwargs.setdefault("fixed_ts", bool(getattr(cfg.experiment, "fixed_ts", False)))
+    reward_fn = params.get("reward_fn")
+    if reward_fn:
+        env_kwargs["reward_fn"] = reward_fn
+    elif not env_kwargs.get("reward_fn"):
+        env_kwargs.pop("reward_fn", None)
+    if not env_kwargs.get("out_csv_name"):
+        env_kwargs["out_csv_name"] = str(run_dir / "csv" / cfg.experiment.name)
+    if not env_kwargs.get("tripinfo_output_name"):
+        env_kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / cfg.experiment.name)
+    if "sumo_seed" not in env_kwargs and cfg.experiment.seed is not None:
+        env_kwargs["sumo_seed"] = int(cfg.experiment.seed)
+    return env_kwargs
+
+
+def _probe_rllib_spaces_and_model_config(cfg: DictConfig, run_dir: Path, params: Dict[str, Any]):
+    import sumo_rl
+
+    probe_env = make_graph_env(_baselinev1_rllib_env_config(cfg, run_dir, params))
+    try:
+        first_agent = probe_env.possible_agents[0]
+        obs_space = probe_env.observation_space(first_agent)
+        action_space = probe_env.action_space(first_agent)
+        normalize_edge_attr = params.get("normalize_edge_attr")
+        if normalize_edge_attr is None:
+            normalize_edge_attr = not bool(params.get("no_normalize_edge_attr", False))
+        model_config = probe_env.model_config(normalize_edge_attr=bool(normalize_edge_attr))
+    finally:
+        probe_env.close()
+
+    model_config.update(
+        {
+            "hidden_dim": int(params.get("hidden_dim", 64)),
+            "latent_dim": int(params.get("latent_dim", 64)),
+            "fusion_dim": int(params.get("fusion_dim", 64)),
+            "actor_hidden": int(params.get("actor_hidden", 128)),
+            "value_hidden": int(params.get("value_hidden", 128)),
+            "heads": int(params.get("heads", 2)),
+            "dropout": float(params.get("dropout", 0.1)),
+            "add_self_loops": bool(params.get("add_self_loops", False)),
+            "out_dir": str(run_dir),
+        }
+    )
+    return obs_space, action_space, model_config
+
+
+def _build_rllib_config(
+    cfg: DictConfig,
+    env_name: str,
+    obs_space: Any,
+    action_space: Any,
+    model_config: Dict[str, Any],
+    params: Dict[str, Any],
+):
+    from ray.rllib.algorithms.ppo import PPOConfig
+    from ray.rllib.algorithms.sac import SACConfig
+
+    shared_policy = {"shared_policy": (None, obs_space, action_space, {})}
+
+    def policy_mapping_fn(agent_id, episode=None, worker=None, **kwargs):
+        del agent_id, episode, worker, kwargs
+        return "shared_policy"
+
+    common_model = {
+        "custom_model": "baselinev1_torch_geometric",
+        "custom_model_config": model_config,
+    }
+
+    algo_name = str(params.pop("algo", params.pop("rllib_algo", "SAC"))).upper()
+    if algo_name == "SAC":
+        config = _disable_new_api_stack(SACConfig())
+        target_entropy: Any = params.get("target_entropy", "auto")
+        if target_entropy != "auto":
+            target_entropy = float(target_entropy)
+        config = config.training(
+            gamma=float(params.get("gamma", 0.95)),
+            tau=float(params.get("tau", 0.005)),
+            twin_q=True,
+            train_batch_size=int(params.get("train_batch_size", 512)),
+            actor_lr=float(params.get("lr", 3e-4)),
+            critic_lr=float(params.get("critic_lr", 0.0) or params.get("lr", 3e-4)),
+            alpha_lr=float(params.get("alpha_lr", 0.0) or params.get("lr", 3e-4)),
+            initial_alpha=float(params.get("initial_alpha", 0.2)),
+            target_entropy=target_entropy,
+            num_steps_sampled_before_learning_starts=int(params.get("learning_starts", 1000)),
+            replay_buffer_config={
+                "type": "MultiAgentReplayBuffer",
+                "capacity": int(params.get("replay_capacity", 50000)),
+            },
+            policy_model_config=common_model,
+            q_model_config=common_model,
+        )
+    elif algo_name == "PPO":
+        config = _disable_new_api_stack(PPOConfig())
+        config = config.training(
+            gamma=float(params.get("gamma", 0.95)),
+            lr=float(params.get("lr", 3e-4)),
+            train_batch_size=int(params.get("train_batch_size", 512)),
+            lambda_=float(params.get("lambda", params.get("lambda_", 0.9))),
+            use_gae=True,
+            clip_param=float(params.get("clip_param", 0.4)),
+            entropy_coeff=float(params.get("entropy_coeff", 0.01)),
+            vf_loss_coeff=float(params.get("vf_loss_coeff", 0.25)),
+            sgd_minibatch_size=int(params.get("sgd_minibatch_size", 64)),
+            num_sgd_iter=int(params.get("num_sgd_iter", 10)),
+            model=common_model,
+        )
+    else:
+        raise ValueError(f"Unsupported RLlib algorithm: {algo_name}")
+
+    callbacks_class = _baselinev1_callbacks_class()
+    config = (
+        config.environment(
+            env=env_name,
+            env_config=_baselinev1_rllib_env_config(cfg, Path(model_config["out_dir"]), params),
+            disable_env_checking=True,
+        )
+        .framework("torch")
+        .resources(num_gpus=_resolve_num_gpus(params.get("num_gpus", "auto")))
+        .debugging(log_level=str(params.get("log_level", "ERROR")))
+        .experimental(_disable_preprocessor_api=True)
+        .callbacks(callbacks_class)
+        .multi_agent(policies=shared_policy, policy_mapping_fn=policy_mapping_fn)
+    )
+    return _configure_rollouts(config, params)
+
+
+def _run_rllib_baselinev1(cfg: DictConfig, run_dir: Path) -> None:
+    try:
+        import ray
+        from ray import tune
+        from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
+        from ray.tune.registry import register_env
+        from ray.rllib.models import ModelCatalog
+    except ImportError as exc:
+        raise ImportError("baselinev1_rllib requires Ray and RLlib to be installed.") from exc
+
+    from sumo_rl.models.baselinev1_tg import BaselineV1TorchGeometricModel
+
+    params = dict(_as_plain_dict(cfg.algorithm.params or {}))
+    scenario_name = _baselinev1_scenario_name(cfg)
+    algo_name = str(params.get("algo", params.get("rllib_algo", "SAC"))).upper()
+    env_name = f"baselinev1_{scenario_name}"
+    obs_space, action_space, model_config = _probe_rllib_spaces_and_model_config(cfg, run_dir, params)
+    ModelCatalog.register_custom_model("baselinev1_torch_geometric", BaselineV1TorchGeometricModel)
+    register_env(env_name, lambda config: ParallelPettingZooEnv(make_graph_env(config)))
+
+    os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+    ray.init(
+        address=params.get("ray_address") or None,
+        ignore_reinit_error=True,
+        include_dashboard=False,
+        local_mode=bool(params.get("ray_local_mode", False)),
+    )
+    available_gpus = float(ray.cluster_resources().get("GPU", 0.0))
+    requested_gpus = _resolve_num_gpus(params.get("num_gpus", "auto"))
+    if requested_gpus > available_gpus:
+        raise RuntimeError(f"Requested {requested_gpus:g} GPU(s), but Ray sees only {available_gpus:g}.")
+    print(f"RLlib GPU allocation: requested {requested_gpus:g}, Ray sees {available_gpus:g}.")
+
+    config = _build_rllib_config(cfg, env_name, obs_space, action_space, model_config, params)
+    stop = {"training_iteration": int(params.get("max_iters", 50))}
+    if int(params.get("stop_timesteps", 0)) > 0:
+        stop["timesteps_total"] = int(params["stop_timesteps"])
+
+    callbacks = _rllib_wandb_callbacks(cfg, run_dir, params)
+    storage_path = params.get("storage_path") or str(run_dir / "ray_results")
+    try:
+        tune.run(
+            algo_name,
+            name=str(
+                params.get("experiment_name")
+                or getattr(cfg.experiment, "name", None)
+                or f"baselinev1_{algo_name.lower()}_{scenario_name}"
+            ),
+            stop=stop,
+            checkpoint_freq=int(params.get("checkpoint_freq", 0)),
+            checkpoint_at_end=bool(params.get("checkpoint_at_end", False)),
+            config=config.to_dict(),
+            callbacks=callbacks,
+            verbose=int(params.get("tune_verbose", 1)),
+            **_tune_storage_kwargs(storage_path),
+        )
+    finally:
+        ray.shutdown()
 
 
 def _get_run_dir() -> Path:
@@ -666,9 +1069,9 @@ def _build_final_eval_summary_row(
                 "final/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
                 "final/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
                 "final/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
-                "final/fairness/jain_waiting_time": float(traffic_metrics.get("fairness_jain_waiting_time", float("nan"))),
                 "final/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
                 "final/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
+                "final/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
             }
         )
 
@@ -1510,10 +1913,14 @@ def run(cfg: DictConfig) -> None:
     np.random.seed(int(cfg.experiment.seed) if cfg.experiment.seed is not None else 0)
     random.seed(int(cfg.experiment.seed) if cfg.experiment.seed is not None else 0)
 
+    algorithm_kind = cfg.algorithm.kind
+    if algorithm_kind == "baselinev1_rllib":
+        _run_rllib_baselinev1(cfg, run_dir)
+        return
+
     wandb_run = _init_wandb(cfg, run_dir)
     csv_run = _LocalMetricsCsvLogger(run_dir / "logs" / "metrics.csv")
     try:
-        algorithm_kind = cfg.algorithm.kind
         if algorithm_kind == "q_learning":
             if cfg.env.factory == "env":
                 _run_aec_q_learning(cfg, run_dir, wandb_run, csv_run)

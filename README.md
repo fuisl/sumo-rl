@@ -193,11 +193,11 @@ python experiments/local_neighbor_gat_discrete_sac_resco.py --scenario grid4x4 -
 RLlib-optimized baseline training for RESCO scenarios:
 
 ```bash
-pip install -e ".[rllib]"
-python experiments/baselinev1_rllib_resco.py --scenario cologne8 --num-workers 0 --max-iters 50
+pip install -e ".[all]"
+python experiments/baselinev1_rllib_resco.py scenario=resco_cologne8 algorithm.params.num_workers=0 algorithm.params.max_iters=50
 ```
 
-The RLlib entrypoint defaults to SAC, uses a Torch Geometric GATv2 neighbor encoder, wraps the PettingZoo parallel environment with graph observations and action masks, and logs to WandB when `WANDB_PROJECT` or `WANDB_API_KEY` is available. GPU allocation defaults to `--num-gpus auto`; use `--num-gpus 0` to force CPU. Use `--wandb on` to require WandB logging or `--wandb off` to disable it.
+The RLlib entrypoint now goes through the shared Hydra runner. It defaults to SAC, uses a Torch Geometric GATv2 neighbor encoder, wraps the PettingZoo parallel environment with graph observations and action masks, and logs through the shared WandB config. Set `algorithm.params.num_gpus=0` to force CPU or `logging=disabled` to turn off WandB.
 
 If you want to push runs to Weights & Biases, put the credentials/config in a local `.env` at the repo root, for example:
 

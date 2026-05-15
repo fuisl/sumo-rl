@@ -77,6 +77,7 @@ def namespace_system_metrics(info: Any) -> Dict[str, float]:
         "system_total_departed": "efficiency_total_departed",
         "system_total_teleported": "safety_total_teleported",
         "system_total_emergency_brake": "safety_total_emergency_brake",
+        "system_total_collisions": "safety_total_collisions",
         "system_total_waiting_time": "efficiency_total_waiting_time",
         "system_mean_waiting_time": "efficiency_mean_waiting_time",
         "system_mean_speed": "efficiency_mean_speed",

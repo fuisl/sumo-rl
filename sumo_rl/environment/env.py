@@ -198,6 +198,7 @@ class SumoEnvironment(gym.Env):
         self.metrics = []
         self.out_csv_name = out_csv_name
         self.num_emergency_brakes = 0
+        self.num_collisions = 0
         self.observations = {ts: None for ts in self.ts_ids}
         self.rewards = {ts: None for ts in self.ts_ids}
         self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
@@ -300,6 +301,7 @@ class SumoEnvironment(gym.Env):
         self.num_departed_vehicles = 0
         self.num_teleported_vehicles = 0
         self.num_emergency_brakes = 0
+        self.num_collisions = 0
         self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
 
         if self.single_agent:
@@ -447,6 +449,25 @@ class SumoEnvironment(gym.Env):
         self.num_departed_vehicles += self.sumo.simulation.getDepartedNumber()
         self.num_teleported_vehicles += self.sumo.simulation.getEndingTeleportNumber()
         self.num_emergency_brakes += self.sumo.simulation.getEmergencyStoppingVehiclesNumber()
+        self.num_collisions += self._get_collisions_number()
+
+    def _get_collisions_number(self):
+        simulation = self.sumo.simulation
+        get_colliding_number = getattr(simulation, "getCollidingVehiclesNumber", None)
+        if callable(get_colliding_number):
+            try:
+                return int(get_colliding_number())
+            except Exception:
+                pass
+
+        get_colliding_ids = getattr(simulation, "getCollidingVehiclesIDList", None)
+        if callable(get_colliding_ids):
+            try:
+                return len(get_colliding_ids())
+            except Exception:
+                pass
+
+        return 0
 
     def _get_system_info(self):
         vehicles = [vehicle for vehicle in self.sumo.vehicle.getIDList() if not _is_ghost_vehicle(vehicle)]
@@ -475,6 +496,7 @@ class SumoEnvironment(gym.Env):
             "system_total_departed": self.num_departed_vehicles,
             "system_total_teleported": self.num_teleported_vehicles,
             "system_total_emergency_brake": self.num_emergency_brakes,
+            "system_total_collisions": self.num_collisions,
             "system_total_waiting_time": sum(waiting_times),
             "system_mean_waiting_time": 0.0 if len(vehicles) == 0 else np.mean(waiting_times),
             "system_mean_speed": 0.0 if len(vehicles) == 0 else np.mean(speeds),

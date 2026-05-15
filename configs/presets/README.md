@@ -22,6 +22,7 @@ Each target scenario folder is meant to contain the same method names, so the la
 ```text
 configs/presets/<scenario>/
   dqn.yaml
+  baselinev1_rllib.yaml
   ppo.yaml
   ql.yaml
   sac.yaml

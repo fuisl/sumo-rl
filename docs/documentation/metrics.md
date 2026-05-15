@@ -133,6 +133,7 @@ These come from the final cached live-info row of the completed episode, not fro
 | `efficiency_mean_pressure` | mean raw signal pressure | `TrafficSignal.get_pressure()` | episode summary and live info |
 | `safety_total_teleported` | cumulative teleported vehicles | `sumo.simulation.getEndingTeleportNumber()` | episode summary and live info |
 | `safety_total_emergency_brake` | cumulative emergency stopping events | `sumo.simulation.getEmergencyStoppingVehiclesNumber()` | episode summary and live info |
+| `safety_total_collisions` | cumulative colliding vehicles | `sumo.simulation.getCollidingVehiclesNumber()` or `sumo.simulation.getCollidingVehiclesIDList()` | episode summary and live info |
 
 Important interpretation note:
 
