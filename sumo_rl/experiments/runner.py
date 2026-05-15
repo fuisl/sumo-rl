@@ -225,7 +225,7 @@ def _rllib_wandb_callbacks(cfg: DictConfig, run_dir: Path, params: Dict[str, Any
         except ImportError as exc:
             raise RuntimeError("WandB logging was requested, but Ray's WandbLoggerCallback is unavailable.") from exc
 
-    os.environ.setdefault("WANDB_MODE", str(getattr(logging_cfg, "mode", "offline")))
+    os.environ.setdefault("WANDB_MODE", str(getattr(logging_cfg, "mode", "online")))
     return [
         WandbLoggerCallback(
             project=getattr(logging_cfg, "project", None) or getattr(cfg.experiment, "project", None) or "sumo-rl",
@@ -499,6 +499,9 @@ def _init_wandb(cfg: DictConfig, run_dir: Path):
     if not logging_cfg.enabled:
         return None
 
+    env_path = _resolve_env_file(str(getattr(logging_cfg, "env_file", "")))
+    _load_env_file(env_path)
+
     try:
         import wandb
     except ImportError as exc:
@@ -507,18 +510,20 @@ def _init_wandb(cfg: DictConfig, run_dir: Path):
         ) from exc
 
     run_name = logging_cfg.name or cfg.experiment.name
-    project = logging_cfg.project or cfg.experiment.project
-    group = logging_cfg.group or cfg.experiment.group
+    project = logging_cfg.project or os.environ.get("WANDB_PROJECT") or cfg.experiment.project
+    entity = logging_cfg.entity or os.environ.get("WANDB_ENTITY")
+    group = logging_cfg.group or os.environ.get("WANDB_RUN_GROUP") or cfg.experiment.group
     tags = list(logging_cfg.tags or cfg.experiment.tags or [])
+    mode = logging_cfg.mode or os.environ.get("WANDB_MODE") or "offline"
 
     return wandb.init(
         project=project,
-        entity=logging_cfg.entity,
+        entity=entity,
         name=run_name,
         group=group,
         tags=tags,
         job_type=logging_cfg.job_type,
-        mode=logging_cfg.mode,
+        mode=mode,
         dir=str(run_dir),
         config=_as_plain_dict(cfg),
         reinit="finish_previous",

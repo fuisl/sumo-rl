@@ -1,5 +1,5 @@
 enabled: true
-mode: offline
+mode: online
 project: null
 entity: null
 name: null
