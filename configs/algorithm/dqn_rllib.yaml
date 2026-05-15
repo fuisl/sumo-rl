@@ -1,0 +1,13 @@
+# @package _global_
+algorithm:
+  kind: dqn_rllib
+  params:
+    policy_mode: independent
+    train_iterations: 10
+    lr: 0.0005
+    gamma: 0.99
+    train_batch_size_per_learner: 32
+    num_env_runners: 0
+    num_envs_per_env_runner: 1
+    num_steps_sampled_before_learning_starts: 1000
+    target_network_update_freq: 500

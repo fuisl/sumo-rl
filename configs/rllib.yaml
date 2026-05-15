@@ -1,0 +1,32 @@
+defaults:
+  - logging: wandb
+  - scenario: resco_grid4x4
+  - algorithm: ppo_rllib
+  - _self_
+
+experiment:
+  name: rllib
+  project: marl-traffic-gat
+  group: null
+  tags: []
+  seed: 42
+  runs: 1
+  episodes: 1
+  total_timesteps: 10000
+  eval_episodes: 1
+  eval_seeds: null
+  fixed_ts: false
+
+env:
+  factory: parallel_env
+  kwargs:
+    add_system_info: true
+    add_per_agent_info: true
+    single_agent: false
+    tripinfo_output_name: null
+
+hydra:
+  run:
+    dir: outputs/${experiment.name}/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: false

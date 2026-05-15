@@ -1,0 +1,16 @@
+# @package _global_
+algorithm:
+  kind: ppo_rllib
+  params:
+    policy_mode: independent
+    train_iterations: 10
+    lr: 0.0005
+    gamma: 0.99
+    lambda_: 0.95
+    clip_param: 0.2
+    entropy_coeff: 0.0
+    train_batch_size_per_learner: 4000
+    sgd_minibatch_size: 128
+    num_sgd_iter: 10
+    num_env_runners: 0
+    num_envs_per_env_runner: 1
