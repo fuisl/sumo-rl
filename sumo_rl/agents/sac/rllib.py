@@ -10,10 +10,13 @@ from sumo_rl.agents.rllib_common import (
     apply_multi_agent_settings,
     apply_training_settings,
     build_algorithm_context,
+    completed_training_episodes,
+    emit_training_metrics_by_step,
     flatten_numeric_metrics,
     plain_dict,
     rllib_counter_metrics,
-    training_iterations,
+    training_episode_target,
+    training_should_stop,
 )
 from sumo_rl.rllib.custom_sac import build_custom_sac_module_spec
 
@@ -88,10 +91,26 @@ def train(
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
-    for iteration in range(training_iterations(cfg, params)):
+    del params
+    iteration = 0
+    last_logged_step = 0
+    while True:
+        iteration += 1
         result = algo.train()
-        metrics = extract_training_metrics(result, iteration + 1, algorithm_kind=algorithm_kind)
-        step = int(metrics.get("train/env_steps_sampled") or iteration + 1)
-        if emit_metrics is not None:
-            emit_metrics(metrics, step)
-        print(f"[{algorithm_kind}] iteration={iteration + 1} result_keys={sorted(result.keys())[:8]}")
+        metrics = extract_training_metrics(result, iteration, algorithm_kind=algorithm_kind)
+        is_final = training_should_stop(metrics, cfg)
+        last_logged_step = emit_training_metrics_by_step(
+            metrics,
+            cfg,
+            last_logged_step=last_logged_step,
+            emit_metrics=emit_metrics,
+            force=is_final,
+        )
+        completed_episodes = completed_training_episodes(metrics, cfg)
+        print(
+            f"[{algorithm_kind}] episode={min(completed_episodes, training_episode_target(cfg))}/"
+            f"{training_episode_target(cfg)} iteration={iteration} "
+            f"result_keys={sorted(result.keys())[:8]}"
+        )
+        if is_final:
+            break

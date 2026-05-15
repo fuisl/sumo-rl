@@ -73,11 +73,11 @@ The runner also logs reward metadata in the final episode summary:
 
 | Metric | Producer | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `train/reward_mean` | algorithm runner | latest reward batch from the trainer result | every `logging.log_freq` steps and on training end |
-| `train/reward_sum` | algorithm runner | latest reward batch from the trainer result | every `logging.log_freq` steps and on training end |
+| `train/reward_mean` | algorithm runner | latest reward batch from the trainer result | every `logging.train_log_freq_steps` sampled env steps and on training end; default is every step |
+| `train/reward_sum` | algorithm runner | latest reward batch from the trainer result | every `logging.train_log_freq_steps` sampled env steps and on training end; default is every step |
 | `train/episode_reward` | direct or AEC Q-learning runner | sum of per-step environment rewards over the episode | once per episode |
-| `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `eval_freq` steps and once after training |
-| `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `eval_freq` steps and once after training |
+| `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `logging.validation_log_freq_episodes` eval episodes and once after training |
+| `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `logging.validation_log_freq_episodes` eval episodes and once after training |
 
 For SAC, the joint wrapper reduces the per-agent reward dictionary to one scalar before handing it to the learner.
 That means SAC training rewards are not directly comparable to the per-agent raw reward vector.

@@ -3,7 +3,6 @@ algorithm:
   kind: sac_rllib_builtin
   params:
     policy_mode: independent
-    train_iterations: 10
     actor_lr: 0.0003
     critic_lr: 0.0003
     alpha_lr: 0.0003

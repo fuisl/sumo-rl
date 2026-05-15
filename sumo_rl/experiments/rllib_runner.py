@@ -52,6 +52,12 @@ def _eval_seeds(cfg: DictConfig) -> list[int]:
     return [base_seed + index for index in range(count)]
 
 
+def _validation_log_freq_episodes(cfg: DictConfig) -> int:
+    logging_cfg = getattr(cfg, "logging", None)
+    value = getattr(logging_cfg, "validation_log_freq_episodes", 1) if logging_cfg is not None else 1
+    return max(1, int(value or 1))
+
+
 def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
     scenario_name = scenario_factory_name(cfg) or str(getattr(getattr(cfg, "scenario", None), "name", "scenario"))
     timestamp = datetime.now().strftime("%H%M%S")
@@ -154,8 +160,10 @@ def _evaluate(
 ) -> Dict[str, Any]:
     seed_rows = []
     eval_seeds = _eval_seeds(cfg)
+    validation_log_freq = _validation_log_freq_episodes(cfg)
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
+        eval_episode = seed_index + 1
         eval_env = build_multi_agent_wrapper(
             cfg,
             run_dir,
@@ -171,27 +179,34 @@ def _evaluate(
             eval_std_reward=0.0,
             eval_episodes=1,
             logging_cfg=logging_cfg,
-            extra={"eval/seed": float(seed), "eval/seed_index": float(seed_index)},
+            extra={
+                "eval/seed": float(seed),
+                "eval/seed_index": float(seed_index),
+                "eval/episode": float(eval_episode),
+            },
         )
         seed_rows.append(seed_row)
-        _log_episode_summary(
-            wandb_run,
-            csv_run,
-            seed_row,
-            step=seed_index,
-            logging_cfg=logging_cfg,
-        )
+        if len(eval_seeds) > 1 and (eval_episode % validation_log_freq == 0 or eval_episode == len(eval_seeds)):
+            _log_episode_summary(
+                wandb_run,
+                csv_run,
+                seed_row,
+                step=eval_episode,
+                logging_cfg=logging_cfg,
+            )
         eval_env.close()
 
     eval_mean_reward = float(np.mean([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
     eval_std_reward = float(np.std([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
-    return _aggregate_final_eval_rows(
+    summary = _aggregate_final_eval_rows(
         seed_rows,
         algorithm_kind=algorithm_kind,
         eval_mean_reward=eval_mean_reward,
         eval_std_reward=eval_std_reward,
         eval_episodes=len(eval_seeds),
     )
+    summary["eval/episode"] = float(len(eval_seeds))
+    return summary
 
 
 def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
@@ -234,7 +249,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
             wandb_run=wandb_run,
             csv_run=csv_run,
         )
-        _log_episode_summary(wandb_run, csv_run, final_summary, step=int(getattr(cfg.experiment, "total_timesteps", 0) or 0), logging_cfg=logging_cfg)
+        _log_episode_summary(wandb_run, csv_run, final_summary, step=len(_eval_seeds(cfg)), logging_cfg=logging_cfg)
         _update_wandb_summary(wandb_run, final_summary)
 
         if bool(getattr(logging_cfg, "save_final_model", True)):

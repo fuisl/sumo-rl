@@ -8,6 +8,8 @@ tags: []
 job_type: train
 log_freq: 1000
 eval_freq: 5000
+train_log_freq_steps: 1
+validation_log_freq_episodes: 1
 checkpoint_freq: 5000
 log_every_seconds: 200
 save_checkpoints: true

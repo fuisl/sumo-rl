@@ -210,11 +210,14 @@ Key files:
 The algorithm modules log training metrics:
 
 - `train/*`
+- training uses `experiment.episodes` as the episode budget
+- training rows use sampled env steps as the W&B/CSV step axis and are emitted every step by default via `logging.train_log_freq_steps=1`
 
 The runner keeps validation and benchmark metrics shared:
 
 - evaluation summaries
 - final RESCO summaries
+- validation rows use evaluation episode as the W&B/CSV step axis and are throttled by `logging.validation_log_freq_episodes`
 
 For thesis-style runs, evaluation should use a reproducible seed schedule rather than repeating one seed for every eval episode. The repo supports `experiment.eval_seeds`, and the RESCO benchmark presets use the fixed-time pattern `[1, 2, 3, 4, 5]` so eval mean/std and the final traffic summary are both computed over distinct seeded episodes.
 

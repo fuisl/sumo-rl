@@ -524,7 +524,7 @@ def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = Non
     tags = list(logging_cfg.tags or cfg.experiment.tags or [])
     mode = logging_cfg.mode or os.environ.get("WANDB_MODE") or "offline"
 
-    return wandb.init(
+    run = wandb.init(
         project=project,
         entity=entity,
         name=run_name,
@@ -536,6 +536,17 @@ def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = Non
         config=_as_plain_dict(cfg),
         reinit="finish_previous",
     )
+    try:
+        run.define_metric("train/*", step_metric="train/env_step")
+        run.define_metric("train/env_step")
+        run.define_metric("eval/*", step_metric="eval/episode")
+        run.define_metric("final/*", step_metric="eval/episode")
+        run.define_metric("tripinfo/*", step_metric="eval/episode")
+        run.define_metric("episode/*", step_metric="eval/episode")
+        run.define_metric("warnings/*", step_metric="eval/episode")
+    except Exception:
+        pass
+    return run
 
 
 class _LocalMetricsCsvLogger:
@@ -667,7 +678,10 @@ def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int
     if (wandb_run is None and csv_run is None) or not metrics:
         return
     if wandb_run is not None:
-        wandb_run.log(metrics, step=step)
+        if "train/env_step" in metrics:
+            wandb_run.log(metrics)
+        else:
+            wandb_run.log(metrics, step=step)
     if csv_run is not None:
         csv_run.log(metrics, step=step)
 
@@ -1156,7 +1170,10 @@ def _log_episode_summary(
         include_final=include_final_to_wandb,
     )
     if wandb_run is not None:
-        wandb_run.log(wandb_row, step=step)
+        if "eval/episode" in wandb_row:
+            wandb_run.log(wandb_row)
+        else:
+            wandb_run.log(wandb_row, step=step)
         _update_wandb_summary(wandb_run, wandb_row)
     if csv_run is not None:
         csv_run.log(csv_row, step=step)

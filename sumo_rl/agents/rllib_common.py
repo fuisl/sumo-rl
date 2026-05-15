@@ -45,6 +45,17 @@ def total_timesteps(cfg: Any) -> int:
     return max(1, int(getattr(getattr(cfg, "experiment", None), "total_timesteps", 1) or 1))
 
 
+def training_episode_target(cfg: Any) -> int:
+    return max(1, int(getattr(getattr(cfg, "experiment", None), "episodes", 1) or 1))
+
+
+def train_log_freq_steps(cfg: Any) -> int:
+    logging_cfg = getattr(cfg, "logging", None)
+    explicit = getattr(logging_cfg, "train_log_freq_steps", None) if logging_cfg is not None else None
+    fallback = getattr(logging_cfg, "log_freq", 1000) if logging_cfg is not None else 1000
+    return max(1, int(explicit if explicit is not None else fallback))
+
+
 def cap_to_horizon(value: Any, horizon: int) -> int:
     return max(1, min(int(value), int(horizon)))
 
@@ -194,11 +205,64 @@ def apply_multi_agent_settings(config, context: RllibAlgorithmContext):
     )
 
 
-def training_iterations(cfg: Any, params: Dict[str, Any]) -> int:
-    value = params.get("train_iterations")
-    if value is not None:
-        return max(1, int(value))
-    return max(1, min(20, total_timesteps(cfg) // 1000 or 1))
+def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
+    reported_episodes = metrics.get("train/episodes_total")
+    if reported_episodes is not None:
+        return int(reported_episodes)
+    sampled_steps = int(metrics.get("train/env_steps_sampled") or 0)
+    return sampled_steps // total_timesteps(cfg)
+
+
+def training_should_stop(metrics: Dict[str, Any], cfg: Any) -> bool:
+    target_episodes = training_episode_target(cfg)
+    return completed_training_episodes(metrics, cfg) >= target_episodes
+
+
+def should_log_training_metrics(
+    metrics: Dict[str, Any],
+    cfg: Any,
+    *,
+    last_logged_step: int,
+    force: bool = False,
+) -> bool:
+    if force:
+        return True
+    sampled_steps = int(metrics.get("train/env_steps_sampled") or 0)
+    return sampled_steps > 0 and sampled_steps - last_logged_step >= train_log_freq_steps(cfg)
+
+
+def emit_training_metrics_by_step(
+    metrics: Dict[str, Any],
+    cfg: Any,
+    *,
+    last_logged_step: int,
+    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]],
+    force: bool = False,
+) -> int:
+    if emit_metrics is None:
+        return last_logged_step
+
+    current_step = int(metrics.get("train/env_step") or metrics.get("train/env_steps_sampled") or 0)
+    if current_step <= 0:
+        return last_logged_step
+
+    freq = train_log_freq_steps(cfg)
+    next_step = last_logged_step + freq
+    logged_step = last_logged_step
+    while next_step <= current_step:
+        row = dict(metrics)
+        row["train/env_step"] = float(next_step)
+        emit_metrics(row, next_step)
+        logged_step = next_step
+        next_step += freq
+
+    if force and logged_step != current_step:
+        row = dict(metrics)
+        row["train/env_step"] = float(current_step)
+        emit_metrics(row, current_step)
+        logged_step = current_step
+
+    return logged_step
 
 
 def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
@@ -232,6 +296,8 @@ def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iterat
             value = env_runner_metrics.get(source_key)
             if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
                 metrics[target_key] = float(value)
+    if "train/env_steps_sampled" in metrics:
+        metrics["train/env_step"] = metrics["train/env_steps_sampled"]
     return metrics
 
 

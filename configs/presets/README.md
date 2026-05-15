@@ -45,6 +45,10 @@ How to read one preset:
 3. Follow the `defaults` chain into `configs/scenario/` and `configs/algorithm/`.
 
 For RLlib runs, open `configs/rllib.yaml` together with the algorithm file you want.
+RLlib training length is controlled by `experiment.episodes`; `experiment.total_timesteps`
+is the SUMO horizon for each episode. Training logs use sampled env steps
+(`logging.train_log_freq_steps`), while validation logs use evaluation episodes
+(`logging.validation_log_freq_episodes`).
 
 The launcher name tells you the method family.
 The folder name tells you the scenario.
