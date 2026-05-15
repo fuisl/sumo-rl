@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -22,7 +23,8 @@ class RllibAlgorithmContext:
     env_name: str
     policies: Dict[str, Any]
     active_policies: Dict[str, Any]
-    total_timesteps: int
+    episode_seconds: int
+    episode_steps: int
 
 
 def plain_dict(cfg: Any) -> Any:
@@ -41,8 +43,107 @@ def plain_dict(cfg: Any) -> Any:
     return dict(cfg)
 
 
-def total_timesteps(cfg: Any) -> int:
-    return max(1, int(getattr(getattr(cfg, "experiment", None), "total_timesteps", 1) or 1))
+def _resolve_base_env(env: Any) -> Any:
+    current = env
+    visited = set()
+    for _ in range(12):
+        if (
+            hasattr(current, "finalize_episode_summary")
+            or hasattr(current, "last_episode_summary")
+            or hasattr(current, "metrics")
+        ):
+            return current
+        for attr in ("base_env", "env", "aec_env", "unwrapped", "gym_env", "par_env", "venv"):
+            candidate = getattr(current, attr, None)
+            if candidate is not None and id(candidate) not in visited:
+                visited.add(id(candidate))
+                current = candidate
+                break
+        else:
+            break
+    return env
+
+
+def _completed_episode_summary(env: Any) -> Dict[str, Any]:
+    base_env = _resolve_base_env(env)
+    cached_summary = getattr(base_env, "last_episode_summary", None)
+    if isinstance(cached_summary, dict) and cached_summary:
+        return dict(cached_summary)
+
+    if hasattr(base_env, "finalize_episode_summary"):
+        try:
+            summary = dict(base_env.finalize_episode_summary() or {})
+        except Exception:
+            summary = {}
+        if summary:
+            return summary
+
+    if isinstance(cached_summary, dict):
+        return dict(cached_summary)
+    return {}
+
+
+@lru_cache(maxsize=1)
+def training_episode_summary_callbacks_class():
+    from ray.rllib.algorithms.callbacks import DefaultCallbacks
+
+    def _resolve_callback_env(args: tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+        for key in ("base_env", "env", "env_runner"):
+            candidate = kwargs.get(key)
+            if candidate is not None:
+                return candidate
+        if args:
+            first_arg = args[0]
+            for attr in ("base_env", "env", "env_runner", "unwrapped"):
+                candidate = getattr(first_arg, attr, None)
+                if candidate is not None:
+                    return candidate
+            return first_arg
+        return None
+
+    class TrainingEpisodeSummaryCallbacks(DefaultCallbacks):
+        """Capture completed episode summaries during RLlib training."""
+
+        pending_episode_summaries: list[Dict[str, Any]] = []
+
+        @classmethod
+        def drain_pending_episode_summaries(cls) -> list[Dict[str, Any]]:
+            summaries = list(cls.pending_episode_summaries)
+            cls.pending_episode_summaries.clear()
+            return summaries
+
+        def on_episode_end(self, *args, **kwargs) -> None:
+            episode = kwargs.get("episode")
+            if episode is None and args:
+                episode = args[0]
+            del episode
+            env = _resolve_callback_env(args, kwargs)
+            summary = _completed_episode_summary(env)
+            if summary:
+                self.__class__.pending_episode_summaries.append(summary)
+
+    return TrainingEpisodeSummaryCallbacks
+
+
+def episode_seconds(cfg: Any) -> int:
+    experiment = getattr(cfg, "experiment", None)
+    value = getattr(experiment, "episode_seconds", 1)
+    return max(1, int(value or 1))
+
+
+def decision_interval_seconds(cfg: Any) -> int:
+    env_cfg = getattr(cfg, "env", None)
+    kwargs = getattr(env_cfg, "kwargs", None) if env_cfg is not None else None
+    value = getattr(kwargs, "delta_time", None) if kwargs is not None else None
+    if value is None and isinstance(kwargs, dict):
+        value = kwargs.get("delta_time")
+    return max(1, int(value or 5))
+
+
+def episode_steps(cfg: Any) -> int:
+    seconds = episode_seconds(cfg)
+    delta_time = decision_interval_seconds(cfg)
+    return max(1, seconds // delta_time)
 
 
 def training_episode_target(cfg: Any) -> int:
@@ -52,6 +153,15 @@ def training_episode_target(cfg: Any) -> int:
 def train_log_freq_steps(cfg: Any) -> int:
     logging_cfg = getattr(cfg, "logging", None)
     explicit = getattr(logging_cfg, "train_log_freq_steps", None) if logging_cfg is not None else None
+    fallback = getattr(logging_cfg, "log_freq", 1000) if logging_cfg is not None else 1000
+    return max(1, int(explicit if explicit is not None else fallback))
+
+
+def train_log_freq_episodes(cfg: Any) -> int:
+    logging_cfg = getattr(cfg, "logging", None)
+    explicit = getattr(logging_cfg, "train_log_freq_episodes", None) if logging_cfg is not None else None
+    if explicit is None and logging_cfg is not None:
+        explicit = getattr(logging_cfg, "train_log_freq_steps", None)
     fallback = getattr(logging_cfg, "log_freq", 1000) if logging_cfg is not None else 1000
     return max(1, int(explicit if explicit is not None else fallback))
 
@@ -138,7 +248,8 @@ def build_algorithm_context(cfg: Any, run_dir: Path, algorithm_kind: str) -> Rll
         env_name=register_multi_agent_env(cfg, run_dir, algorithm_kind, pad_spaces=pad_spaces),
         policies=policies,
         active_policies=active_policies,
-        total_timesteps=total_timesteps(cfg),
+        episode_seconds=episode_seconds(cfg),
+        episode_steps=episode_steps(cfg),
     )
 
 
@@ -169,7 +280,7 @@ def apply_training_settings(
     config,
     params: Dict[str, Any],
     *,
-    total_timesteps_value: int,
+    episode_steps_value: int,
     allowed_keys: tuple[str, ...],
     aliases: Optional[Dict[str, str]] = None,
 ):
@@ -183,17 +294,17 @@ def apply_training_settings(
     if "train_batch_size_per_learner" in training_kwargs:
         training_kwargs["train_batch_size_per_learner"] = cap_to_horizon(
             training_kwargs["train_batch_size_per_learner"],
-            total_timesteps_value,
+            episode_steps_value,
         )
     if "minibatch_size" in training_kwargs:
         training_kwargs["minibatch_size"] = cap_to_horizon(
             training_kwargs["minibatch_size"],
-            int(training_kwargs.get("train_batch_size_per_learner", total_timesteps_value)),
+            int(training_kwargs.get("train_batch_size_per_learner", episode_steps_value)),
         )
     if training_kwargs and hasattr(config, "training"):
         config = config.training(**training_kwargs)
     if hasattr(config, "reporting"):
-        config = config.reporting(min_sample_timesteps_per_iteration=total_timesteps_value)
+        config = config.reporting(min_sample_timesteps_per_iteration=episode_steps_value)
     return config
 
 
@@ -210,7 +321,7 @@ def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
     if reported_episodes is not None:
         return int(reported_episodes)
     sampled_steps = int(metrics.get("train/env_steps_sampled") or 0)
-    return sampled_steps // total_timesteps(cfg)
+    return sampled_steps // episode_steps(cfg)
 
 
 def training_should_stop(metrics: Dict[str, Any], cfg: Any) -> bool:
@@ -298,7 +409,57 @@ def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iterat
                 metrics[target_key] = float(value)
     if "train/env_steps_sampled" in metrics:
         metrics["train/env_step"] = metrics["train/env_steps_sampled"]
+    if "train/episode_return_mean" in metrics:
+        metrics.setdefault("train/reward_mean", metrics["train/episode_return_mean"])
+    if "train/episode_return_min" in metrics:
+        metrics.setdefault("train/reward_min", metrics["train/episode_return_min"])
+    if "train/episode_return_max" in metrics:
+        metrics.setdefault("train/reward_max", metrics["train/episode_return_max"])
     return metrics
+
+
+def build_training_episode_row(
+    metrics: Dict[str, Any],
+    episode_summary: Dict[str, Any],
+    *,
+    algorithm_kind: str,
+) -> Dict[str, Any]:
+    row = dict(metrics)
+    row["algorithm/kind"] = algorithm_kind
+
+    episode_index = episode_summary.get("episode/index")
+    if isinstance(episode_index, (int, float, np.integer, np.floating)):
+        row["train/episode_index"] = float(episode_index)
+    else:
+        fallback_episode = row.get("train/episodes_total")
+        if isinstance(fallback_episode, (int, float, np.integer, np.floating)):
+            row["train/episode_index"] = float(fallback_episode)
+
+    reward_mean = row.get("train/reward_mean", row.get("train/episode_return_mean"))
+    if isinstance(reward_mean, (int, float, np.integer, np.floating)) and not isinstance(reward_mean, bool):
+        row["train/reward_mean"] = float(reward_mean)
+        row["train/episode_reward"] = float(reward_mean)
+
+    if isinstance(episode_summary, dict):
+        for key, value in episode_summary.items():
+            if not key.startswith("resco_"):
+                continue
+            if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+                row[f"train/resco/{key[len('resco_'):]}"] = float(value)
+            else:
+                row[f"train/resco/{key[len('resco_'):]}"] = value
+    return row
+
+
+def should_log_training_episode(episode_index: Any, cfg: Any, *, last_logged_episode: int = 0, force: bool = False) -> bool:
+    if force:
+        return True
+    if not isinstance(episode_index, (int, float, np.integer, np.floating)):
+        return False
+    current_episode = int(episode_index)
+    if current_episode <= 0:
+        return False
+    return current_episode - int(last_logged_episode) >= train_log_freq_episodes(cfg)
 
 
 def flatten_numeric_metrics(value: Any, *, prefix: str, out: Dict[str, float], max_depth: int = 5) -> None:

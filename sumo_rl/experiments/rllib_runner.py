@@ -160,7 +160,6 @@ def _evaluate(
 ) -> Dict[str, Any]:
     seed_rows = []
     eval_seeds = _eval_seeds(cfg)
-    validation_log_freq = _validation_log_freq_episodes(cfg)
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
         eval_episode = seed_index + 1
@@ -191,14 +190,6 @@ def _evaluate(
             },
         )
         seed_rows.append(seed_row)
-        if len(eval_seeds) > 1 and (eval_episode % validation_log_freq == 0 or eval_episode == len(eval_seeds)):
-            _log_episode_summary(
-                wandb_run,
-                csv_run,
-                seed_row,
-                step=eval_episode,
-                logging_cfg=logging_cfg,
-            )
 
     eval_mean_reward = float(np.mean([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
     eval_std_reward = float(np.std([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0

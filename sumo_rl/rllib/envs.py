@@ -130,9 +130,9 @@ def _prepare_env_kwargs(cfg: Any, run_dir: Path, seed: Optional[int] = None) -> 
         bool(getattr(getattr(cfg, "logging", None), "save_tripinfo_output", False)),
     )
     experiment = getattr(cfg, "experiment", None)
-    total_timesteps = int(getattr(experiment, "total_timesteps", 0) or 0)
-    if total_timesteps > 0 and "num_seconds" not in kwargs:
-        kwargs["num_seconds"] = total_timesteps
+    episode_seconds = int(getattr(experiment, "episode_seconds", 0) or 0)
+    if episode_seconds > 0 and "num_seconds" not in kwargs:
+        kwargs["num_seconds"] = episode_seconds
     if seed is not None:
         kwargs["sumo_seed"] = int(seed)
     if "single_agent" not in kwargs:

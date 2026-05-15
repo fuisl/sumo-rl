@@ -10,11 +10,13 @@ from sumo_rl.agents.rllib_common import (
     apply_multi_agent_settings,
     apply_training_settings,
     build_algorithm_context,
+    build_training_episode_row,
     completed_training_episodes,
-    emit_training_metrics_by_step,
     flatten_numeric_metrics,
     plain_dict,
     rllib_counter_metrics,
+    should_log_training_episode,
+    training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
 )
@@ -27,11 +29,12 @@ def build_config(cfg: Any, run_dir: Path):
     from ray.rllib.algorithms.dqn import DQNConfig
 
     context = build_algorithm_context(cfg, run_dir, KIND)
+    callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
     if "num_steps_sampled_before_learning_starts" in params:
         params["num_steps_sampled_before_learning_starts"] = max(
             int(params["num_steps_sampled_before_learning_starts"]),
-            context.total_timesteps + 1,
+            context.episode_steps + 1,
         )
 
     config = DQNConfig().framework("torch").environment(context.env_name)
@@ -39,7 +42,7 @@ def build_config(cfg: Any, run_dir: Path):
     config = apply_training_settings(
         config,
         params,
-        total_timesteps_value=context.total_timesteps,
+        episode_steps_value=context.episode_steps,
         allowed_keys=(
             "lr",
             "gamma",
@@ -51,7 +54,8 @@ def build_config(cfg: Any, run_dir: Path):
             "target_network_update_freq",
         ),
     )
-    return apply_multi_agent_settings(config, context)
+    config = apply_multi_agent_settings(config, context)
+    return config.callbacks(callbacks_class)
 
 
 def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
@@ -73,20 +77,37 @@ def train(
 ) -> None:
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params
+    callbacks_class = training_episode_summary_callbacks_class()
+    callbacks_class.drain_pending_episode_summaries()
     iteration = 0
     last_logged_step = 0
     while True:
         iteration += 1
         result = algo.train()
         metrics = extract_training_metrics(result, iteration)
+        episode_summaries = callbacks_class.drain_pending_episode_summaries()
         is_final = training_should_stop(metrics, cfg)
-        last_logged_step = emit_training_metrics_by_step(
-            metrics,
-            cfg,
-            last_logged_step=last_logged_step,
-            emit_metrics=emit_metrics,
-            force=is_final,
-        )
+        if emit_metrics is not None:
+            for episode_summary in episode_summaries:
+                episode_index = episode_summary.get("episode/index")
+                if not should_log_training_episode(
+                    episode_index,
+                    cfg,
+                    last_logged_episode=last_logged_step,
+                    force=is_final,
+                ):
+                    continue
+                row = build_training_episode_row(metrics, episode_summary, algorithm_kind=KIND)
+                row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
+                emit_metrics(row, row_step)
+                if row_step > 0:
+                    last_logged_step = row_step
+            if is_final and not episode_summaries:
+                row = build_training_episode_row(metrics, {}, algorithm_kind=KIND)
+                row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
+                emit_metrics(row, row_step)
+                if row_step > 0:
+                    last_logged_step = row_step
         completed_episodes = completed_training_episodes(metrics, cfg)
         print(
             f"[{KIND}] episode={min(completed_episodes, training_episode_target(cfg))}/"

@@ -4,7 +4,6 @@ import csv
 import inspect
 import os
 import random
-import shutil
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -97,8 +96,10 @@ def _baselinev1_callbacks_class():
             "baselinev1_invalid_actions_total",
         )
 
-        def on_episode_step(self, *, worker, base_env, episode, env_index: Optional[int] = None, **kwargs) -> None:
-            del worker, base_env, env_index, kwargs
+        def on_episode_step(self, *args, **kwargs) -> None:
+            episode = kwargs.get("episode")
+            if episode is None and args:
+                episode = args[0]
             get_agents = getattr(episode, "get_agents", None)
             agent_ids = get_agents() if callable(get_agents) else []
             for agent_id in agent_ids:
@@ -677,13 +678,19 @@ def _log_resco_metrics(
 def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
     if (wandb_run is None and csv_run is None) or not metrics:
         return
-    if wandb_run is not None:
-        if "train/env_step" in metrics:
-            wandb_run.log(metrics)
+    log_step = step
+    if log_step is None:
+        candidate_step = metrics.get("train/episode_index")
+        if isinstance(candidate_step, (int, float, np.integer, np.floating)):
+            log_step = int(candidate_step)
         else:
-            wandb_run.log(metrics, step=step)
+            candidate_step = metrics.get("train/env_step")
+            if isinstance(candidate_step, (int, float, np.integer, np.floating)):
+                log_step = int(candidate_step)
+    if wandb_run is not None:
+        wandb_run.log(metrics, step=log_step)
     if csv_run is not None:
-        csv_run.log(metrics, step=step)
+        csv_run.log(metrics, step=log_step)
 
 
 def _build_env(cfg: DictConfig, run_dir: Path, seed: Optional[int] = None):
@@ -733,29 +740,6 @@ def _get_env_step(env) -> int:
     if hasattr(base_env, "sim_step"):
         return int(base_env.sim_step)
     return 0
-
-
-def _get_sb3_final_log_step(cfg: DictConfig, model: Any) -> int:
-    requested_step = int(cfg.experiment.total_timesteps)
-    actual_step = int(getattr(model, "num_timesteps", requested_step) or requested_step)
-    return max(requested_step, actual_step)
-
-
-def _get_sb3_eval_seeds(cfg: DictConfig) -> list[int]:
-    eval_episodes = int(getattr(cfg.experiment, "eval_episodes", 0) or 0)
-    explicit_eval_seeds = _as_plain_dict(getattr(cfg.experiment, "eval_seeds", None))
-    if isinstance(explicit_eval_seeds, list):
-        explicit_iterable = explicit_eval_seeds
-    elif explicit_eval_seeds is None:
-        explicit_iterable = None
-    else:
-        explicit_iterable = [explicit_eval_seeds]
-    base_seed = int(cfg.experiment.seed) if cfg.experiment.seed is not None else None
-    return resolve_eval_seeds(base_seed, eval_episodes, explicit_iterable)
-
-
-def _get_sb3_checkpoint_dir(run_dir: Path, cfg: DictConfig) -> Path:
-    return run_dir / "checkpoints" / str(cfg.algorithm.kind)
 
 
 def _get_base_env(env):
@@ -867,48 +851,6 @@ def _aggregate_final_eval_rows(
     return aggregated
 
 
-def _run_sb3_final_evaluation(
-    model: Any,
-    eval_env: Any,
-    *,
-    algorithm_kind: str,
-    eval_seeds: list[int],
-    eval_episodes: Optional[int] = None,
-    logging_cfg=None,
-) -> tuple[float, float, Dict[str, Any]]:
-    seed_rows: list[Dict[str, Any]] = []
-
-    def _capture_seed_row(seed: int, episode_reward: float) -> None:
-        summary_env = _get_base_env(eval_env)
-        seed_rows.append(
-            _build_final_eval_summary_row(
-                summary_env,
-                algorithm_kind=algorithm_kind,
-                eval_mean_reward=float(episode_reward),
-                eval_std_reward=0.0,
-                eval_episodes=1,
-                logging_cfg=logging_cfg,
-            )
-        )
-
-    episode_rewards = run_model_episodes_on_seeds(model, eval_env, eval_seeds, on_episode_end=_capture_seed_row)
-    if episode_rewards:
-        eval_mean_reward = float(np.mean(episode_rewards))
-        eval_std_reward = float(np.std(episode_rewards))
-    else:
-        eval_mean_reward = 0.0
-        eval_std_reward = 0.0
-
-    final_summary = _aggregate_final_eval_rows(
-        seed_rows,
-        algorithm_kind=algorithm_kind,
-        eval_mean_reward=eval_mean_reward,
-        eval_std_reward=eval_std_reward,
-        eval_episodes=eval_episodes,
-    )
-    return eval_mean_reward, eval_std_reward, final_summary
-
-
 def _episode_index_from_summary(summary: Any) -> Optional[float]:
     if not isinstance(summary, dict):
         return None
@@ -968,43 +910,6 @@ def _get_completed_episode_final_info(env) -> Dict[str, Any]:
     if isinstance(cached_info, dict):
         return dict(cached_info)
     return {}
-
-
-def _wrap_sb3_env_if_needed(cfg: DictConfig, env, params: Dict[str, Any], default_num_envs: int):
-    num_envs = int(params.pop("num_envs", default_num_envs))
-    if cfg.env.factory != "parallel_env" and not hasattr(env, "possible_agents"):
-        return env, 1
-
-    import supersuit as ss
-    from stable_baselines3.common.vec_env import VecMonitor
-
-    # RESCO scenarios such as cologne3 and ingolstadt7 have heterogeneous agent
-    # observation/action spaces, so pad them before converting to a VecEnv.
-    env = ss.pad_observations_v0(env)
-    env = ss.pad_action_space_v0(env)
-    env = ss.pettingzoo_env_to_vec_env_v1(env)
-    env = ss.concat_vec_envs_v1(
-        env,
-        num_envs,
-        num_cpus=1,
-        base_class="stable_baselines3",
-    )
-
-    def _seed_shim(seed=None):
-        if hasattr(env, "venv") and hasattr(env.venv, "seed"):
-            try:
-                return env.venv.seed(seed)
-            except AttributeError:
-                return None
-        return None
-
-    if not hasattr(env, "seed"):
-        env.seed = _seed_shim
-    if not hasattr(env, "render_mode"):
-        env.render_mode = None
-    env = VecMonitor(env)
-    env.seed = _seed_shim
-    return env, num_envs
 
 
 def _get_episode_summary(env) -> Dict[str, Any]:
@@ -1076,7 +981,9 @@ def _build_final_eval_summary_row(
         final_row.update(
             {
                 "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
+                "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
                 "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
+                "final/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
                 "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
                 "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
                 "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
@@ -1602,329 +1509,6 @@ def _run_static_policy(cfg: DictConfig, run_dir: Path, wandb_run, csv_run, polic
         _update_wandb_summary(wandb_run, wandb_summary)
     if csv_run is not None:
         csv_run.log(csv_summary, step=final_step or None)
-
-
-def _run_sb3_dqn(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
-    from stable_baselines3 import DQN
-
-    params = _as_plain_dict(cfg.algorithm.params or {})
-    eval_episodes = int(cfg.experiment.eval_episodes)
-    eval_seeds = _get_sb3_eval_seeds(cfg)
-    log_freq = int(getattr(cfg.logging, "log_freq", 1000))
-    eval_freq = int(getattr(cfg.logging, "eval_freq", log_freq))
-    env = _build_env(cfg, run_dir)
-
-    try:
-        env, _ = _wrap_sb3_env_if_needed(cfg, env, params, default_num_envs=1)
-        eval_env = _build_env(cfg, run_dir)
-        eval_params = _as_plain_dict(cfg.algorithm.params or {})
-        eval_params.pop("num_envs", None)
-        eval_env, _ = _wrap_sb3_env_if_needed(cfg, eval_env, eval_params, default_num_envs=1)
-        callback = SB3WandbCallback(
-            wandb_run,
-            csv_run,
-            logging_cfg=cfg.logging,
-            log_freq=log_freq,
-            eval_env=eval_env,
-            eval_episodes=eval_episodes,
-            eval_freq=eval_freq,
-            eval_seeds=eval_seeds,
-            checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
-            checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
-            save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
-            save_final_model=_logging_flag(cfg.logging, "save_final_model", True),
-        ).build()
-        model = DQN(
-            policy=params.pop("policy", "MlpPolicy"),
-            env=env,
-            seed=int(cfg.experiment.seed) if cfg.experiment.seed is not None else None,
-            tensorboard_log=str(run_dir / "tensorboard"),
-            **params,
-        )
-        model.learn(total_timesteps=int(cfg.experiment.total_timesteps), callback=callback)
-        final_log_step = _get_sb3_final_log_step(cfg, model)
-
-        try:
-            mean_reward, std_reward, episode_summary = _run_sb3_final_evaluation(
-                model,
-                eval_env,
-                algorithm_kind="dqn_sb3",
-                eval_seeds=eval_seeds,
-                eval_episodes=eval_episodes,
-                logging_cfg=cfg.logging,
-            )
-            _log_final_summary_debug(
-                episode_summary,
-                cfg.logging,
-                algorithm_kind="dqn_sb3",
-                eval_env=eval_env,
-                summary_env=_get_base_env(eval_env),
-            )
-            _log_episode_summary(
-                wandb_run,
-                csv_run,
-                episode_summary,
-                step=final_log_step,
-                logging_cfg=cfg.logging,
-                include_debug_to_wandb=_logging_flag(cfg.logging, "debug_metrics", False),
-                include_final_to_wandb=_logging_flag(cfg.logging, "log_final_traffic_metrics", True),
-            )
-        finally:
-            eval_env.close()
-    finally:
-        env.close()
-
-
-def _run_sb3_ppo(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
-    from stable_baselines3 import PPO
-
-    params = _as_plain_dict(cfg.algorithm.params or {})
-    eval_episodes = int(cfg.experiment.eval_episodes)
-    eval_seeds = _get_sb3_eval_seeds(cfg)
-    log_freq = int(getattr(cfg.logging, "log_freq", 1000))
-    eval_freq = int(getattr(cfg.logging, "eval_freq", log_freq))
-    env = _build_env(cfg, run_dir)
-
-    try:
-        env, num_envs = _wrap_sb3_env_if_needed(cfg, env, params, default_num_envs=2)
-        eval_env = _build_env(cfg, run_dir)
-        eval_params = _as_plain_dict(cfg.algorithm.params or {})
-        eval_params.pop("num_envs", None)
-        eval_env, _ = _wrap_sb3_env_if_needed(cfg, eval_env, eval_params, default_num_envs=1)
-        callback = SB3WandbCallback(
-            wandb_run,
-            csv_run,
-            logging_cfg=cfg.logging,
-            log_freq=log_freq,
-            eval_env=eval_env,
-            eval_episodes=eval_episodes,
-            eval_freq=eval_freq,
-            eval_seeds=eval_seeds,
-            checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
-            checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
-            save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
-            save_final_model=_logging_flag(cfg.logging, "save_final_model", True),
-        ).build()
-
-        model = PPO(
-            policy=params.pop("policy", "MlpPolicy"),
-            env=env,
-            tensorboard_log=str(run_dir / "tensorboard"),
-            **params,
-        )
-        model.learn(total_timesteps=int(cfg.experiment.total_timesteps), callback=callback)
-        final_log_step = _get_sb3_final_log_step(cfg, model)
-
-        try:
-            mean_reward, std_reward, episode_summary = _run_sb3_final_evaluation(
-                model,
-                eval_env,
-                algorithm_kind="ppo_sb3",
-                eval_seeds=eval_seeds,
-                eval_episodes=eval_episodes,
-                logging_cfg=cfg.logging,
-            )
-            _log_final_summary_debug(
-                episode_summary,
-                cfg.logging,
-                algorithm_kind="ppo_sb3",
-                eval_env=eval_env,
-                summary_env=_get_base_env(eval_env),
-            )
-            _log_episode_summary(
-                wandb_run,
-                csv_run,
-                episode_summary,
-                step=final_log_step,
-                logging_cfg=cfg.logging,
-                include_debug_to_wandb=_logging_flag(cfg.logging, "debug_metrics", False),
-                include_final_to_wandb=_logging_flag(cfg.logging, "log_final_traffic_metrics", True),
-            )
-        finally:
-            eval_env.close()
-    finally:
-        env.close()
-
-
-def _run_sb3_sac(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
-    from stable_baselines3 import SAC
-
-    if cfg.env.factory != "parallel_env":
-        raise ValueError("The SAC runner requires `env.factory=parallel_env` so it can use the joint-action wrapper.")
-
-    params = _as_plain_dict(cfg.algorithm.params or {})
-    eval_episodes = int(cfg.experiment.eval_episodes)
-    eval_seeds = _get_sb3_eval_seeds(cfg)
-    log_freq = int(getattr(cfg.logging, "log_freq", 1000))
-    eval_freq = int(getattr(cfg.logging, "eval_freq", log_freq))
-    env = _build_env(cfg, run_dir)
-
-    try:
-        env = JointMultiAgentActionWrapper(env)
-        eval_env = JointMultiAgentActionWrapper(_build_env(cfg, run_dir))
-        callback = SB3WandbCallback(
-            wandb_run,
-            csv_run,
-            logging_cfg=cfg.logging,
-            log_freq=log_freq,
-            eval_env=eval_env,
-            eval_episodes=eval_episodes,
-            eval_freq=eval_freq,
-            eval_seeds=eval_seeds,
-            checkpoint_dir=_get_sb3_checkpoint_dir(run_dir, cfg),
-            checkpoint_freq=int(getattr(cfg.logging, "checkpoint_freq", 0)),
-            save_checkpoints=_logging_flag(cfg.logging, "save_checkpoints", False),
-            save_final_model=_logging_flag(cfg.logging, "save_final_model", True),
-        ).build()
-
-        model = SAC(
-            policy=params.pop("policy", "MlpPolicy"),
-            env=env,
-            seed=int(cfg.experiment.seed) if cfg.experiment.seed is not None else None,
-            tensorboard_log=str(run_dir / "tensorboard"),
-            **params,
-        )
-        model.learn(total_timesteps=int(cfg.experiment.total_timesteps), callback=callback)
-        final_log_step = _get_sb3_final_log_step(cfg, model)
-
-        try:
-            mean_reward, std_reward, episode_summary = _run_sb3_final_evaluation(
-                model,
-                eval_env,
-                algorithm_kind="sac_sb3",
-                eval_seeds=eval_seeds,
-                eval_episodes=eval_episodes,
-                logging_cfg=cfg.logging,
-            )
-            _log_final_summary_debug(
-                episode_summary,
-                cfg.logging,
-                algorithm_kind="sac_sb3",
-                eval_env=eval_env,
-                summary_env=_get_base_env(eval_env),
-            )
-            _log_episode_summary(
-                wandb_run,
-                csv_run,
-                episode_summary,
-                step=final_log_step,
-                logging_cfg=cfg.logging,
-                include_debug_to_wandb=_logging_flag(cfg.logging, "debug_metrics", False),
-                include_final_to_wandb=_logging_flag(cfg.logging, "log_final_traffic_metrics", True),
-            )
-        finally:
-            eval_env.close()
-    finally:
-        env.close()
-
-
-def _resolve_libsignal_root(cfg: DictConfig) -> Path:
-    params = _as_plain_dict(cfg.algorithm.params or {})
-    raw_root = params.get("libsignal_root") if isinstance(params, dict) else None
-    if raw_root:
-        return Path(str(raw_root)).expanduser().resolve()
-
-    env_root = os.environ.get("LIBSIGNAL_ROOT")
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-
-    raise FileNotFoundError(
-        "Phase 5 requires a LibSignal checkout. Set `algorithm.params.libsignal_root` or `LIBSIGNAL_ROOT` to the external repository."
-    )
-
-
-def _libsignal_spec_from_cfg(cfg: DictConfig) -> Dict[str, Any]:
-    params = _as_plain_dict(cfg.algorithm.params or {})
-    spec = {
-        "agent": str(params.get("libsignal_agent", "dqn")),
-        "network": str(params.get("libsignal_network", "sumo4x4")),
-        "task": str(params.get("libsignal_task", "tsc")),
-        "world": str(params.get("libsignal_world", "sumo")),
-        "dataset": str(params.get("libsignal_dataset", "onfly")),
-        "interface": str(params.get("libsignal_interface", "libsumo")),
-        "delay_type": str(params.get("libsignal_delay_type", "real")),
-        "thread_num": int(params.get("libsignal_thread_num", 1)),
-        "ngpu": str(params.get("libsignal_ngpu", "-1")),
-        "episodes": int(params.get("libsignal_episodes", max(1, int(cfg.experiment.episodes)))),
-        "steps": int(params.get("libsignal_steps", 3600)),
-        "test_steps": int(params.get("libsignal_test_steps", 3600)),
-        "learning_start": int(params.get("libsignal_learning_start", 1000)),
-        "buffer_size": int(params.get("libsignal_buffer_size", 5000)),
-        "update_model_rate": int(params.get("libsignal_update_model_rate", 1)),
-        "update_target_rate": int(params.get("libsignal_update_target_rate", 10)),
-        "save_rate": int(params.get("libsignal_save_rate", 1)),
-    }
-    return spec
-
-
-def _run_libsignal_phase5(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
-    from sumo_rl.integrations.libsignal import (
-        LibSignalSpec,
-        build_phase5_trace_row,
-        load_phase5_summary,
-        resolve_libsignal_root,
-        run_phase5_libsignal_seed,
-    )
-
-    params = _as_plain_dict(cfg.algorithm.params or {})
-    libsignal_root = resolve_libsignal_root(params.get("libsignal_root"))
-    spec_dict = _libsignal_spec_from_cfg(cfg)
-    spec = LibSignalSpec(**spec_dict)
-    seeds = _get_run_seeds(cfg)
-    run_metrics: list[Dict[str, Any]] = []
-
-    repo_root = Path(__file__).resolve().parents[2]
-    phase5_dir = run_dir / "phase5" / "libsignal"
-    phase5_dir.mkdir(parents=True, exist_ok=True)
-
-    for run_idx, seed in enumerate(seeds, start=1):
-        seed_prefix = f"{cfg.experiment.name}_seed{seed}"
-        output_root = phase5_dir / seed_prefix / "external"
-        summary_path = phase5_dir / seed_prefix / "summary.json"
-        output_root.mkdir(parents=True, exist_ok=True)
-
-        summary = run_phase5_libsignal_seed(
-            repo_root=repo_root,
-            libsignal_root=libsignal_root,
-            output_root=output_root,
-            summary_path=summary_path,
-            spec=spec,
-            run_seed=seed,
-            run_prefix=seed_prefix,
-        )
-        if not isinstance(summary, dict):
-            summary = load_phase5_summary(summary_path)
-
-        row = build_phase5_trace_row(summary, run_idx=run_idx, run_seed=seed, experiment_name=cfg.experiment.name)
-
-        external_log_file = summary.get("external_log_file")
-        if isinstance(external_log_file, str) and external_log_file:
-            raw_log_copy = phase5_dir / seed_prefix / Path(external_log_file).name
-            try:
-                raw_log_copy.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(external_log_file, raw_log_copy)
-                row["phase5/raw_log_copy"] = str(raw_log_copy)
-            except Exception:
-                row["phase5/raw_log_copy"] = str(external_log_file)
-
-        _log_episode_summary(
-            wandb_run,
-            csv_run,
-            row,
-            step=int(row.get("episode/steps", 0)),
-            logging_cfg=cfg.logging,
-        )
-        run_metrics.append(row)
-
-    summary_row = _aggregate_numeric_row_values(run_metrics)
-    summary_row["algorithm/kind"] = "libsignal_phase5"
-    summary_row["phase5/backend"] = "libsignal"
-    summary_row["phase5/model_group"] = "idqn/mplight/ippo"
-    if wandb_run is not None:
-        wandb_run.log(summary_row, step=len(run_metrics))
-        _update_wandb_summary(wandb_run, summary_row)
-    if csv_run is not None:
-        csv_run.log(summary_row, step=len(run_metrics))
 
 
 def run(cfg: DictConfig) -> None:
