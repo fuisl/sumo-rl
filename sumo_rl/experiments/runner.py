@@ -13,13 +13,10 @@ from typing import Any, Dict, Optional
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
-from sumo_rl.agents.sb3 import JointMultiAgentActionWrapper, SB3WandbCallback
-from sumo_rl.agents.sb3.evaluation import resolve_eval_seeds, run_model_episodes_on_seeds
 from sumo_rl.experiments.metric_utils import (
     add_namespace_aliases as _metric_add_namespace_aliases,
     build_namespaced_metrics as _metric_build_namespaced_metrics,
     keep_namespaced_metrics as _metric_keep_namespaced_metrics,
-    namespace_lane_fairness_metrics as _metric_namespace_lane_fairness_metrics,
     reward_formula_text as _metric_reward_formula_text,
 )
 
@@ -593,10 +590,6 @@ def _prepare_row_for_wandb(row: Dict[str, Any], logging_cfg, *, include_debug: b
     return prepared
 
 
-def _namespace_lane_fairness_metrics(env) -> Dict[str, float]:
-    return _metric_namespace_lane_fairness_metrics(_get_base_env(env))
-
-
 def _reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:
     return _metric_reward_formula_text(reward_fn, reward_weights)
 
@@ -633,7 +626,8 @@ def _add_namespace_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_namespaced_metrics(info: Any, include_agent_metrics_local: bool = False) -> tuple[Dict[str, float], Dict[str, float]]:
-    return _metric_build_namespaced_metrics(info, include_agent_metrics_local)
+    del include_agent_metrics_local
+    return _metric_build_namespaced_metrics(info), {}
 
 
 def _log_resco_metrics(
@@ -644,11 +638,11 @@ def _log_resco_metrics(
     step: Optional[int] = None,
     include_agent_metrics_local: bool = False,
 ) -> None:
-    namespaced_metrics, agent_metrics = _build_namespaced_metrics(info, include_agent_metrics_local)
+    del include_agent_metrics_local
+    namespaced_metrics, _ = _build_namespaced_metrics(info)
     wandb_metrics = dict(shared_metrics)
     wandb_metrics.update(namespaced_metrics)
     csv_metrics = dict(wandb_metrics)
-    csv_metrics.update(agent_metrics)
 
     if wandb_run is not None:
         wandb_run.log(wandb_metrics, step=step)
@@ -1020,10 +1014,8 @@ def _build_resco_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dic
         or key.startswith("tripinfo/")
         or key in {"sim_step", "episode/index", "episode/steps", "episode/sim_time_abs", "episode/elapsed_seconds"}
     }
-    namespaced_metrics, agent_metrics = _build_namespaced_metrics(_get_final_info(env), include_agent_metrics_local=False)
+    namespaced_metrics, _ = _build_namespaced_metrics(_get_final_info(env), include_agent_metrics_local=False)
     row.update(namespaced_metrics)
-    row.update(agent_metrics)
-    row.update(_namespace_lane_fairness_metrics(base_env))
     row.update(_reward_metadata_from_env(base_env))
     if extra:
         row.update(extra)
@@ -1084,7 +1076,6 @@ def _build_final_eval_summary_row(
         for key in final_row
         if key.startswith("final/resco/")
         or key.startswith("final/efficiency/")
-        or key.startswith("final/fairness/")
         or key.startswith("final/safety/")
     ]
     has_final_summary_metrics = any(np.isfinite(float(final_row[key])) for key in final_metric_keys if isinstance(final_row[key], (int, float, np.integer, np.floating)))
@@ -1914,32 +1905,14 @@ def run(cfg: DictConfig) -> None:
     random.seed(int(cfg.experiment.seed) if cfg.experiment.seed is not None else 0)
 
     algorithm_kind = cfg.algorithm.kind
-    if algorithm_kind == "baselinev1_rllib":
-        _run_rllib_baselinev1(cfg, run_dir)
-        return
 
     wandb_run = _init_wandb(cfg, run_dir)
     csv_run = _LocalMetricsCsvLogger(run_dir / "logs" / "metrics.csv")
     try:
-        if algorithm_kind == "q_learning":
-            if cfg.env.factory == "env":
-                _run_aec_q_learning(cfg, run_dir, wandb_run, csv_run)
-            else:
-                _run_direct_q_learning(cfg, run_dir, wandb_run, csv_run)
-        elif algorithm_kind == "fixed_time":
+        if algorithm_kind == "fixed_time":
             _run_fixed_time(cfg, run_dir, wandb_run, csv_run)
         elif algorithm_kind == "static_max_pressure":
             _run_static_policy(cfg, run_dir, wandb_run, csv_run, "max_pressure")
-        elif algorithm_kind == "static_greedy":
-            _run_static_policy(cfg, run_dir, wandb_run, csv_run, "greedy")
-        elif algorithm_kind == "dqn_sb3":
-            _run_sb3_dqn(cfg, run_dir, wandb_run, csv_run)
-        elif algorithm_kind == "ppo_sb3":
-            _run_sb3_ppo(cfg, run_dir, wandb_run, csv_run)
-        elif algorithm_kind == "sac_sb3":
-            _run_sb3_sac(cfg, run_dir, wandb_run, csv_run)
-        elif algorithm_kind == "libsignal_phase5":
-            _run_libsignal_phase5(cfg, run_dir, wandb_run, csv_run)
         else:
             raise ValueError(f"Unsupported algorithm kind: {algorithm_kind}")
     finally:

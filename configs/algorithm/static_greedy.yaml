@@ -1,4 +1,0 @@
-# @package _global_
-algorithm:
-  kind: static_greedy
-  params: {}

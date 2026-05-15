@@ -1,9 +1,0 @@
-# @package _global_
-algorithm:
-  kind: q_learning
-  params:
-    alpha: 0.1
-    gamma: 0.99
-    epsilon: 0.05
-    min_epsilon: 0.005
-    decay: 1.0

@@ -23,7 +23,7 @@ env:
     tripinfo_output_name: null
 
 algorithm:
-  kind: q_learning
+  kind: static_max_pressure
   params: {}
 
 hydra:
