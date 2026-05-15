@@ -16,7 +16,7 @@ SUMO-RL provides a simple interface to instantiate Reinforcement Learning (RL) e
 Goals of this repository:
 - Provide a simple interface to work with Reinforcement Learning for Traffic Signal Control using SUMO
 - Support Multiagent RL
-- Compatibility with gymnasium.Env and popular RL libraries such as [stable-baselines3](https://github.com/DLR-RM/stable-baselines3)
+- Compatibility with `gymnasium.Env`, PettingZoo, and RLlib-based learning stacks
 - Easy customisation: state and reward definitions are easily modifiable
 
 The main class is [SumoEnvironment](https://github.com/LucasAlegre/sumo-rl/blob/main/sumo_rl/environment/env.py).
@@ -64,6 +64,14 @@ cd sumo-rl
 pip install -e .
 ```
 
+For the thesis RLlib experiments, install the extra dependencies as needed:
+
+```bash
+pip install -e ".[experiments]"
+pip install -e ".[rllib]"
+pip install -e ".[rllib-custom]"
+```
+
 <!-- end install -->
 
 ## MDP - Observations, Actions and Rewards
@@ -92,7 +100,7 @@ You can define your own observation by implementing a class that inherits from [
 The action space is discrete.
 Every 'delta_time' seconds, each traffic signal agent can choose the next green phase configuration.
 
-E.g.: In the [2-way single intersection](https://github.com/LucasAlegre/sumo-rl/blob/main/experiments/dqn.py) there are |A| = 4 discrete actions, corresponding to the following green phase configurations:
+E.g.: In the 2-way single intersection there are |A| = 4 discrete actions, corresponding to the following green phase configurations:
 
 <p align="center">
 <img src="docs/_static/actions.png" align="center" width="75%"/>
@@ -184,21 +192,6 @@ In the folder [nets/RESCO](https://github.com/LucasAlegre/sumo-rl/tree/main/sumo
 
 Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent. In the thesis configs, the 4x4 grid presets use the RESCO `grid4x4` assets rather than the older Lucas `4x4-Lucas` network. Thesis-specific Hydra and W&B notes are documented separately in [docs/thesis/experiments.md](docs/thesis/experiments.md).
 
-Graph-based discrete SAC baseline for RESCO scenarios:
-
-```bash
-python experiments/local_neighbor_gat_discrete_sac_resco.py --scenario grid4x4 --episodes 10
-```
-
-RLlib-optimized baseline training for RESCO scenarios:
-
-```bash
-pip install -e ".[all]"
-python experiments/baselinev1_rllib_resco.py scenario=resco_cologne8 algorithm.params.num_workers=0 algorithm.params.max_iters=50
-```
-
-The RLlib entrypoint now goes through the shared Hydra runner. It defaults to SAC, uses a Torch Geometric GATv2 neighbor encoder, wraps the PettingZoo parallel environment with graph observations and action masks, and logs through the shared WandB config. Set `algorithm.params.num_gpus=0` to force CPU or `logging=disabled` to turn off WandB.
-
 If you want to push runs to Weights & Biases, put the credentials/config in a local `.env` at the repo root, for example:
 
 ```bash
@@ -207,20 +200,22 @@ WANDB_PROJECT=sumo-rl
 WANDB_ENTITY=your-entity
 ```
 
-### Discrete-control example in a RESCO scenario:
+### Fixed-time control in a RESCO scenario:
 ```bash
-python experiments/dqn.py scenario=resco_cologne1
+python experiments/fixed_time.py scenario=resco_grid4x4
 ```
 
-### [stable-baselines3 PPO](https://github.com/DLR-RM/stable-baselines3) multiagent in a RESCO scenario:
+### Max-pressure control in a RESCO scenario:
 ```bash
-python experiments/ppo.py scenario=resco_cologne1
+python experiments/static_max_pressure.py scenario=resco_cologne1
 ```
 
-### [stable-baselines3 DQN](https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/dqn/dqn.py) in a RESCO scenario:
-Obs: you need to install stable-baselines3 with ```pip install "stable_baselines3[extra]>=2.0.0a9"``` for [Gymnasium compatibility](https://stable-baselines3.readthedocs.io/en/master/guide/install.html).
+### RLlib PPO, DQN, and SAC:
 ```bash
-python experiments/dqn.py scenario=resco_cologne3
+python experiments/rllib.py algorithm=ppo_rllib scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dqn_rllib scenario=resco_cologne1
+python experiments/rllib.py algorithm=sac_rllib_builtin scenario=resco_ingolstadt1
+python experiments/rllib.py algorithm=sac_rllib_custom scenario=resco_ingolstadt7
 ```
 
 ## Citing

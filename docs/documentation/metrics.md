@@ -12,7 +12,7 @@ It covers:
 - the formula behind each metric
 - the source of each metric input
 - when the metric is logged
-- the corrections made after the SB3 final-summary bug
+- the corrections made after the final-summary caching bug
 
 The current source of truth is:
 
@@ -20,7 +20,7 @@ The current source of truth is:
 - `sumo_rl/environment/traffic_signal.py`
 - `sumo_rl/experiments/metric_utils.py`
 - `sumo_rl/experiments/runner.py`
-- `sumo_rl/agents/sb3/callbacks.py`
+- `sumo_rl/experiments/rllib_runner.py`
 
 ## Logging Stages
 
@@ -29,8 +29,8 @@ The repo logs metrics at four different stages.
 | Stage | Producer | Step axis | Main payload |
 | --- | --- | --- | --- |
 | Live env step | `SumoEnvironment._compute_info()` | `info["step"]` in SUMO seconds | `system_*`, optional per-agent waiting-time fields |
-| Training trace | SB3 callback or Q-learning runner | training timesteps or episode boundary | `train/*`, `rollout/*`, `eval/*` |
-| Episode summary | `runner._build_resco_summary_row(...)` | final episode step or final training timestep | `resco_*`, `efficiency_*`, `fairness_*`, `safety_*`, lane fairness, reward metadata |
+| Training trace | algorithm runner | training timesteps or episode boundary | `train/*`, `eval/*`, per-episode summaries |
+| Episode summary | `runner._build_resco_summary_row(...)` | final episode step or final training timestep | `resco_*`, `efficiency_*`, `safety_*`, reward metadata |
 | Run summary | runner aggregate helpers plus `wandb.run.summary` | final run write | `summary/*` seed averages for multi-run methods and pinned final W&B summary values |
 
 ## Namespaces
@@ -39,14 +39,9 @@ The runner uses these namespaces:
 
 - `resco/*`: benchmark-style episode summary
 - `efficiency/*`: network flow and throughput diagnostics
-- `fairness/*`: intersection-level waiting-time fairness
-- `fairness_lane/*`: lane-level waiting-time fairness
 - `safety/*`: safety and instability proxies
 - `train/*`: training traces
 - `eval/*`: periodic evaluation traces
-- `rollout/*`: SB3 rollout traces forwarded from the upstream logger
-- `libsignal/*`: upstream third-party metrics
-- `phase5/*`: normalization metadata for external LibSignal runs
 - `summary/*`: run-level aggregate rows, mostly seed averages
 
 The underscore aliases such as `resco_avg_delay` are still logged for compatibility.
@@ -78,19 +73,19 @@ The runner also logs reward metadata in the final episode summary:
 
 | Metric | Producer | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `train/reward_mean` | SB3 callback | latest reward batch from the callback locals | every `logging.log_freq` steps and on SB3 training end |
-| `train/reward_sum` | SB3 callback | latest reward batch from the callback locals | every `logging.log_freq` steps and on SB3 training end |
+| `train/reward_mean` | algorithm runner | latest reward batch from the trainer result | every `logging.log_freq` steps and on training end |
+| `train/reward_sum` | algorithm runner | latest reward batch from the trainer result | every `logging.log_freq` steps and on training end |
 | `train/episode_reward` | direct or AEC Q-learning runner | sum of per-step environment rewards over the episode | once per episode |
-| `eval/mean_reward` | SB3 callback or final SB3 evaluation | `evaluate_policy(...)` output | every `eval_freq` steps and once after training |
-| `eval/std_reward` | SB3 callback or final SB3 evaluation | `evaluate_policy(...)` output | every `eval_freq` steps and once after training |
+| `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `eval_freq` steps and once after training |
+| `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | every `eval_freq` steps and once after training |
 
-For SAC, the joint wrapper averages the per-agent reward dictionary into one scalar before handing it to SB3.
+For SAC, the joint wrapper reduces the per-agent reward dictionary to one scalar before handing it to the learner.
 That means SAC training rewards are not directly comparable to the per-agent raw reward vector.
 
 ## Shared Episode Summary Metrics
 
 The final episode summary is built from cached data from the last completed episode.
-This matters because SB3 evaluation envs auto-reset after a done episode.
+This matters because evaluation envs auto-reset after a done episode.
 The runner now uses cached episode data instead of reading the fresh post-reset state.
 
 ### Benchmark metrics
@@ -143,47 +138,6 @@ Important interpretation note:
 
 For pressure, values closer to zero are usually easier to compare than raw signed values by themselves.
 
-### Fairness metrics
-
-Intersection-level fairness is computed from the per-agent accumulated waiting-time fields in the live-info row:
-
-- keys ending in `_accumulated_waiting_time`
-- excluding the aggregate `agents_total_*` fields
-
-Those per-agent inputs are created in `SumoEnvironment._get_per_agent_info()` from:
-
-- `TrafficSignal.get_accumulated_waiting_time_per_lane()`
-- summed across the incoming lanes of each intersection
-
-| Metric | Formula | Inputs | Logged when |
-| --- | --- | --- | --- |
-| `fairness_jain_waiting_time` | `(\sum_i x_i)^2 / (n \sum_i x_i^2)` | per-agent accumulated waiting times | episode summary when per-agent info is available |
-| `fairness_waiting_time_mean` | `mean(x_i)` | per-agent accumulated waiting times | episode summary when per-agent info is available |
-| `fairness_waiting_time_std` | `std(x_i)` | per-agent accumulated waiting times | episode summary when per-agent info is available |
-
-Interpretation:
-
-- `1.0` Jain fairness means perfectly even waiting-time burden
-- lower mean and std are better
-- fairness is only meaningful when per-agent info is enabled and there are multiple signals
-
-The helper module also supports local-only per-agent debug fields such as `fairness_waiting_time_<agent_id>`.
-The shared thesis runner keeps W&B compact and does not emit those fields by default.
-
-### Lane fairness metrics
-
-Lane fairness uses the cached lane waiting-time snapshot from the completed episode.
-That snapshot is important for SB3 because the evaluation env resets immediately after episode end.
-
-| Metric | Formula | Inputs | Logged when |
-| --- | --- | --- | --- |
-| `fairness_lane/<ts_id>/jain_waiting_time` | Jain fairness over lane waiting times of one intersection | cached per-lane accumulated waiting times | episode summary when the cache is available |
-| `fairness_lane/<ts_id>/waiting_time_mean` | mean lane waiting time of one intersection | cached per-lane accumulated waiting times | episode summary when the cache is available |
-| `fairness_lane/<ts_id>/waiting_time_std` | std lane waiting time of one intersection | cached per-lane accumulated waiting times | episode summary when the cache is available |
-| `fairness_lane/jain_waiting_time_mean` | mean of per-intersection lane Jain scores | per-intersection lane fairness values | episode summary when the cache is available |
-| `fairness_lane/waiting_time_mean` | mean of per-intersection lane means | per-intersection lane fairness values | episode summary when the cache is available |
-| `fairness_lane/waiting_time_std` | mean of per-intersection lane std values | per-intersection lane fairness values | episode summary when the cache is available |
-
 ## Algorithm-Specific Notes
 
 ### Q-learning
@@ -196,48 +150,35 @@ The direct and AEC Q-learning runners log:
 - one episode summary row per episode
 - one `summary/*` aggregate row across collected episodes
 
-### DQN and PPO through SB3
+### DQN and PPO through RLlib
 
 These runners use:
 
 - PettingZoo parallel env
-- SuperSuit conversion to SB3 vector env
-- `SB3WandbCallback` for `train/*`, `rollout/*`, and periodic `eval/*`
+- SuperSuit padding when the RESCO scenario has heterogeneous agent spaces
+- RLlib shared-policy multi-agent training
 - a final explicit evaluation pass after training
 
-For multi-seed SB3 evaluation, the runner builds one cached summary per eval seed and then averages the numeric `final/*`, `tripinfo/*`, and episode-time fields into one final row.
+For multi-seed evaluation, the runner builds one cached summary per eval seed and then averages the numeric `final/*`, `tripinfo/*`, and episode-time fields into one final row.
 Warnings are kept if any eval seed shows the problem.
 
-### SAC through SB3
+### SAC through RLlib
 
-SAC uses the same summary logic as DQN and PPO but the environment path is different:
+SAC uses a single joint-action adapter around the same PettingZoo env:
 
-- PettingZoo parallel env
-- `JointMultiAgentActionWrapper`
 - flattened joint observation
 - continuous Box action vector decoded back to per-agent discrete actions
-- scalar reward equal to the mean of the per-agent rewards
-
-### LibSignal phase 5 bridge
-
-The external bridge logs:
-
-- one normalized row per seed
-- one `summary/*` seed-average row
-- upstream `libsignal/*` fields
-- thesis-side `resco_*` proxy fields
-
-These `resco_*` fields are normalized comparisons, not raw tripinfo metrics from `SumoEnvironment`.
+- scalar reward equal to the sum of the per-agent rewards by default
 
 ## Problems Found And Corrected
 
 The repo previously had a few metric-logging problems.
 
-### 1. SB3 final summary rows could read the new reset episode instead of the completed one
+### 1. Final summary rows could read the new reset episode instead of the completed one
 
 What happened:
 
-- SB3 evaluation envs auto-reset after `done`
+- evaluation envs auto-reset after `done`
 - the old summary builder sometimes read `env.metrics` and lane snapshots after that reset
 - that produced zeros or default values in the final summary row even when the training curves looked fine
 
@@ -285,12 +226,12 @@ Current fix:
 
 ## Manual Validation Checklist For New Models
 
-Use this checklist whenever you add IPPO, IDQN, MPLight, or any future method.
+Use this checklist whenever you add PPO, DQN, SAC, or any future method.
 
 1. Make sure the env config keeps `add_system_info: true`, `add_per_agent_info: true`, and a non-null `tripinfo_output_name`.
 2. Run a short smoke experiment first, not the full horizon.
 3. Open `outputs/<run>/tripinfo/*.xml` and confirm completed vehicles are present.
-4. Open `outputs/<run>/logs/metrics.csv` and confirm the final row has non-zero `resco_*` and non-empty `efficiency_*`, `fairness_*`, and `safety_*` fields when traffic exists.
+4. Open `outputs/<run>/logs/metrics.csv` and confirm the final row has non-zero `resco_*` and non-empty `efficiency_*` and `safety_*` fields when traffic exists.
 5. In W&B, compare the run summary values against the final CSV row. They should agree for the final benchmark metrics.
 6. If you use a separate evaluation env, make sure the final summary is built from the last completed episode cache, not from the post-reset live env state.
 7. If the library has its own reward scale, keep reward plots separate from benchmark metrics in your interpretation.
@@ -302,7 +243,7 @@ The current metric choices follow the common traffic-signal-control practice of 
 
 - optimization reward
 - benchmark traffic outcomes such as delay, travel time, queue, and waiting time
-- diagnostic quantities such as fairness and safety proxies
+- diagnostic quantities such as safety proxies
 
 For thesis reporting, the strongest comparisons are still:
 

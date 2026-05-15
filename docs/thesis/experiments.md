@@ -10,10 +10,8 @@ If you are onboarding to the codebase, read [docs/thesis/engineering_guide.md](e
 
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
 If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
-If you want the SB3 examples, read [docs/thesis/third_party_sb3.md](third_party_sb3.md) next.
-If you want the third-party MARL replication path for IDQN, MPLight, and IPPO, read [docs/thesis/third_party_marl.md](third_party_marl.md) next.
 
-The thesis launchers now use generic method entrypoints plus Hydra scenario-first presets for the target RESCO names `resco_cologne1`, `resco_cologne3`, `resco_ingolstadt1`, and `resco_ingolstadt7`.
+The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, and SAC.
 
 ## Hydra
 Hydra is used as the experiment composition layer.
@@ -23,33 +21,42 @@ Hydra is used as the experiment composition layer.
 - Command-line overrides let you change seeds, paths, and hyperparameters without editing code
 - Each run gets its own output directory under `outputs/<experiment-name>/<timestamp>/`
 - A local metrics CSV is written to `outputs/<experiment-name>/<timestamp>/logs/metrics.csv` for quick debugging
-- The runner now logs episode-end RESCO summaries plus namespaced efficiency, fairness, and safety metrics, using:
+- The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
   - `resco_avg_delay` from SUMO tripinfo `timeLoss`
   - `resco_trip_time` from SUMO tripinfo `duration`
   - `resco_wait` from SUMO tripinfo `waitingTime`
   - `resco_queue` and `resco_max_queue` from the live queue metrics
   - `efficiency_*` for queue, speed, waiting-time, and throughput aggregates
-  - `fairness_*` for Jain fairness over per-agent waiting times
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
   - the raw tripinfo XML files are stored under `outputs/<experiment-name>/<timestamp>/tripinfo/`
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup
-  - `configs/algorithm/` for algorithm kind and default hyperparameters
-  - scenario-first presets such as `configs/presets/resco_cologne1/dqn.yaml`, `configs/presets/resco_cologne1/ql.yaml`, `configs/presets/resco_cologne1/sac.yaml`, `configs/presets/resco_cologne1/ppo.yaml`, and the matching `libsignal_*` presets under each RESCO scenario folder
-  - the canonical layout guide in [`configs/presets/README.md`](../../configs/presets/README.md), which shows how the method names line up inside each scenario folder
+  - `configs/algorithm/` for the method hyperparameters
+  - `configs/rllib.yaml` for the shared RLlib launcher
+  - scenario-first presets such as `configs/presets/resco_grid4x4/fixed_time.yaml` and `configs/presets/resco_cologne1/static_max_pressure.yaml`
+  - the canonical layout guide in [`configs/presets/README.md`](../../configs/presets/README.md), which now also explains the RLlib algorithm files
 
 Example:
 ```bash
-python experiments/dqn.py scenario=resco_cologne3
+python experiments/fixed_time.py scenario=resco_grid4x4
 ```
 
 Other common entrypoints:
 
 ```bash
-python experiments/ql.py scenario=resco_ingolstadt1
-python experiments/sac.py scenario=resco_ingolstadt7
-python experiments/libsignal_idqn.py
+python experiments/static_max_pressure.py scenario=resco_cologne1
+python experiments/rllib.py algorithm=ppo_rllib scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dqn_rllib scenario=resco_cologne1
+python experiments/rllib.py algorithm=sac_rllib_builtin scenario=resco_ingolstadt1
+python experiments/rllib.py algorithm=sac_rllib_custom scenario=resco_ingolstadt7
 ```
+
+PPO and DQN default to independent policies. To switch to a shared policy, override
+`algorithm.params.policy_mode=shared` on the command line.
+
+SAC is different: it does not become continuous by itself. The repo wraps the
+multi-agent discrete traffic problem in a joint Box action adapter, and RLlib
+SAC trains on that flattened continuous action vector.
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.
@@ -60,24 +67,20 @@ Weights & Biases is used for experiment tracking.
 
 Example:
 ```bash
-python experiments/dqn.py scenario=resco_ingolstadt7 logging.mode=online logging.project=my-thesis
-```
-
-For benchmark-style SB3 runs, use the five-seed eval pattern explicitly:
-
-```bash
-python experiments/ppo.py scenario=resco_cologne1 logging.mode=online experiment.eval_episodes=5 experiment.eval_seeds=[1,2,3,4,5]
+python experiments/static_max_pressure.py scenario=resco_ingolstadt7 logging.mode=online logging.project=my-thesis
 ```
 
 ## Optional Install
 To use the Hydra and W&B experiment layer, install the optional extras:
 ```bash
 pip install -e ".[experiments]"
+pip install -e ".[rllib]"
+pip install -e ".[rllib-custom]"
 ```
 
 ## Notes
 - These additions do not replace the upstream SUMO-RL API.
 - The existing environment and algorithm examples still run through the same underlying SUMO-RL code paths.
 - The RESCO summary log is the canonical run artifact for comparing against the benchmark formulas.
-- Run names now put the scenario first, for example `resco_grid4x4__static_greedy`, `resco_cologne3__dqn`, or `resco_grid4x4__libsignal_mplight`.
+- Run names now put the scenario first, for example `resco_grid4x4__fixed_time` or `resco_cologne1__static_max_pressure`.
 - Short smoke runs should watch the `train/` and `eval/` traces in addition to the episode-end summary rows.

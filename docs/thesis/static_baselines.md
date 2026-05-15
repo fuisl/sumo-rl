@@ -6,7 +6,7 @@ firstpage:
 # Static Baselines
 
 This page covers the non-learning static baselines for the RESCO `grid4x4` scenario.
-It also matches the fixed-time benchmark style used in the thesis, which now follows the same five-seed averaging pattern.
+It also matches the fixed-time benchmark style used in the thesis, which follows the same five-seed averaging pattern.
 The logged summary values follow the RESCO formulas:
 
 - `resco_avg_delay` from tripinfo `timeLoss`
@@ -40,19 +40,6 @@ What it uses:
 - [`configs/scenario/resco_grid4x4.yaml`](../../configs/scenario/resco_grid4x4.yaml)
 - the new static Max Pressure controller in `sumo_rl/agents/static/`
 
-## Greedy
-
-Run:
-
-```bash
-python experiments/static_greedy.py
-```
-
-What it uses:
-- [`configs/presets/resco_grid4x4/static_greedy.yaml`](../../configs/presets/resco_grid4x4/static_greedy.yaml)
-- [`configs/scenario/resco_grid4x4.yaml`](../../configs/scenario/resco_grid4x4.yaml)
-- the queue-based Greedy controller in `sumo_rl/agents/static/`
-
 ## Outputs
 
 Each run writes:
@@ -74,5 +61,5 @@ Each run writes:
 ## Notes
 
 - This is a static benchmark layer, separate from the RL baselines.
-- The static policies are intended to be simple, reproducible comparators against Q-learning and SB3.
+- The static policies are intended to be simple, reproducible comparators against fixed-time control.
 - The scenario-specific static presets now live under `configs/presets/<scenario>/`.

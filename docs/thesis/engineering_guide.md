@@ -21,14 +21,13 @@ Read the code in this order:
 
 1. `experiments/*.py`
 2. `sumo_rl/experiments/runner.py`
-3. `sumo_rl/environment/env.py`
-4. `sumo_rl/environment/traffic_signal.py`
-5. `sumo_rl/experiments/metric_utils.py`
-6. the method-specific wrapper or integration file:
-   - `sumo_rl/agents/sb3/callbacks.py`
-   - `sumo_rl/agents/sb3/wrappers.py`
-   - `sumo_rl/integrations/libsignal.py`
-7. the matching config files in `configs/`
+3. `sumo_rl/experiments/rllib_runner.py`
+4. `sumo_rl/environment/env.py`
+5. `sumo_rl/environment/traffic_signal.py`
+6. `sumo_rl/experiments/metric_utils.py`
+7. `sumo_rl/rllib/envs.py`
+8. `sumo_rl/rllib/custom_sac.py`
+9. the matching config files in `configs/`
 
 If you only have one hour, read:
 
@@ -59,7 +58,7 @@ Everything else should stay shared.
 
 ### 1. Entry points
 
-Files like `experiments/dqn.py`, `experiments/ppo.py`, and `experiments/libsignal_idqn.py` do almost nothing.
+Files like `experiments/fixed_time.py`, `experiments/static_max_pressure.py`, and `experiments/rllib.py` do almost nothing.
 They:
 
 - check `SUMO_HOME`
@@ -67,6 +66,9 @@ They:
 - call `run(cfg)`
 
 That means the real behavior lives in the runner, not the launcher script.
+
+The same pattern now applies to `experiments/rllib.py`, which calls
+`sumo_rl.experiments.rllib_runner.train_rllib(cfg)`.
 
 ### 2. Shared setup in `runner.run`
 
@@ -83,8 +85,8 @@ The shared output layout is:
 - `outputs/<experiment-name>/<timestamp>/logs/metrics.csv`
 - `outputs/<experiment-name>/<timestamp>/csv/`
 - `outputs/<experiment-name>/<timestamp>/tripinfo/`
-- `outputs/<experiment-name>/<timestamp>/tensorboard/` for SB3
-- `outputs/<experiment-name>/<timestamp>/phase5/libsignal/` for LibSignal runs
+- `outputs/<experiment-name>/<timestamp>/checkpoints/`
+- `outputs/<experiment-name>/<timestamp>/ray_results/` when Ray writes trial state
 
 ### 3. Environment construction
 
@@ -108,8 +110,7 @@ The runner has one branch per integration style:
 
 - Q-learning: `_run_direct_q_learning`, `_run_aec_q_learning`
 - Static baselines: `_run_fixed_time`, `_run_static_policy`
-- SB3 single-stack methods: `_run_sb3_dqn`, `_run_sb3_ppo`, `_run_sb3_sac`
-- External library bridge: `_run_libsignal_phase5`
+- RLlib methods: `sumo_rl.experiments.rllib_runner.train_rllib`
 
 When you add a new model, you are usually adding one new branch here.
 
@@ -151,8 +152,7 @@ At episode end, `finalize_episode_summary()` builds the benchmark summary from:
 
 - tripinfo XML for `resco_*`
 - recorded queue statistics for `resco_queue` and `resco_max_queue`
-- cached final live-info state for `efficiency_*`, `fairness_*`, and `safety_*`
-- cached lane snapshots for `fairness_lane/*`
+- cached final live-info state for `efficiency_*` and `safety_*`
 
 The runner then converts that cached episode state into the final summary row with:
 
@@ -181,76 +181,64 @@ This is the simplest path.
 
 Use this path as the easiest reference when learning the codebase.
 
-### DQN and PPO through Stable-Baselines3
+### DQN and PPO through RLlib
 
-These methods use the PettingZoo parallel env and then convert it for SB3.
+These methods use the PettingZoo parallel env and then hand it to RLlib as a shared-policy multi-agent environment.
+In the current thesis config, PPO and DQN default to independent policies, so each
+traffic signal gets its own policy ID. You can still switch back to a shared policy
+by setting `algorithm.params.policy_mode=shared`.
 
 The flow is:
 
 1. build parallel env
-2. pass it through SuperSuit
-3. convert to SB3 vector env
-4. wrap with `VecMonitor`
-5. train with an `SB3WandbCallback`
+2. optionally pad heterogeneous spaces with SuperSuit
+3. register the env with RLlib
+4. map every traffic-signal agent to one shared policy
+5. train through the RLlib algorithm config
 
 Key files:
 
-- `sumo_rl/agents/sb3/callbacks.py`
-- `sumo_rl/experiments/runner.py`
+- `sumo_rl/experiments/rllib_runner.py`
+- `sumo_rl/rllib/envs.py`
 
-The callback logs:
+The runner logs:
 
 - `train/*`
-- `rollout/*`
-- periodic `eval/*`
+- evaluation summaries
+- final RESCO summaries
 
-For thesis-style SB3 presets, evaluation should use a reproducible seed schedule rather than repeating one seed for every eval episode. The repo now supports `experiment.eval_seeds`, and the RESCO benchmark presets use the fixed-time pattern `[1, 2, 3, 4, 5]` so eval mean/std and the final traffic summary are both computed over distinct seeded episodes.
+For thesis-style runs, evaluation should use a reproducible seed schedule rather than repeating one seed for every eval episode. The repo supports `experiment.eval_seeds`, and the RESCO benchmark presets use the fixed-time pattern `[1, 2, 3, 4, 5]` so eval mean/std and the final traffic summary are both computed over distinct seeded episodes.
 
 The final benchmark row is not created by the callback.
 It is created by the runner after a dedicated final evaluation pass.
 
-### SAC through Stable-Baselines3
+### SAC through RLlib
 
-SB3 SAC expects:
+RLlib SAC expects a continuous action space.
 
-- one flat observation
-- one continuous Box action
-- one scalar reward
-
-But the traffic-signal problem here is:
-
-- multi-agent
-- discrete action per signal
-- reward dict per signal
-
-So SAC uses `JointMultiAgentActionWrapper`.
-That wrapper:
+For the compatibility baseline, the repo uses a joint-action adapter so the same
+traffic-signal scenario can be trained without rewriting the simulator:
 
 - flattens all agent observations into one vector
 - exposes one continuous action vector
 - decodes each action slice with `argmax` into a discrete action per signal
-- averages the reward dict into one scalar
+- sums the per-agent rewards by default
 
-This keeps SAC on the same traffic problem while fitting the SB3 API.
+That means RLlib is not "converting" discrete actions into continuous actions on
+its own. Our adapter changes the environment interface from discrete per-signal
+actions to one continuous Box action space, and SAC learns on that Box space.
 
-### LibSignal bridge for IDQN, MPLight, and IPPO
+### Custom SAC module
 
-This is the external-library path.
+The custom SAC path keeps the same joint-action environment but swaps in a
+project-owned RLModule boundary.
 
-The repo does not retrain those models natively inside `sumo_rl`.
-Instead it:
+This is the right place to change:
 
-1. calls the external LibSignal stack
-2. reads its normalized summary
-3. copies the raw upstream log into the run directory
-4. builds one thesis-friendly row with shared field names
-
-Key files:
-
-- `sumo_rl/integrations/libsignal.py`
-- `sumo_rl/integrations/libsignal_cli.py`
-
-This is the reference pattern when you need to integrate a model that should stay close to an external codebase.
+- the encoder architecture
+- the policy and Q-head layout
+- the training loop cadence in `rllib_runner.py`
+- checkpoint timing and evaluation behavior
 
 ## Shared Pieces Across Methods
 
@@ -261,7 +249,7 @@ These are the parts you should preserve when adding new algorithms:
 - tripinfo output storage
 - local CSV metrics logger
 - `resco_*` benchmark fields
-- namespaced `efficiency/*`, `fairness/*`, `fairness_lane/*`, and `safety/*`
+- namespaced `efficiency/*` and `safety/*`
 - final W&B summary update
 
 If a new method cannot produce the shared schema directly, add a small normalization layer.
@@ -288,14 +276,13 @@ Every method needs its own answer for these questions:
 ### Training loop ownership
 
 - runner-owned loop
-- SB3-owned loop with callback
-- external library-owned loop
+- RLlib-owned algorithm loop with a thin project wrapper
 
 ### Evaluation ownership
 
 - runner evaluates manually
-- callback evaluates periodically
-- external library already exports its own summary
+- runner evaluates at the end of the training run
+- custom logic can still add periodic evaluation later
 
 ### Config files
 
@@ -303,7 +290,8 @@ At minimum you normally need:
 
 - one launcher in `experiments/`
 - one algorithm config in `configs/algorithm/`
-- one preset per supported scenario in `configs/presets/<scenario>/`
+- one shared RLlib root config in `configs/rllib.yaml`
+- optional scenario presets in `configs/presets/<scenario>/`
 
 ## How To Add A New Model From An Existing RL Library
 
@@ -311,8 +299,8 @@ Use this recipe if the library can already consume a Gym, VecEnv, or PettingZoo-
 
 1. Decide the env shape the library expects.
 2. Reuse an existing wrapper if possible.
-3. If needed, write the thinnest new wrapper in `sumo_rl/agents/` or `sumo_rl/integrations/`.
-4. Add a new runner branch in `runner.py`.
+3. If needed, write the thinnest new wrapper in `sumo_rl/rllib/`.
+4. Add a new runner branch in `rllib_runner.py`.
 5. Reuse `_build_resco_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
 6. Make sure the method logs final summaries from the completed episode cache, not from the post-reset env state.
 7. Add the launcher script.
@@ -322,8 +310,8 @@ Use this recipe if the library can already consume a Gym, VecEnv, or PettingZoo-
 
 Good fit for this path:
 
-- another SB3 algorithm
-- a library that accepts Gymnasium or VecEnv with only a small adapter
+- another RLlib algorithm
+- a library that accepts Gymnasium, VecEnv, or PettingZoo with only a small adapter
 
 ## How To Add A New Model From Outside The Current RL Stack
 
@@ -339,7 +327,7 @@ Use this recipe if the model should stay in its original repository.
 
 Good fit for this path:
 
-- LibSignal-like libraries
+- external libraries with their own trainer and summary format
 - codebases with their own trainer, logger, and simulator setup
 
 ## Metrics Checklist For Any New Method
@@ -354,7 +342,7 @@ Before you trust a new model, manually check these files:
 Confirm all of the following:
 
 1. `resco_avg_delay`, `resco_trip_time`, and `resco_wait` are non-zero when vehicles completed trips.
-2. `efficiency_*`, `fairness_*`, and `safety_*` are present when the env logged system and per-agent info.
+2. `efficiency_*` and `safety_*` are present when the env logged system info.
 3. the final W&B summary matches the final CSV summary row
 4. the reward curves and the benchmark metrics tell a consistent story
 5. multi-seed methods keep one per-seed row plus one final aggregate row
@@ -372,11 +360,12 @@ If the final summary row is zero again, debug in this order:
 If you are going to work on training and logging often, keep these open side by side:
 
 - `sumo_rl/experiments/runner.py`
+- `sumo_rl/experiments/rllib_runner.py`
 - `sumo_rl/experiments/metric_utils.py`
 - `sumo_rl/environment/env.py`
 - `sumo_rl/environment/traffic_signal.py`
-- `sumo_rl/agents/sb3/callbacks.py`
-- `sumo_rl/agents/sb3/wrappers.py`
+- `sumo_rl/rllib/envs.py`
+- `sumo_rl/rllib/custom_sac.py`
 
 That set covers almost every debugging session you will have in this repo.
 
@@ -384,10 +373,10 @@ That set covers almost every debugging session you will have in this repo.
 
 If you are onboarding, these are good first exercises:
 
-1. Run one short DQN preset and inspect the output directory.
+1. Run one short RLlib DQN preset and inspect the output directory.
 2. Trace where one metric such as `resco_avg_delay` is created and logged.
-3. Trace how PPO reaches SB3 from the launcher.
-4. Trace how SAC converts multi-agent discrete actions into a single SB3-compatible action space.
-5. Read one LibSignal preset and compare it with one SB3 preset.
+3. Trace how PPO reaches RLlib from the launcher.
+4. Trace how SAC converts multi-agent discrete actions into a single continuous joint action space.
+5. Read one RLlib preset and compare it with one static baseline preset.
 
 After that, the rest of the codebase gets much easier to navigate.
