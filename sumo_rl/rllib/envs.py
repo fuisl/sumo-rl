@@ -330,6 +330,8 @@ class SumoParallelMultiAgentEnv(_RLLibMultiAgentEnv):
     """A light MultiAgentEnv wrapper around the SUMO PettingZoo parallel API."""
 
     def __init__(self, base_env: Any):
+        super().__init__()
+
         self.base_env = base_env
         self.env = base_env
         self.possible_agents = list(getattr(base_env, "possible_agents", getattr(base_env, "agents", [])))
