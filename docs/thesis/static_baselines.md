@@ -46,7 +46,7 @@ Each run writes:
 
 - Hydra output under `outputs/<experiment-name>/<timestamp>/`
 - per-run CSV metrics under `logs/metrics.csv`
-- raw SUMO tripinfo XML under `tripinfo/`
+- raw SUMO tripinfo XML under `tripinfo/` only when `logging.save_tripinfo_output=true`
 - a final summary row with the average across the five seeds
 - optional W&B logs if enabled
 - the RESCO summary fields are logged directly, so the CSV and W&B logs match the benchmark formulas

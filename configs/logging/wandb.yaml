@@ -12,6 +12,7 @@ checkpoint_freq: 5000
 log_every_seconds: 200
 save_checkpoints: true
 save_final_model: true
+save_tripinfo_output: false
 log_traffic_metrics_during_training: false
 log_final_traffic_metrics: true
 log_namespace_aliases_to_wandb: false

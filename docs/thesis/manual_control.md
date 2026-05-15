@@ -103,7 +103,7 @@ wandb sync <path-to-offline-run>
 For quick debugging, the same metrics are also written locally to:
 
 - `outputs/<experiment-name>/<timestamp>/logs/metrics.csv`
-- `outputs/<experiment-name>/<timestamp>/tripinfo/` for the raw SUMO tripinfo XML
+- `outputs/<experiment-name>/<timestamp>/tripinfo/` for the raw SUMO tripinfo XML only when `logging.save_tripinfo_output=true`
 
 The CSV and W&B logs now use the RESCO summary fields directly so you can compare them against the benchmark formulas.
 If you turn on per-agent logging, those extra agent metrics stay in the local CSV only.

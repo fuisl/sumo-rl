@@ -125,6 +125,10 @@ def _prepare_env_kwargs(cfg: Any, run_dir: Path, seed: Optional[int] = None) -> 
         kwargs["out_csv_name"] = str(run_dir / "csv" / getattr(getattr(cfg, "experiment", None), "name", "run"))
     if not kwargs.get("tripinfo_output_name"):
         kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / getattr(getattr(cfg, "experiment", None), "name", "run"))
+    kwargs.setdefault(
+        "keep_tripinfo_output",
+        bool(getattr(getattr(cfg, "logging", None), "save_tripinfo_output", False)),
+    )
     experiment = getattr(cfg, "experiment", None)
     total_timesteps = int(getattr(experiment, "total_timesteps", 0) or 0)
     if total_timesteps > 0 and "num_seconds" not in kwargs:

@@ -88,7 +88,7 @@ The shared output layout is:
 
 - `outputs/<experiment-name>/<timestamp>/logs/metrics.csv`
 - `outputs/<experiment-name>/<timestamp>/csv/`
-- `outputs/<experiment-name>/<timestamp>/tripinfo/`
+- `outputs/<experiment-name>/<timestamp>/tripinfo/` only when `logging.save_tripinfo_output=true`
 - `outputs/<experiment-name>/<timestamp>/checkpoints/`
 - `outputs/<experiment-name>/<timestamp>/ray_results/` when Ray writes trial state
 

@@ -230,7 +230,7 @@ Use this checklist whenever you add PPO, DQN, SAC, or any future method.
 
 1. Make sure the env config keeps `add_system_info: true`, `add_per_agent_info: true`, and a non-null `tripinfo_output_name`.
 2. Run a short smoke experiment first, not the full horizon.
-3. Open `outputs/<run>/tripinfo/*.xml` and confirm completed vehicles are present.
+3. If you need to inspect raw XML, run with `logging.save_tripinfo_output=true`, then open `outputs/<run>/tripinfo/*.xml` and confirm completed vehicles are present.
 4. Open `outputs/<run>/logs/metrics.csv` and confirm the final row has non-zero `resco_*` and non-empty `efficiency_*` and `safety_*` fields when traffic exists.
 5. In W&B, compare the run summary values against the final CSV row. They should agree for the final benchmark metrics.
 6. If you use a separate evaluation env, make sure the final summary is built from the last completed episode cache, not from the post-reset live env state.

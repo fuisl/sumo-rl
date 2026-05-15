@@ -83,6 +83,7 @@ class SumoEnvironment(gym.Env):
         add_system_info (bool): If true, it computes system metrics (total queue, total waiting time, average speed) in the info dictionary.
         add_per_agent_info (bool): If true, it computes per-agent (per-traffic signal) metrics (average accumulated waiting time, average queue) in the info dictionary.
         tripinfo_output_name (Optional[str]): Prefix used for per-episode tripinfo XML output files.
+        keep_tripinfo_output (bool): If true, keep tripinfo XML files after parsing metrics.
         sumo_seed (int/string): Random seed for sumo. If 'random' it uses a randomly chosen seed.
         ts_ids (Optional[List[str]]): List of traffic light IDs to be controlled by SUMO-RL. If None, all traffic lights in the simulation are controlled.
         fixed_ts (bool): If true, it will follow the phase configuration in the route_file and ignore the actions given in the :meth:`step` method.
@@ -121,6 +122,7 @@ class SumoEnvironment(gym.Env):
         add_system_info: bool = True,
         add_per_agent_info: bool = False,
         tripinfo_output_name: Optional[str] = None,
+        keep_tripinfo_output: bool = False,
         sumo_seed: Union[str, int] = "random",
         ts_ids: Optional[List[str]] = None,
         fixed_ts: bool = False,
@@ -167,6 +169,7 @@ class SumoEnvironment(gym.Env):
         self.add_system_info = add_system_info
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
+        self.keep_tripinfo_output = keep_tripinfo_output
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
@@ -688,7 +691,14 @@ class SumoEnvironment(gym.Env):
             summary.update({key: value for key, value in last_info.items() if key.startswith("system_")})
         tripinfo_output = self._build_tripinfo_output_path()
         if tripinfo_output is not None:
-            summary.update(self._parse_tripinfo_summary(tripinfo_output))
+            try:
+                summary.update(self._parse_tripinfo_summary(tripinfo_output))
+            finally:
+                if not self.keep_tripinfo_output:
+                    try:
+                        tripinfo_output.unlink(missing_ok=True)
+                    except OSError:
+                        pass
         summary.update(self._parse_queue_summary())
         self.last_episode_summary = summary
         self.last_episode_final_info = last_info

@@ -55,6 +55,10 @@ def _prepare_env_kwargs(cfg: DictConfig, run_dir: Path) -> Dict[str, Any]:
         kwargs["out_csv_name"] = str(run_dir / "csv" / cfg.experiment.name)
     if not kwargs.get("tripinfo_output_name"):
         kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / cfg.experiment.name)
+    kwargs.setdefault(
+        "keep_tripinfo_output",
+        bool(getattr(getattr(cfg, "logging", None), "save_tripinfo_output", False)),
+    )
 
     if "sumo_seed" not in kwargs and cfg.experiment.seed is not None:
         kwargs["sumo_seed"] = int(cfg.experiment.seed)
@@ -304,6 +308,10 @@ def _baselinev1_rllib_env_config(cfg: DictConfig, run_dir: Path, params: Dict[st
         env_kwargs["out_csv_name"] = str(run_dir / "csv" / cfg.experiment.name)
     if not env_kwargs.get("tripinfo_output_name"):
         env_kwargs["tripinfo_output_name"] = str(run_dir / "tripinfo" / cfg.experiment.name)
+    env_kwargs.setdefault(
+        "keep_tripinfo_output",
+        bool(getattr(getattr(cfg, "logging", None), "save_tripinfo_output", False)),
+    )
     if "sumo_seed" not in env_kwargs and cfg.experiment.seed is not None:
         env_kwargs["sumo_seed"] = int(cfg.experiment.seed)
     return env_kwargs
