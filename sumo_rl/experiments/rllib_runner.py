@@ -383,7 +383,12 @@ def _evaluate(
             seed=seed,
             pad_spaces=(policy_mode == "shared"),
         )
-        episode_reward = _run_multi_agent_episode(algo, eval_env, seed, policy_mode=policy_mode)
+        try:
+            episode_reward = _run_multi_agent_episode(algo, eval_env, seed, policy_mode=policy_mode)
+        finally:
+            # SUMO writes tripinfo XML on close; build summaries only after the
+            # file has been flushed so RESCO trip metrics do not become NaN.
+            eval_env.close()
 
         seed_row = _build_final_eval_summary_row(
             eval_env,
@@ -402,7 +407,6 @@ def _evaluate(
             step=seed_index,
             logging_cfg=logging_cfg,
         )
-        eval_env.close()
 
     eval_mean_reward = float(np.mean([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
     eval_std_reward = float(np.std([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
