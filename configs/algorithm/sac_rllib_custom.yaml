@@ -11,6 +11,8 @@ algorithm:
     train_batch_size_per_learner: 256
     num_env_runners: 0
     num_envs_per_env_runner: 1
+    num_gpus_per_learner: auto
+    ray_num_gpus: auto
     num_steps_sampled_before_learning_starts: 1000
     model_config:
       architecture_tag: custom_sac_mlp

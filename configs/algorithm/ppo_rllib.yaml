@@ -14,3 +14,5 @@ algorithm:
     num_sgd_iter: 10
     num_env_runners: 0
     num_envs_per_env_runner: 1
+    num_gpus_per_learner: auto
+    ray_num_gpus: auto

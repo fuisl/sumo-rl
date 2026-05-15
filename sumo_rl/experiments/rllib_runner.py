@@ -19,6 +19,7 @@ from sumo_rl.experiments.runner import (
     _get_run_dir,
     _init_wandb,
     _log_episode_summary,
+    _resolve_num_gpus,
     _update_wandb_summary,
 )
 from sumo_rl.rllib.custom_sac import build_custom_sac_module_spec
@@ -154,14 +155,25 @@ def _build_shared_policy_dict(policies: Dict[str, Any]) -> Dict[str, Any]:
 def _apply_common_env_runner_settings(config, params: Dict[str, Any]):
     num_env_runners = int(params.get("num_env_runners", 0) or 0)
     num_envs_per_runner = int(params.get("num_envs_per_env_runner", 1) or 1)
-    learners = params.get("num_learners")
     if hasattr(config, "env_runners"):
         config = config.env_runners(
             num_env_runners=num_env_runners,
             num_envs_per_env_runner=num_envs_per_runner,
         )
-    if learners is not None and hasattr(config, "learners"):
-        config = config.learners(num_learners=int(learners))
+    if hasattr(config, "learners"):
+        learner_kwargs: Dict[str, Any] = {}
+        if params.get("num_learners") is not None:
+            learner_kwargs["num_learners"] = int(params["num_learners"])
+        if params.get("num_cpus_per_learner") is not None:
+            learner_kwargs["num_cpus_per_learner"] = float(params["num_cpus_per_learner"])
+        if params.get("num_gpus_per_learner", "auto") is not None:
+            learner_kwargs["num_gpus_per_learner"] = _resolve_num_gpus(
+                params.get("num_gpus_per_learner", "auto")
+            )
+        if params.get("local_gpu_idx") is not None:
+            learner_kwargs["local_gpu_idx"] = int(params["local_gpu_idx"])
+        if learner_kwargs:
+            config = config.learners(**learner_kwargs)
     return config
 
 
@@ -428,7 +440,9 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
 
     import ray
 
-    ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False)
+    params = _plain_dict(getattr(cfg.algorithm, "params", {}) or {})
+    ray_num_gpus = _resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto")))
+    ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False, num_gpus=ray_num_gpus)
     algo = None
     final_summary: Dict[str, Any] = {}
     try:
