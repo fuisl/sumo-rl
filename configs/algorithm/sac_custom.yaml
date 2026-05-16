@@ -15,3 +15,25 @@ algorithm:
     num_steps_sampled_before_learning_starts: 1000
     model_config:
       architecture_tag: custom_sac_mlp
+      actor:
+        encoder:
+          type: mlp
+          hidden_dims: [256, 256]
+          activation: tanh
+        head:
+          hidden_dims: []
+          activation: relu
+      critic:
+        encoder:
+          type: mlp
+          hidden_dims: [256, 256]
+          activation: tanh
+        head:
+          hidden_dims: []
+          activation: relu
+        twin_q: true
+      communication:
+        enabled: false
+        type: none
+        apply_to: [actor, critic]
+        scope: module

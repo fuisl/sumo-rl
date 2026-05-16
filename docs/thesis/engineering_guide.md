@@ -234,15 +234,22 @@ DQN, and the SAC module owns SAC-specific config and training metrics.
 
 ### Custom SAC module
 
-The custom SAC path uses the same SAC agent folder but swaps in a project-owned
-RLModule boundary on top of the native discrete SAC path.
+`sac_builtin` is the reference RLlib SAC baseline. `sac_custom` keeps the same
+native discrete multi-agent SAC setup, but swaps in project-owned single-agent
+and multi-agent RLModule boundaries.
 
 This is the right place to change:
 
 - the encoder architecture
 - the policy and Q-head layout
-- the training loop cadence in `sumo_rl/agents/sac/sac.py`
-- checkpoint timing and evaluation behavior
+- actor-only or critic-only latent hooks
+- future GAT or message-passing blocks among agents
+
+The custom path is configured through `algorithm.params.model_config` in
+`configs/algorithm/sac_custom.yaml`. Actor and critic MLP sizes, head sizes,
+the `twin_q` setting, and the communication hook metadata are exposed there.
+Training still uses RLlib's SAC learner, replay buffer, target updates, and
+optimizer ownership; the repo only owns the module architecture boundary.
 
 ## Shared Pieces Across Methods
 

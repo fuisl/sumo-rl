@@ -64,6 +64,13 @@ That means there is no project-side joint Box action adapter in the current SAC
 path. If SAC fails, the issue is in the RLlib discrete SAC path or the env/policy
 setup, not in a custom continuous-action wrapper.
 
+`sac_builtin` should be treated as the reference RLlib SAC baseline.
+`sac_custom` uses the same trainer and replay setup, but replaces the RLModule
+boundary with project-owned actor, twin-critic, and communication hook points.
+Use `configs/algorithm/sac_custom.yaml` or command-line overrides under
+`algorithm.params.model_config` to change actor/critic MLP sizes or enable
+placeholder message-passing metadata for later GAT experiments.
+
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.
 

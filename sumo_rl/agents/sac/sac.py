@@ -25,7 +25,11 @@ from sumo_rl.agents.rllib_common import (
     training_episode_target,
     training_should_stop,
 )
-from sumo_rl.agents.sac.custom_sac import build_custom_sac_module_spec
+from sumo_rl.agents.sac.custom_sac import (
+    build_custom_sac_module_spec,
+    build_custom_sac_multi_module_spec,
+    normalize_custom_sac_model_config,
+)
 
 
 BUILTIN_KIND = "sac_builtin"
@@ -56,6 +60,11 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
     params["replay_buffer_config"] = build_replay_buffer_config(params)
+    custom_model_config = params.get("model_config")
+    if algorithm_kind == CUSTOM_KIND:
+        normalized_custom_model_config = normalize_custom_sac_model_config(custom_model_config)
+        custom_model_config = normalized_custom_model_config
+        params.setdefault("twin_q", bool(normalized_custom_model_config.get("twin_q", True)))
     if "num_steps_sampled_before_learning_starts" in params:
         params["num_steps_sampled_before_learning_starts"] = max(
             int(params["num_steps_sampled_before_learning_starts"]),
@@ -90,17 +99,20 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     config = apply_standard_evaluation_settings(config, params)
 
     if algorithm_kind == CUSTOM_KIND:
-        from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
-
         rl_module_specs = {
             policy_id: build_custom_sac_module_spec(
                 policy_spec.observation_space,
                 policy_spec.action_space,
-                model_config=context.params.get("model_config"),
+                model_config=custom_model_config,
             )
             for policy_id, policy_spec in context.active_policies.items()
         }
-        config = config.rl_module(rl_module_spec=MultiRLModuleSpec(rl_module_specs=rl_module_specs))
+        config = config.rl_module(
+            rl_module_spec=build_custom_sac_multi_module_spec(
+                rl_module_specs,
+                model_config=custom_model_config,
+            )
+        )
 
     return config.callbacks(callbacks_class)
 
