@@ -218,6 +218,10 @@ python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
 
+SAC now uses RLlib's native discrete-action support for the traffic-light
+policies in this repo, so it does not depend on a custom joint continuous-action
+adapter anymore.
+
 ### Proof that SAC supports `Discrete` by default:
 ```bash
 python proofs/rllib_sac_discrete/sac_discrete_proof.py --iterations 10

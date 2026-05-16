@@ -227,8 +227,7 @@ It is created by the runner after a dedicated final evaluation pass.
 
 ### SAC through RLlib
 
-RLlib SAC expects a continuous action space.
-
+RLlib SAC now runs natively on the repo's discrete traffic-light action spaces.
 The RLlib SAC paths are implemented under `sumo_rl/agents/sac/sac.py`.
 The current runner hands SAC the same multi-agent RLlib wrapper used by PPO and
 DQN, and the SAC module owns SAC-specific config and training metrics.
@@ -236,7 +235,7 @@ DQN, and the SAC module owns SAC-specific config and training metrics.
 ### Custom SAC module
 
 The custom SAC path uses the same SAC agent folder but swaps in a project-owned
-RLModule boundary.
+RLModule boundary on top of the native discrete SAC path.
 
 This is the right place to change:
 
@@ -383,7 +382,7 @@ If you are onboarding, these are good first exercises:
 1. Run one short RLlib DQN preset and inspect the output directory.
 2. Trace where one metric such as `resco_avg_delay` is created and logged.
 3. Trace how PPO reaches RLlib from the launcher.
-4. Trace how SAC converts multi-agent discrete actions into a single continuous joint action space.
+4. Trace how SAC reuses the same multi-agent discrete env setup as PPO and DQN.
 5. Read one RLlib preset and compare it with one static baseline preset.
 
 After that, the rest of the codebase gets much easier to navigate.

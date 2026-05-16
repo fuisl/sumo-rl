@@ -1,4 +1,8 @@
-"""SAC-specific RLlib config, training loop, and training metrics."""
+"""SAC-specific RLlib config, training loop, and training metrics.
+
+This path uses RLlib SAC directly on the SUMO multi-agent discrete action spaces.
+There is no joint continuous action adapter in the current implementation.
+"""
 
 from __future__ import annotations
 
@@ -29,16 +33,40 @@ CUSTOM_KIND = "sac_custom"
 KINDS = {BUILTIN_KIND, CUSTOM_KIND}
 
 
+def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
+    explicit = params.get("replay_buffer_config")
+    if isinstance(explicit, dict) and explicit:
+        return dict(explicit)
+
+    buffer_type = str(params.get("replay_buffer_type", "MultiAgentPrioritizedEpisodeReplayBuffer"))
+    config: Dict[str, Any] = {
+        "type": buffer_type,
+        "capacity": int(params.get("replay_buffer_capacity", int(1e6))),
+    }
+    if "Prioritized" in buffer_type:
+        config["alpha"] = float(params.get("replay_buffer_alpha", 0.6))
+        config["beta"] = float(params.get("replay_buffer_beta", 0.4))
+    return config
+
+
 def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     from ray.rllib.algorithms.sac import SACConfig
 
     context = build_algorithm_context(cfg, run_dir, algorithm_kind)
     callbacks_class = training_episode_summary_callbacks_class()
+    params = dict(context.params)
+    params["replay_buffer_config"] = build_replay_buffer_config(params)
+    if "num_steps_sampled_before_learning_starts" in params:
+        params["num_steps_sampled_before_learning_starts"] = max(
+            int(params["num_steps_sampled_before_learning_starts"]),
+            context.episode_steps + 1,
+        )
+
     config = SACConfig().framework("torch").environment(env=context.env_name, disable_env_checking=True)
-    config = apply_env_runner_settings(config, context.params)
+    config = apply_env_runner_settings(config, params)
     config = apply_training_settings(
         config,
-        context.params,
+        params,
         episode_steps_value=context.episode_steps,
         allowed_keys=(
             "actor_lr",
@@ -55,11 +83,11 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
             "num_steps_sampled_before_learning_starts",
             "target_network_update_freq",
             "twin_q",
-            "clip_actions",
+            "replay_buffer_config",
         ),
     )
     config = apply_multi_agent_settings(config, context)
-    config = apply_standard_evaluation_settings(config, context.params)
+    config = apply_standard_evaluation_settings(config, params)
 
     if algorithm_kind == CUSTOM_KIND:
         from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec

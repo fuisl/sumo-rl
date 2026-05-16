@@ -56,9 +56,13 @@ python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 PPO and DQN default to independent policies. To switch to a shared policy, override
 `algorithm.params.policy_mode=shared` on the command line.
 
-SAC is different: it does not become continuous by itself. The repo wraps the
-multi-agent discrete traffic problem in a joint Box action adapter, and RLlib
-SAC trains on that flattened continuous action vector.
+SAC now uses RLlib's native discrete-action support. The repo hands each traffic
+signal its own discrete action space through the multi-agent RLlib wrapper, and
+the built-in/custom SAC paths train directly on those discrete policies.
+
+That means there is no project-side joint Box action adapter in the current SAC
+path. If SAC fails, the issue is in the RLlib discrete SAC path or the env/policy
+setup, not in a custom continuous-action wrapper.
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.

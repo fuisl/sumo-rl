@@ -79,8 +79,9 @@ The runner also logs reward metadata in the final episode summary:
 | `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
 | `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
 
-For SAC, the joint wrapper reduces the per-agent reward dictionary to one scalar before handing it to the learner.
-That means SAC training rewards are not directly comparable to the per-agent raw reward vector.
+For SAC, RLlib now consumes the same multi-agent discrete action setup as PPO and DQN.
+That means the logged SAC training rewards come from RLlib's multi-agent training result,
+not from a project-side joint-action reward reduction wrapper.
 
 ## Shared Episode Summary Metrics
 
@@ -166,11 +167,13 @@ Warnings are kept if any eval seed shows the problem.
 
 ### SAC through RLlib
 
-SAC uses a single joint-action adapter around the same PettingZoo env:
+SAC now uses the same PettingZoo parallel env and RLlib multi-agent policy setup
+as PPO and DQN:
 
-- flattened joint observation
-- continuous Box action vector decoded back to per-agent discrete actions
-- scalar reward equal to the sum of the per-agent rewards by default
+- PettingZoo parallel env
+- SuperSuit padding when shared-policy mode needs aligned spaces
+- RLlib multi-agent discrete policies
+- a final explicit evaluation pass after training
 
 ## Problems Found And Corrected
 
