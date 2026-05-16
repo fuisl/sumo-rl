@@ -342,6 +342,14 @@ def validation_interval_steps(cfg: Any) -> int:
     return max(0, int(value or 0))
 
 
+def validation_interval_episodes(cfg: Any) -> Optional[int]:
+    experiment = getattr(cfg, "experiment", None)
+    explicit = getattr(experiment, "validation_interval_episodes", None) if experiment is not None else None
+    if explicit is None:
+        return None
+    return max(0, int(explicit or 0))
+
+
 def cap_to_horizon(value: Any, horizon: int) -> int:
     return max(1, min(int(value), int(horizon)))
 
@@ -741,12 +749,24 @@ def emit_validation_if_due(
     if validate is None:
         return int(last_validation_step)
 
-    interval = validation_interval_steps(cfg)
-    if interval <= 0:
+    current_step = int(metrics.get("train/env_step") or metrics.get("train/env_steps_sampled") or 0)
+    interval_episodes = validation_interval_episodes(cfg)
+    if interval_episodes is not None:
+        if interval_episodes <= 0:
+            return int(last_validation_step)
+        current_episode = completed_training_episodes(metrics, cfg)
+        if current_episode <= 0 or current_episode - int(last_validation_step) < interval_episodes:
+            return int(last_validation_step)
+        if current_step <= 0:
+            current_step = current_episode * episode_steps(cfg)
+        validate(metrics, current_step)
+        return current_episode
+
+    interval_steps = validation_interval_steps(cfg)
+    if interval_steps <= 0:
         return int(last_validation_step)
 
-    current_step = int(metrics.get("train/env_step") or metrics.get("train/env_steps_sampled") or 0)
-    if current_step <= 0 or current_step - int(last_validation_step) < interval:
+    if current_step <= 0 or current_step - int(last_validation_step) < interval_steps:
         return int(last_validation_step)
 
     validate(metrics, current_step)

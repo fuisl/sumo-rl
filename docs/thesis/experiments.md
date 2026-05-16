@@ -22,6 +22,7 @@ Hydra is used as the experiment composition layer.
 - Each run gets its own output directory under `outputs/<experiment-name>/<timestamp>/`
 - A local metrics CSV is written to `outputs/<experiment-name>/<timestamp>/logs/metrics.csv` for quick debugging
 - Episode horizon is configured in seconds with `experiment.episode_seconds`. If you need the decision-step horizon, divide by `delta_time`; for example, `3600` seconds with `delta_time=5` is about `720` steps.
+- RLlib validation is episode-based by default with `experiment.validation_interval_episodes=5`; `logging.eval_freq` is only the step-based fallback when the episode interval is unset.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
   - `resco_avg_delay` from SUMO tripinfo `timeLoss`
   - `resco_trip_time` from SUMO tripinfo `duration`

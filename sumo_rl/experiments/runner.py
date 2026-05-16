@@ -540,6 +540,8 @@ def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = Non
     try:
         run.define_metric("train/*", step_metric="train/env_step")
         run.define_metric("train/env_step")
+        run.define_metric("validation/*", step_metric="validation/env_step")
+        run.define_metric("validation/env_step")
         run.define_metric("eval/*", step_metric="eval/episode")
         run.define_metric("final/*", step_metric="eval/episode")
         run.define_metric("tripinfo/*", step_metric="eval/episode")
@@ -688,7 +690,13 @@ def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int
             if isinstance(candidate_step, (int, float, np.integer, np.floating)):
                 log_step = int(candidate_step)
     if wandb_run is not None:
-        wandb_run.log(metrics, step=log_step)
+        has_custom_step_axis = any(
+            axis_key in metrics for axis_key in ("train/env_step", "validation/env_step", "eval/episode")
+        )
+        if has_custom_step_axis:
+            wandb_run.log(metrics)
+        else:
+            wandb_run.log(metrics, step=log_step)
     if csv_run is not None:
         csv_run.log(metrics, step=log_step)
 
