@@ -4,6 +4,7 @@ from pathlib import Path
 import types
 
 import numpy as np
+from sumo_rl.environment.env import SumoEnvironment
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,33 @@ _build_resco_summary_row = _RUNNER_MODULE._build_resco_summary_row
 _build_final_eval_summary_row = _RUNNER_MODULE._build_final_eval_summary_row
 
 
+def _summary_env(tmp_path, tripinfo_xml: str):
+    tripinfo_prefix = tmp_path / "tripinfo" / "resco"
+    tripinfo_path = Path(f"{tripinfo_prefix}_conn0_ep1.xml")
+    tripinfo_path.parent.mkdir(parents=True, exist_ok=True)
+    tripinfo_path.write_text(tripinfo_xml)
+
+    env = SumoEnvironment.__new__(SumoEnvironment)
+    env.episode = 1
+    env.begin_time = 0
+    env.sim_max_time = 100
+    env.sumo = None
+    env.metrics = [
+        {"step": 5.0, "system_mean_queued": 2.0, "system_max_queue": 4.0},
+        {"step": 10.0, "system_mean_queued": 4.0, "system_max_queue": 7.0},
+    ]
+    env.ts_ids = ["tls_1", "tls_2"]
+    env.tripinfo_output_name = str(tripinfo_prefix)
+    env.keep_tripinfo_output = False
+    env.label = "0"
+    env.last_episode_summary = {}
+    env.last_episode_final_info = {}
+    env.last_episode_lane_waiting_times = {}
+    env.last_lane_waiting_times = {"tls_1": [1.0], "tls_2": [2.0]}
+    env.completed_episode_summaries = []
+    return env, tripinfo_path
+
+
 def test_namespaced_metrics_split_efficiency_and_safety() -> None:
     info = {
         "step": 12,
@@ -42,6 +70,67 @@ def test_namespaced_metrics_split_efficiency_and_safety() -> None:
     assert metrics["safety_total_emergency_brake"] == 3.0
     assert metrics["safety_total_teleported"] == 1.0
     assert metrics["safety_total_collisions"] == 2.0
+
+
+def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path) -> None:
+    env, tripinfo_path = _summary_env(
+        tmp_path,
+        """
+        <tripinfos>
+            <tripinfo id="veh_1" duration="30" waitingTime="5" timeLoss="8" departDelay="2" />
+            <tripinfo id="veh_2" duration="50" waitingTime="7" timeLoss="10" departDelay="4" />
+            <tripinfo id="ghost_1" duration="999" waitingTime="999" timeLoss="999" departDelay="999" />
+            <tripinfo id="veh_3" duration="20" waitingTime="3" timeLoss="4" departDelay="1" vaporized="true" />
+        </tripinfos>
+        """,
+    )
+
+    summary = env.finalize_episode_summary(parse_tripinfo=True)
+
+    assert summary["tripinfo/finished_count"] == 2.0
+    assert summary["tripinfo/unfinished_count"] == 1.0
+    assert summary["tripinfo/avg_delay"] == 12.0
+    assert summary["resco_avg_delay"] == 12.0
+    assert summary["resco_trip_time"] == 40.0
+    assert summary["resco_wait"] == 6.0
+    assert summary["resco_queue"] == 3.0
+    assert summary["resco_max_queue"] == 7.0
+    assert summary["tripinfo/parse_success"] == 1.0
+    assert summary["tripinfo/parse_pending"] == 0.0
+    assert env.completed_episode_summaries[-1]["resco_trip_time"] == 40.0
+    assert not tripinfo_path.exists()
+
+
+def test_empty_tripinfo_xml_is_a_successful_parse_with_no_finished_trips(tmp_path) -> None:
+    env, tripinfo_path = _summary_env(tmp_path, "<tripinfos></tripinfos>")
+
+    summary = env.finalize_episode_summary(parse_tripinfo=True)
+
+    assert summary["tripinfo/parse_success"] == 1.0
+    assert summary["tripinfo/finished_count"] == 0.0
+    assert summary["tripinfo/total_count"] == 0.0
+    assert np.isnan(summary["resco_trip_time"])
+    assert not tripinfo_path.exists()
+
+
+def test_pending_tripinfo_summary_is_replaced_after_sumo_close(tmp_path) -> None:
+    env, _ = _summary_env(
+        tmp_path,
+        """
+        <tripinfos>
+            <tripinfo id="veh_1" duration="30" waitingTime="5" timeLoss="8" departDelay="2" />
+        </tripinfos>
+        """,
+    )
+
+    pending = env.finalize_episode_summary(parse_tripinfo=False)
+    parsed = env.finalize_episode_summary(parse_tripinfo=True)
+
+    assert pending["tripinfo/parse_pending"] == 1.0
+    assert parsed["tripinfo/parse_pending"] == 0.0
+    assert parsed["resco_avg_delay"] == 10.0
+    assert len(env.completed_episode_summaries) == 1
+    assert env.completed_episode_summaries[0]["resco_avg_delay"] == 10.0
 
 
 def test_resco_summary_row_uses_standard_static_metric_names() -> None:

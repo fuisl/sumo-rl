@@ -1,6 +1,6 @@
 # @package _global_
 algorithm:
-  kind: dqn_rllib
+  kind: dqn
   params:
     policy_mode: independent
     lr: 0.0005
@@ -10,5 +10,9 @@ algorithm:
     num_envs_per_env_runner: 1
     num_gpus_per_learner: auto
     ray_num_gpus: auto
+    replay_buffer_type: MultiAgentPrioritizedEpisodeReplayBuffer
+    replay_buffer_capacity: 50000
+    replay_buffer_alpha: 0.6
+    replay_buffer_beta: 0.4
     num_steps_sampled_before_learning_starts: 1000
     target_network_update_freq: 500

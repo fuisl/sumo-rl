@@ -1,7 +1,7 @@
 defaults:
   - logging: wandb
   - scenario: resco_grid4x4
-  - algorithm: ppo_rllib
+  - algorithm: ppo
   - _self_
 
 experiment:

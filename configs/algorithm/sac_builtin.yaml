@@ -1,6 +1,6 @@
 # @package _global_
 algorithm:
-  kind: sac_rllib_custom
+  kind: sac_builtin
   params:
     policy_mode: independent
     actor_lr: 0.0003
@@ -13,5 +13,3 @@ algorithm:
     num_gpus_per_learner: auto
     ray_num_gpus: auto
     num_steps_sampled_before_learning_starts: 1000
-    model_config:
-      architecture_tag: custom_sac_mlp

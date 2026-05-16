@@ -24,16 +24,18 @@ from sumo_rl.experiments.runner import (
     _resolve_num_gpus,
     _update_wandb_summary,
 )
-from sumo_rl.agents.dqn import rllib as dqn_agent
-from sumo_rl.agents.ppo import rllib as ppo_agent
+from sumo_rl.agents.dqn import dqn as dqn_agent
+from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.rllib_common import (
+    build_rllib_parallel_env,
     build_policy_mapping as _build_policy_mapping,
+    _possible_agents,
     plain_dict as _plain_dict,
     policy_id_for_agent as _policy_id_for_agent,
     policy_mode as _policy_mode,
+    scenario_factory_name,
 )
-from sumo_rl.agents.sac import rllib as sac_agent
-from sumo_rl.rllib.envs import build_multi_agent_wrapper, scenario_factory_name
+from sumo_rl.agents.sac import sac as sac_agent
 
 
 SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, *sac_agent.KINDS}
@@ -81,12 +83,12 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
     return module.build_config(cfg, run_dir)
 
 
-def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics) -> None:
+def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, validate=None) -> None:
     module = _algorithm_module(algorithm_kind)
     if module is sac_agent:
-        module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics)
+        module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
     else:
-        module.train(algo, cfg, emit_metrics=emit_metrics)
+        module.train(algo, cfg, emit_metrics=emit_metrics, validate=validate)
 
 
 def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
@@ -127,6 +129,7 @@ def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float
     obs, _ = env.reset(seed=seed)
     done = False
     total_reward = 0.0
+    possible_agents = _possible_agents(env)
     while not done:
         actions = {}
         for agent_id, agent_obs in obs.items():
@@ -142,8 +145,8 @@ def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float
         done = bool(
             terminations.get("__all__", False)
             or truncations.get("__all__", False)
-            or all(bool(terminations.get(agent_id, False)) for agent_id in env.possible_agents)
-            or all(bool(truncations.get(agent_id, False)) for agent_id in env.possible_agents)
+            or all(bool(terminations.get(agent_id, False)) for agent_id in possible_agents)
+            or all(bool(truncations.get(agent_id, False)) for agent_id in possible_agents)
         )
     return total_reward
 
@@ -163,7 +166,7 @@ def _evaluate(
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
         eval_episode = seed_index + 1
-        eval_env = build_multi_agent_wrapper(
+        eval_env = build_rllib_parallel_env(
             cfg,
             run_dir,
             seed=seed,
@@ -204,6 +207,28 @@ def _evaluate(
     return summary
 
 
+def _validation_summary_row(summary: Dict[str, Any], *, step: int) -> Dict[str, Any]:
+    row: Dict[str, Any] = {"validation/env_step": float(step)}
+    for key, value in summary.items():
+        if key == "algorithm/kind":
+            row[key] = value
+        elif key.startswith("final/eval/"):
+            row[f"validation/eval/{key[len('final/eval/'):]}"] = value
+        elif key.startswith("final/resco/"):
+            row[f"validation/resco/{key[len('final/resco/'):]}"] = value
+        elif key.startswith("final/efficiency/"):
+            row[f"validation/efficiency/{key[len('final/efficiency/'):]}"] = value
+        elif key.startswith("final/safety/"):
+            row[f"validation/safety/{key[len('final/safety/'):]}"] = value
+        elif key.startswith("tripinfo/"):
+            row[f"validation/{key}"] = value
+        elif key.startswith("warnings/"):
+            row[f"validation/{key}"] = value
+        elif key in {"episode/sim_time_abs", "episode/elapsed_seconds", "eval/episode"}:
+            row[f"validation/{key}"] = value
+    return row
+
+
 def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     algorithm_kind = str(getattr(cfg.algorithm, "kind", "") or "").strip()
     if algorithm_kind not in SUPPORTED_RLLIB_ALGORITHMS:
@@ -233,6 +258,23 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
             cfg,
             algorithm_kind,
             emit_metrics=lambda metrics, step: _log_outputs(wandb_run, csv_run, metrics, step=step),
+            validate=lambda metrics, step: _log_outputs(
+                wandb_run,
+                csv_run,
+                _validation_summary_row(
+                    _evaluate(
+                        cfg,
+                        run_dir,
+                        algo,
+                        algorithm_kind,
+                        logging_cfg,
+                        wandb_run=wandb_run,
+                        csv_run=csv_run,
+                    ),
+                    step=step,
+                ),
+                step=step,
+            ),
         )
 
         final_summary = _evaluate(

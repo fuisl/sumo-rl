@@ -7,12 +7,7 @@ def build_custom_sac_module_class():
     from ray.rllib.algorithms.sac.torch.default_sac_torch_rl_module import DefaultSACTorchRLModule
 
     class CustomSACTorchRLModule(DefaultSACTorchRLModule):
-        """Project-owned SAC module boundary.
-
-        This keeps the SAC path on RLlib's new API stack but gives the repository a
-        dedicated place to change the encoder, policy head, critic head, or other
-        module-local behavior without touching the built-in baseline.
-        """
+        """Project-owned SAC module boundary."""
 
         def setup(self):
             super().setup()

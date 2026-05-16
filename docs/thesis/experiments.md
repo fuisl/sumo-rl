@@ -46,10 +46,10 @@ Other common entrypoints:
 
 ```bash
 python experiments/static_max_pressure.py scenario=resco_cologne1
-python experiments/rllib.py algorithm=ppo_rllib scenario=resco_grid4x4
-python experiments/rllib.py algorithm=dqn_rllib scenario=resco_cologne1
-python experiments/rllib.py algorithm=sac_rllib_builtin scenario=resco_ingolstadt1
-python experiments/rllib.py algorithm=sac_rllib_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
+python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
+python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
 
 PPO and DQN default to independent policies. To switch to a shared policy, override

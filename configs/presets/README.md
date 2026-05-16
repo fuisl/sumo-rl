@@ -32,10 +32,10 @@ RLlib methods are named in `configs/algorithm/` instead:
 
 ```text
 configs/algorithm/
-  ppo_rllib.yaml
-  dqn_rllib.yaml
-  sac_rllib_builtin.yaml
-  sac_rllib_custom.yaml
+  ppo.yaml
+  dqn.yaml
+  sac_builtin.yaml
+  sac_custom.yaml
 ```
 
 How to read one preset:

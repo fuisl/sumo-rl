@@ -8,23 +8,24 @@ from typing import Any, Callable, Dict, Optional
 from sumo_rl.agents.rllib_common import (
     apply_env_runner_settings,
     apply_multi_agent_settings,
+    apply_standard_evaluation_settings,
     apply_training_settings,
     build_algorithm_context,
-    build_training_episode_row,
     completed_training_episodes,
+    emit_training_episode_rows,
+    emit_validation_if_due,
     flatten_numeric_metrics,
     plain_dict,
     rllib_counter_metrics,
-    should_log_training_episode,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
 )
-from sumo_rl.rllib.custom_sac import build_custom_sac_module_spec
+from sumo_rl.agents.sac.custom_sac import build_custom_sac_module_spec
 
 
-BUILTIN_KIND = "sac_rllib_builtin"
-CUSTOM_KIND = "sac_rllib_custom"
+BUILTIN_KIND = "sac_builtin"
+CUSTOM_KIND = "sac_custom"
 KINDS = {BUILTIN_KIND, CUSTOM_KIND}
 
 
@@ -33,7 +34,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
 
     context = build_algorithm_context(cfg, run_dir, algorithm_kind)
     callbacks_class = training_episode_summary_callbacks_class()
-    config = SACConfig().framework("torch").environment(context.env_name)
+    config = SACConfig().framework("torch").environment(env=context.env_name, disable_env_checking=True)
     config = apply_env_runner_settings(config, context.params)
     config = apply_training_settings(
         config,
@@ -58,6 +59,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
         ),
     )
     config = apply_multi_agent_settings(config, context)
+    config = apply_standard_evaluation_settings(config, context.params)
 
     if algorithm_kind == CUSTOM_KIND:
         from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
@@ -92,40 +94,36 @@ def train(
     *,
     algorithm_kind: str,
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params
     callbacks_class = training_episode_summary_callbacks_class()
-    callbacks_class.drain_pending_episode_summaries()
+    callbacks_class.reset_episode_summary_tracking()
     iteration = 0
     last_logged_step = 0
+    last_validation_step = 0
     while True:
         iteration += 1
         result = algo.train()
         metrics = extract_training_metrics(result, iteration, algorithm_kind=algorithm_kind)
         episode_summaries = callbacks_class.drain_pending_episode_summaries()
         is_final = training_should_stop(metrics, cfg)
-        if emit_metrics is not None:
-            for episode_summary in episode_summaries:
-                episode_index = episode_summary.get("episode/index")
-                if not should_log_training_episode(
-                    episode_index,
-                    cfg,
-                    last_logged_episode=last_logged_step,
-                    force=is_final,
-                ):
-                    continue
-                row = build_training_episode_row(metrics, episode_summary, algorithm_kind=algorithm_kind)
-                row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
-                emit_metrics(row, row_step)
-                if row_step > 0:
-                    last_logged_step = row_step
-            if is_final and not episode_summaries:
-                row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind)
-                row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
-                emit_metrics(row, row_step)
-                if row_step > 0:
-                    last_logged_step = row_step
+        last_logged_step = emit_training_episode_rows(
+            metrics,
+            episode_summaries,
+            cfg,
+            algorithm_kind=algorithm_kind,
+            last_logged_episode=last_logged_step,
+            emit_metrics=emit_metrics,
+            force=is_final,
+        )
+        last_validation_step = emit_validation_if_due(
+            metrics,
+            cfg,
+            last_validation_step=last_validation_step,
+            validate=validate,
+        )
         completed_episodes = completed_training_episodes(metrics, cfg)
         print(
             f"[{algorithm_kind}] episode={min(completed_episodes, training_episode_target(cfg))}/"

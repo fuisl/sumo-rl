@@ -173,6 +173,7 @@ class SumoEnvironment(gym.Env):
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
+        self.completed_episode_summaries = []
         self.num_seconds = num_seconds
         self.label = str(SumoEnvironment.CONNECTION_LABEL)
         SumoEnvironment.CONNECTION_LABEL += 1
@@ -288,7 +289,6 @@ class SumoEnvironment(gym.Env):
 
         if self.episode != 0:
             self.close()
-            self.finalize_episode_summary()
             self.save_csv(self.out_csv_name, self.episode)
         self.episode += 1
         self.metrics = []
@@ -535,9 +535,10 @@ class SumoEnvironment(gym.Env):
         if self.metrics and (
             not self.last_episode_summary
             or self.last_episode_summary.get("episode/index") != float(self.episode)
+            or self.last_episode_summary.get("tripinfo/parse_pending")
         ):
             try:
-                self.finalize_episode_summary()
+                self.finalize_episode_summary(parse_tripinfo=True)
             except Exception:
                 pass
 
@@ -577,6 +578,8 @@ class SumoEnvironment(gym.Env):
             "resco_wait": nan,
             "resco_wait_std": nan,
             "resco_tripinfo_count": 0.0,
+            "tripinfo/parse_success": 0.0,
+            "tripinfo/parse_pending": 0.0,
         }
         if not tripinfo_path.exists():
             return empty_summary
@@ -587,7 +590,9 @@ class SumoEnvironment(gym.Env):
             return empty_summary
         vehicles = tree.getroot().findall(".//tripinfo")
         if not vehicles:
-            return empty_summary
+            parsed_empty_summary = dict(empty_summary)
+            parsed_empty_summary["tripinfo/parse_success"] = 1.0
+            return parsed_empty_summary
 
         delays = []
         trip_times = []
@@ -641,6 +646,8 @@ class SumoEnvironment(gym.Env):
             "resco_wait": avg_wait,
             "resco_wait_std": std_wait,
             "resco_tripinfo_count": float(finished_count),
+            "tripinfo/parse_success": 1.0,
+            "tripinfo/parse_pending": 0.0,
         }
 
     def _parse_queue_summary(self) -> dict:
@@ -665,8 +672,27 @@ class SumoEnvironment(gym.Env):
             "resco_max_queue": float(np.max(max_queue_values)) if max_queue_values else 0.0,
         }
 
-    def finalize_episode_summary(self):
+    def _cache_episode_summary(self, summary: dict) -> None:
+        episode_index = summary.get("episode/index")
+        replaced = False
+        for index, existing_summary in enumerate(self.completed_episode_summaries):
+            if existing_summary.get("episode/index") == episode_index:
+                self.completed_episode_summaries[index] = dict(summary)
+                replaced = True
+                break
+        if not replaced:
+            self.completed_episode_summaries.append(dict(summary))
+
+    def finalize_episode_summary(self, parse_tripinfo: bool = False):
         """Build and cache the RESCO-style summary for the current episode."""
+        if (
+            self.last_episode_summary
+            and self.last_episode_summary.get("episode/index") == float(self.episode)
+            and not parse_tripinfo
+            and not self.last_episode_summary.get("tripinfo/parse_pending")
+        ):
+            return dict(self.last_episode_summary)
+
         last_step = 0.0
         last_info = {}
         if self.metrics:
@@ -686,16 +712,19 @@ class SumoEnvironment(gym.Env):
             summary.update({key: value for key, value in last_info.items() if key.startswith("system_")})
         tripinfo_output = self._build_tripinfo_output_path()
         if tripinfo_output is not None:
-            try:
-                summary.update(self._parse_tripinfo_summary(tripinfo_output))
-            finally:
-                if not self.keep_tripinfo_output:
+            if parse_tripinfo:
+                tripinfo_summary = self._parse_tripinfo_summary(tripinfo_output)
+                summary.update(tripinfo_summary)
+                if tripinfo_summary.get("tripinfo/parse_success") and not self.keep_tripinfo_output:
                     try:
                         tripinfo_output.unlink(missing_ok=True)
                     except OSError:
                         pass
+            else:
+                summary["tripinfo/parse_pending"] = 1.0
         summary.update(self._parse_queue_summary())
         self.last_episode_summary = summary
+        self._cache_episode_summary(summary)
         self.last_episode_final_info = last_info
         self.last_episode_lane_waiting_times = {
             ts: [float(value) for value in values]

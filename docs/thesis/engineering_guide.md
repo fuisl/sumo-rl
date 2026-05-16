@@ -22,12 +22,12 @@ Read the code in this order:
 1. `experiments/*.py`
 2. `sumo_rl/experiments/runner.py`
 3. `sumo_rl/experiments/rllib_runner.py`
-4. `sumo_rl/agents/ppo/rllib.py`, `sumo_rl/agents/dqn/rllib.py`, or `sumo_rl/agents/sac/rllib.py`
+4. `sumo_rl/agents/ppo/ppo.py`, `sumo_rl/agents/dqn/dqn.py`, or `sumo_rl/agents/sac/sac.py`
 5. `sumo_rl/environment/env.py`
 6. `sumo_rl/environment/traffic_signal.py`
 7. `sumo_rl/experiments/metric_utils.py`
-8. `sumo_rl/rllib/envs.py`
-9. `sumo_rl/rllib/custom_sac.py`
+8. `sumo_rl/agents/rllib_common.py`
+9. `sumo_rl/agents/sac/custom_sac.py`
 10. the matching config files in `configs/`
 
 If you only have one hour, read:
@@ -203,9 +203,9 @@ The flow is:
 Key files:
 
 - `sumo_rl/experiments/rllib_runner.py`
-- `sumo_rl/agents/ppo/rllib.py`
-- `sumo_rl/agents/dqn/rllib.py`
-- `sumo_rl/rllib/envs.py`
+- `sumo_rl/agents/ppo/ppo.py`
+- `sumo_rl/agents/dqn/dqn.py`
+- `sumo_rl/agents/rllib_common.py`
 
 The algorithm modules log training metrics:
 
@@ -229,7 +229,7 @@ It is created by the runner after a dedicated final evaluation pass.
 
 RLlib SAC expects a continuous action space.
 
-The RLlib SAC paths are implemented under `sumo_rl/agents/sac/rllib.py`.
+The RLlib SAC paths are implemented under `sumo_rl/agents/sac/sac.py`.
 The current runner hands SAC the same multi-agent RLlib wrapper used by PPO and
 DQN, and the SAC module owns SAC-specific config and training metrics.
 
@@ -242,7 +242,7 @@ This is the right place to change:
 
 - the encoder architecture
 - the policy and Q-head layout
-- the training loop cadence in `sumo_rl/agents/sac/rllib.py`
+- the training loop cadence in `sumo_rl/agents/sac/sac.py`
 - checkpoint timing and evaluation behavior
 
 ## Shared Pieces Across Methods
@@ -304,7 +304,7 @@ Use this recipe if the library can already consume a Gym, VecEnv, or PettingZoo-
 
 1. Decide the env shape the library expects.
 2. Reuse an existing wrapper if possible.
-3. If needed, write the thinnest new wrapper in `sumo_rl/rllib/`.
+3. If needed, write the thinnest new adapter beside the algorithm module.
 4. Add an algorithm module under `sumo_rl/agents/<algorithm>/`.
 5. Keep algorithm-specific training metrics inside that module.
 6. Register the module in `sumo_rl/experiments/rllib_runner.py` if it is an RLlib method.
@@ -371,8 +371,8 @@ If you are going to work on training and logging often, keep these open side by 
 - `sumo_rl/experiments/metric_utils.py`
 - `sumo_rl/environment/env.py`
 - `sumo_rl/environment/traffic_signal.py`
-- `sumo_rl/rllib/envs.py`
-- `sumo_rl/rllib/custom_sac.py`
+- `sumo_rl/agents/rllib_common.py`
+- `sumo_rl/agents/sac/custom_sac.py`
 
 That set covers almost every debugging session you will have in this repo.
 

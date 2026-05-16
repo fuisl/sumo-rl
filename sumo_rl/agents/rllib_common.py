@@ -9,8 +9,7 @@ from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
-from sumo_rl.experiments.runner import _resolve_num_gpus
-from sumo_rl.rllib.envs import build_multi_agent_wrapper, scenario_factory_name
+from sumo_rl.experiments.runner import _prepare_env_kwargs, _resolve_num_gpus
 
 
 @dataclass
@@ -43,44 +42,189 @@ def plain_dict(cfg: Any) -> Any:
     return dict(cfg)
 
 
+def scenario_factory_name(cfg: Any) -> str:
+    scenario_name = str(getattr(getattr(cfg, "scenario", None), "name", "") or "").strip()
+    if scenario_name.startswith("resco_"):
+        return scenario_name[len("resco_") :]
+    return scenario_name
+
+
+def _episode_seconds(cfg: Any) -> int:
+    experiment = getattr(cfg, "experiment", None)
+    return int(getattr(experiment, "episode_seconds", 0) or 0)
+
+
+def _env_factory_name(cfg: Any) -> str:
+    env_cfg = getattr(cfg, "env", None)
+    return str(getattr(env_cfg, "factory", "parallel_env") or "parallel_env")
+
+
+def _rllib_env_kwargs(cfg: Any, run_dir: Path, seed: Optional[int] = None) -> Dict[str, Any]:
+    kwargs = _prepare_env_kwargs(cfg, run_dir)
+    seconds = _episode_seconds(cfg)
+    if seconds > 0 and "num_seconds" not in kwargs:
+        kwargs["num_seconds"] = seconds
+    if seed is not None:
+        kwargs["sumo_seed"] = int(seed)
+    kwargs.setdefault("single_agent", False)
+    return kwargs
+
+
+def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+    """Build the PettingZoo parallel env in the same shape as the RLlib example."""
+
+    import sumo_rl
+
+    kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed)
+    factory = _env_factory_name(cfg)
+    if factory == "parallel_env":
+        return sumo_rl.parallel_env(**kwargs)
+
+    constructor = getattr(sumo_rl, factory, None)
+    if constructor is None:
+        raise ValueError(f"Unsupported RLlib env factory: {factory}")
+    return constructor(**kwargs)
+
+
+def _maybe_pad_pettingzoo_env(env: Any) -> Any:
+    try:
+        import supersuit as ss
+    except ImportError:
+        return env
+
+    try:
+        env = ss.pad_observations_v0(env)
+        env = ss.pad_action_space_v0(env)
+    except Exception:
+        return env
+    return env
+
+
+def build_rllib_parallel_env(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    pad_spaces: bool = False,
+):
+    from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
+
+    base_env = build_sumo_parallel_env(cfg, run_dir, seed=seed)
+    if pad_spaces:
+        base_env = _maybe_pad_pettingzoo_env(base_env)
+    return ParallelPettingZooEnv(base_env)
+
+
+def _possible_agents(env: Any) -> list[str]:
+    for candidate in (env, getattr(env, "par_env", None), getattr(env, "base_env", None), getattr(env, "env", None)):
+        if candidate is None:
+            continue
+        agents = getattr(candidate, "possible_agents", None) or getattr(candidate, "agents", None)
+        if agents:
+            return [str(agent_id) for agent_id in agents]
+    return []
+
+
+def _agent_space(env: Any, agent_id: str, kind: str):
+    get_space = getattr(env, f"get_{kind}_space", None)
+    if callable(get_space):
+        return get_space(agent_id)
+
+    attr_name = f"{kind}_space"
+    spaces_name = f"{kind}_spaces"
+    for candidate in (env, getattr(env, "par_env", None), getattr(env, "base_env", None), getattr(env, "env", None)):
+        if candidate is None:
+            continue
+        space_getter = getattr(candidate, attr_name, None)
+        if callable(space_getter):
+            return space_getter(agent_id)
+        spaces = getattr(candidate, spaces_name, None)
+        if isinstance(spaces, dict) and agent_id in spaces:
+            return spaces[agent_id]
+        space = getattr(candidate, attr_name, None)
+        nested_spaces = getattr(space, "spaces", None)
+        if isinstance(nested_spaces, dict) and agent_id in nested_spaces:
+            return nested_spaces[agent_id]
+    raise KeyError(f"Could not resolve {kind} space for RLlib agent {agent_id!r}.")
+
+
+def _env_children(env: Any) -> list[Any]:
+    children = []
+    get_sub_environments = getattr(env, "get_sub_environments", None)
+    if callable(get_sub_environments):
+        try:
+            children.extend(get_sub_environments() or [])
+        except Exception:
+            pass
+
+    for attr in ("base_env", "env", "aec_env", "unwrapped", "gym_env", "par_env", "venv"):
+        candidate = getattr(env, attr, None)
+        if candidate is not None:
+            children.append(candidate)
+
+    for attr in ("envs", "vector_env"):
+        candidate = getattr(env, attr, None)
+        if isinstance(candidate, (list, tuple)):
+            children.extend(item for item in candidate if item is not None)
+        elif candidate is not None and candidate is not env:
+            children.append(candidate)
+    return children
+
+
 def _resolve_base_env(env: Any) -> Any:
-    current = env
+    queue = [env]
     visited = set()
-    for _ in range(12):
+    fallback = env
+    while queue:
+        current = queue.pop(0)
+        if current is None or id(current) in visited:
+            continue
+        visited.add(id(current))
+        fallback = current
         if (
             hasattr(current, "finalize_episode_summary")
             or hasattr(current, "last_episode_summary")
             or hasattr(current, "metrics")
         ):
             return current
-        for attr in ("base_env", "env", "aec_env", "unwrapped", "gym_env", "par_env", "venv"):
-            candidate = getattr(current, attr, None)
-            if candidate is not None and id(candidate) not in visited:
-                visited.add(id(candidate))
-                current = candidate
-                break
-        else:
-            break
-    return env
+        queue.extend(_env_children(current))
+    return fallback
 
 
 def _completed_episode_summary(env: Any) -> Dict[str, Any]:
     base_env = _resolve_base_env(env)
     cached_summary = getattr(base_env, "last_episode_summary", None)
-    if isinstance(cached_summary, dict) and cached_summary:
+    if isinstance(cached_summary, dict) and cached_summary and not cached_summary.get("tripinfo/parse_pending"):
         return dict(cached_summary)
+
+    if getattr(base_env, "sumo", None) is not None and getattr(base_env, "tripinfo_output_name", None):
+        return {}
 
     if hasattr(base_env, "finalize_episode_summary"):
         try:
             summary = dict(base_env.finalize_episode_summary() or {})
         except Exception:
             summary = {}
-        if summary:
+        if summary and not summary.get("tripinfo/parse_pending"):
             return summary
 
-    if isinstance(cached_summary, dict):
+    if isinstance(cached_summary, dict) and not cached_summary.get("tripinfo/parse_pending"):
         return dict(cached_summary)
     return {}
+
+
+def _completed_episode_summary_history(env: Any) -> list[Dict[str, Any]]:
+    base_env = _resolve_base_env(env)
+    summaries = []
+    for summary in getattr(base_env, "completed_episode_summaries", []) or []:
+        if isinstance(summary, dict) and summary and not summary.get("tripinfo/parse_pending"):
+            summaries.append(dict(summary))
+    latest_summary = _completed_episode_summary(base_env)
+    if latest_summary:
+        latest_episode = latest_summary.get("episode/index")
+        if not any(summary.get("episode/index") == latest_episode for summary in summaries):
+            summaries.append(latest_summary)
+    return summaries
 
 
 @lru_cache(maxsize=1)
@@ -105,6 +249,7 @@ def training_episode_summary_callbacks_class():
         """Capture completed episode summaries during RLlib training."""
 
         pending_episode_summaries: list[Dict[str, Any]] = []
+        seen_episode_summaries: set[tuple[int, float]] = set()
 
         @classmethod
         def drain_pending_episode_summaries(cls) -> list[Dict[str, Any]]:
@@ -112,15 +257,37 @@ def training_episode_summary_callbacks_class():
             cls.pending_episode_summaries.clear()
             return summaries
 
+        @classmethod
+        def reset_episode_summary_tracking(cls) -> None:
+            cls.pending_episode_summaries.clear()
+            cls.seen_episode_summaries.clear()
+
+        @classmethod
+        def collect_completed_episode_summaries(cls, env: Any) -> None:
+            base_env = _resolve_base_env(env)
+            for summary in _completed_episode_summary_history(base_env):
+                episode_index = summary.get("episode/index")
+                if not isinstance(episode_index, (int, float, np.integer, np.floating)):
+                    continue
+                key = (id(base_env), float(episode_index))
+                if key in cls.seen_episode_summaries:
+                    continue
+                cls.pending_episode_summaries.append(summary)
+                cls.seen_episode_summaries.add(key)
+
+        def on_episode_start(self, *args, **kwargs) -> None:
+            env = _resolve_callback_env(args, kwargs)
+            if env is not None:
+                self.__class__.collect_completed_episode_summaries(env)
+
         def on_episode_end(self, *args, **kwargs) -> None:
             episode = kwargs.get("episode")
             if episode is None and args:
                 episode = args[0]
             del episode
             env = _resolve_callback_env(args, kwargs)
-            summary = _completed_episode_summary(env)
-            if summary:
-                self.__class__.pending_episode_summaries.append(summary)
+            if env is not None:
+                self.__class__.collect_completed_episode_summaries(env)
 
     return TrainingEpisodeSummaryCallbacks
 
@@ -166,6 +333,15 @@ def train_log_freq_episodes(cfg: Any) -> int:
     return max(1, int(explicit if explicit is not None else fallback))
 
 
+def validation_interval_steps(cfg: Any) -> int:
+    experiment = getattr(cfg, "experiment", None)
+    explicit = getattr(experiment, "validation_interval_steps", None) if experiment is not None else None
+    logging_cfg = getattr(cfg, "logging", None)
+    fallback = getattr(logging_cfg, "eval_freq", 0) if logging_cfg is not None else 0
+    value = explicit if explicit is not None else fallback
+    return max(0, int(value or 0))
+
+
 def cap_to_horizon(value: Any, horizon: int) -> int:
     return max(1, min(int(value), int(horizon)))
 
@@ -200,7 +376,7 @@ def register_multi_agent_env(cfg: Any, run_dir: Path, algorithm_kind: str, *, pa
             experiment = getattr(cfg, "experiment", None)
             base_seed = int(getattr(experiment, "seed", 0) or 0)
             seed = base_seed + int(env_config.get("worker_index", 0) or 0)
-        return build_multi_agent_wrapper(cfg, run_dir, seed=seed, pad_spaces=pad_spaces)
+        return build_rllib_parallel_env(cfg, run_dir, seed=seed, pad_spaces=pad_spaces)
 
     register_env(env_name, _creator)
     return env_name
@@ -210,18 +386,19 @@ def build_multi_agent_policies(cfg: Any, run_dir: Path, *, pad_spaces: bool):
     from ray.rllib.policy.policy import PolicySpec
 
     experiment = getattr(cfg, "experiment", None)
-    sample_env = build_multi_agent_wrapper(
+    sample_env = build_sumo_parallel_env(
         cfg,
         run_dir,
         seed=int(getattr(experiment, "seed", 0) or 0),
-        pad_spaces=pad_spaces,
     )
+    if pad_spaces:
+        sample_env = _maybe_pad_pettingzoo_env(sample_env)
     try:
         policies = {}
-        for agent_id in sample_env.possible_agents:
+        for agent_id in _possible_agents(sample_env):
             policies[str(agent_id)] = PolicySpec(
-                observation_space=sample_env.observation_space(agent_id),
-                action_space=sample_env.action_space(agent_id),
+                observation_space=_agent_space(sample_env, str(agent_id), "observation"),
+                action_space=_agent_space(sample_env, str(agent_id), "action"),
             )
         return policies
     finally:
@@ -254,13 +431,22 @@ def build_algorithm_context(cfg: Any, run_dir: Path, algorithm_kind: str) -> Rll
 
 
 def apply_env_runner_settings(config, params: Dict[str, Any]):
-    num_env_runners = int(params.get("num_env_runners", 0) or 0)
+    num_env_runners = int(params.get("num_env_runners", params.get("num_rollout_workers", 0)) or 0)
     num_envs_per_runner = int(params.get("num_envs_per_env_runner", 1) or 1)
+    rollout_fragment_length = params.get("rollout_fragment_length")
     if hasattr(config, "env_runners"):
-        config = config.env_runners(
-            num_env_runners=num_env_runners,
-            num_envs_per_env_runner=num_envs_per_runner,
-        )
+        runner_kwargs = {
+            "num_env_runners": num_env_runners,
+            "num_envs_per_env_runner": num_envs_per_runner,
+        }
+        if rollout_fragment_length is not None:
+            runner_kwargs["rollout_fragment_length"] = int(rollout_fragment_length)
+        config = config.env_runners(**runner_kwargs)
+    elif hasattr(config, "rollouts"):
+        rollout_kwargs = {"num_rollout_workers": num_env_runners}
+        if rollout_fragment_length is not None:
+            rollout_kwargs["rollout_fragment_length"] = int(rollout_fragment_length)
+        config = config.rollouts(**rollout_kwargs)
     if hasattr(config, "learners"):
         learner_kwargs: Dict[str, Any] = {}
         if params.get("num_learners") is not None:
@@ -305,6 +491,33 @@ def apply_training_settings(
         config = config.training(**training_kwargs)
     if hasattr(config, "reporting"):
         config = config.reporting(min_sample_timesteps_per_iteration=episode_steps_value)
+    return config
+
+
+def apply_standard_evaluation_settings(config, params: Dict[str, Any]):
+    """Apply RLlib AlgorithmConfig.evaluation(...) when explicitly configured."""
+
+    evaluation_interval = params.get("evaluation_interval")
+    if evaluation_interval in (None, 0, "0", False):
+        return config
+
+    evaluation_kwargs: Dict[str, Any] = {
+        "evaluation_interval": int(evaluation_interval),
+        "evaluation_duration": int(params.get("evaluation_duration", 1)),
+        "evaluation_duration_unit": str(params.get("evaluation_duration_unit", "episodes")),
+        "evaluation_config": dict(params.get("evaluation_config") or {"explore": False}),
+    }
+    for key in (
+        "evaluation_parallel_to_training",
+        "evaluation_force_reset_envs_before_iteration",
+        "evaluation_sample_timeout_s",
+    ):
+        if key in params and params[key] is not None:
+            evaluation_kwargs[key] = params[key]
+
+    evaluation = getattr(config, "evaluation", None)
+    if callable(evaluation):
+        return evaluation(**evaluation_kwargs)
     return config
 
 
@@ -415,6 +628,22 @@ def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iterat
         metrics.setdefault("train/reward_min", metrics["train/episode_return_min"])
     if "train/episode_return_max" in metrics:
         metrics.setdefault("train/reward_max", metrics["train/episode_return_max"])
+    evaluation_metrics = result.get("evaluation")
+    if isinstance(evaluation_metrics, dict):
+        env_runner_eval = evaluation_metrics.get("env_runners")
+        if isinstance(env_runner_eval, dict):
+            for source_key, target_key in (
+                ("episode_return_mean", "validation/rllib/episode_return_mean"),
+                ("episode_return_min", "validation/rllib/episode_return_min"),
+                ("episode_return_max", "validation/rllib/episode_return_max"),
+                ("episode_len_mean", "validation/rllib/episode_len_mean"),
+                ("num_env_steps_sampled_lifetime", "validation/rllib/env_steps_sampled"),
+                ("num_agent_steps_sampled_lifetime", "validation/rllib/agent_steps_sampled"),
+                ("num_episodes_lifetime", "validation/rllib/episodes_total"),
+            ):
+                value = env_runner_eval.get(source_key)
+                if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+                    metrics[target_key] = float(value)
     return metrics
 
 
@@ -426,6 +655,7 @@ def build_training_episode_row(
 ) -> Dict[str, Any]:
     row = dict(metrics)
     row["algorithm/kind"] = algorithm_kind
+    row["train/episode_summary_available"] = 1.0 if episode_summary else 0.0
 
     episode_index = episode_summary.get("episode/index")
     if isinstance(episode_index, (int, float, np.integer, np.floating)):
@@ -442,13 +672,85 @@ def build_training_episode_row(
 
     if isinstance(episode_summary, dict):
         for key, value in episode_summary.items():
-            if not key.startswith("resco_"):
+            if key.startswith("resco_"):
+                row_key = f"train/resco/{key[len('resco_'):]}"
+            elif key.startswith("tripinfo/"):
+                row_key = f"train/{key}"
+            else:
                 continue
             if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
-                row[f"train/resco/{key[len('resco_'):]}"] = float(value)
+                row[row_key] = float(value)
             else:
-                row[f"train/resco/{key[len('resco_'):]}"] = value
+                row[row_key] = value
     return row
+
+
+def emit_training_episode_rows(
+    metrics: Dict[str, Any],
+    episode_summaries: list[Dict[str, Any]],
+    cfg: Any,
+    *,
+    algorithm_kind: str,
+    last_logged_episode: int,
+    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]],
+    force: bool = False,
+) -> int:
+    if emit_metrics is None:
+        return int(last_logged_episode)
+
+    rows_by_step: Dict[int, Dict[str, Any]] = {}
+    for episode_summary in episode_summaries:
+        row = build_training_episode_row(metrics, episode_summary, algorithm_kind=algorithm_kind)
+        row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
+        if row_step > int(last_logged_episode):
+            rows_by_step[row_step] = row
+
+    completed_episodes = completed_training_episodes(metrics, cfg)
+    for episode_index in range(int(last_logged_episode) + 1, completed_episodes + 1):
+        if episode_index not in rows_by_step:
+            row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind)
+            row["train/episode_index"] = float(episode_index)
+            rows_by_step[episode_index] = row
+
+    current_last = int(last_logged_episode)
+    for row_step in sorted(rows_by_step):
+        if row_step <= current_last:
+            continue
+        if not should_log_training_episode(row_step, cfg, last_logged_episode=current_last, force=force):
+            continue
+        emit_metrics(rows_by_step[row_step], row_step)
+        current_last = row_step
+
+    if force and current_last == int(last_logged_episode) and not rows_by_step:
+        row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind)
+        row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
+        if row_step > 0:
+            emit_metrics(row, row_step)
+            current_last = row_step
+
+    return current_last
+
+
+def emit_validation_if_due(
+    metrics: Dict[str, Any],
+    cfg: Any,
+    *,
+    last_validation_step: int,
+    validate: Optional[Callable[[Dict[str, Any], int], None]],
+) -> int:
+    if validate is None:
+        return int(last_validation_step)
+
+    interval = validation_interval_steps(cfg)
+    if interval <= 0:
+        return int(last_validation_step)
+
+    current_step = int(metrics.get("train/env_step") or metrics.get("train/env_steps_sampled") or 0)
+    if current_step <= 0 or current_step - int(last_validation_step) < interval:
+        return int(last_validation_step)
+
+    validate(metrics, current_step)
+    return current_step
 
 
 def should_log_training_episode(episode_index: Any, cfg: Any, *, last_logged_episode: int = 0, force: bool = False) -> bool:

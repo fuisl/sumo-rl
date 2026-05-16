@@ -1,6 +1,6 @@
 # @package _global_
 algorithm:
-  kind: ppo_rllib
+  kind: ppo
   params:
     policy_mode: independent
     lr: 0.0005
