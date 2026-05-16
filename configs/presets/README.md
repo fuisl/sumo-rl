@@ -50,7 +50,9 @@ is configured in seconds with `experiment.episode_seconds`, and the decision-ste
 horizon is derived from the environment `delta_time` when needed. For example,
 `3600` episode seconds with `delta_time=5` gives about `3600 / 5 = 720` decision
 steps. Training logs use sampled env steps (`logging.train_log_freq_steps`), while
-validation logs use evaluation episodes (`logging.validation_log_freq_episodes`).
+RLlib validation cadence is controlled by `experiment.validation_interval_episodes`
+by default. The step-based `logging.eval_freq` remains a fallback when the episode
+interval is not set.
 
 The launcher name tells you the method family.
 The folder name tells you the scenario.

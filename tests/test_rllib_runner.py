@@ -8,6 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sumo_rl.experiments import rllib_runner
+from sumo_rl.experiments.runner import _log_outputs
 from sumo_rl.experiments.rllib_runner import _build_policy_mapping, _policy_id_for_agent
 from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
 from sumo_rl.agents.rllib_common import (
@@ -23,6 +24,7 @@ from sumo_rl.agents.rllib_common import (
     train_log_freq_steps,
     training_episode_target,
     training_should_stop,
+    validation_interval_episodes,
     validation_interval_steps,
 )
 
@@ -271,14 +273,23 @@ def test_validation_interval_prefers_experiment_override_over_logging_eval_freq(
     assert validation_interval_steps(cfg) == 25
 
 
+def test_validation_interval_episodes_is_explicit_episode_cadence():
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(validation_interval_episodes=5, validation_interval_steps=25),
+        logging=SimpleNamespace(eval_freq=5000),
+    )
+
+    assert validation_interval_episodes(cfg) == 5
+
+
 def test_validation_interval_falls_back_to_logging_eval_freq():
     cfg = SimpleNamespace(experiment=SimpleNamespace(), logging=SimpleNamespace(eval_freq=5000))
 
     assert validation_interval_steps(cfg) == 5000
 
 
-def test_rllib_training_loop_emits_validation_when_due():
-    cfg = SimpleNamespace(experiment=SimpleNamespace(), logging=SimpleNamespace(eval_freq=10))
+def test_rllib_training_loop_emits_step_validation_when_due():
+    cfg = SimpleNamespace(experiment=SimpleNamespace(validation_interval_episodes=None), logging=SimpleNamespace(eval_freq=10))
     emitted = []
 
     last_step = emit_validation_if_due(
@@ -299,6 +310,59 @@ def test_rllib_training_loop_emits_validation_when_due():
 
     assert last_step == 10
     assert emitted == [(10, 10.0)]
+
+
+def test_rllib_training_loop_prefers_episode_validation_cadence():
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(
+            validation_interval_episodes=5,
+            episodes=20,
+            episode_seconds=100,
+        ),
+        logging=SimpleNamespace(eval_freq=10),
+    )
+    emitted = []
+
+    last_progress = emit_validation_if_due(
+        {"train/env_step": 80.0, "train/episodes_total": 4.0},
+        cfg,
+        last_validation_step=0,
+        validate=lambda metrics, step: emitted.append((step, metrics["train/episodes_total"])),
+    )
+    assert last_progress == 0
+    assert emitted == []
+
+    last_progress = emit_validation_if_due(
+        {"train/env_step": 100.0, "train/episodes_total": 5.0},
+        cfg,
+        last_validation_step=last_progress,
+        validate=lambda metrics, step: emitted.append((step, metrics["train/episodes_total"])),
+    )
+
+    assert last_progress == 5
+    assert emitted == [(100, 5.0)]
+
+
+def test_episode_validation_cadence_uses_derived_env_step_when_dqn_result_has_only_episode_count():
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(
+            validation_interval_episodes=5,
+            episodes=20,
+            episode_seconds=100,
+        ),
+        logging=SimpleNamespace(eval_freq=5000),
+    )
+    emitted = []
+
+    last_progress = emit_validation_if_due(
+        {"train/episodes_total": 5.0},
+        cfg,
+        last_validation_step=0,
+        validate=lambda metrics, step: emitted.append(step),
+    )
+
+    assert last_progress == 5
+    assert emitted == [100]
 
 
 def test_validation_summary_row_maps_final_metrics_to_validation_namespace():
@@ -356,3 +420,22 @@ def test_standard_evaluation_settings_use_rllib_algorithm_config_api():
         "evaluation_config": {"explore": False},
         "evaluation_parallel_to_training": True,
     }
+
+
+def test_log_outputs_lets_wandb_custom_step_axes_control_train_and_validation_steps():
+    class DummyWandbRun:
+        def __init__(self):
+            self.calls = []
+
+        def log(self, metrics, step=None):
+            self.calls.append((metrics, step))
+
+    wandb_run = DummyWandbRun()
+
+    _log_outputs(wandb_run, None, {"train/env_step": 40320.0, "train/episode_index": 62.0}, step=62)
+    _log_outputs(wandb_run, None, {"validation/env_step": 45360.0, "validation/eval/mean_reward": 1.0}, step=45360)
+
+    assert wandb_run.calls == [
+        ({"train/env_step": 40320.0, "train/episode_index": 62.0}, None),
+        ({"validation/env_step": 45360.0, "validation/eval/mean_reward": 1.0}, None),
+    ]

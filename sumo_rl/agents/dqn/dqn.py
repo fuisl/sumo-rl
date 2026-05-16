@@ -102,7 +102,7 @@ def train(
     callbacks_class.reset_episode_summary_tracking()
     iteration = 0
     last_logged_step = 0
-    last_validation_step = 0
+    last_validation_progress = 0
     while True:
         iteration += 1
         result = algo.train()
@@ -118,10 +118,10 @@ def train(
             emit_metrics=emit_metrics,
             force=is_final,
         )
-        last_validation_step = emit_validation_if_due(
+        last_validation_progress = emit_validation_if_due(
             metrics,
             cfg,
-            last_validation_step=last_validation_step,
+            last_validation_step=last_validation_progress,
             validate=validate,
         )
         completed_episodes = completed_training_episodes(metrics, cfg)
