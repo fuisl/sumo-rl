@@ -14,6 +14,7 @@ from sumo_rl.agents.rllib_common import (
     completed_training_episodes,
     emit_training_episode_rows,
     emit_validation_if_due,
+    extract_entropy_mean,
     flatten_numeric_metrics,
     plain_dict,
     rllib_counter_metrics,
@@ -63,6 +64,9 @@ def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
         flatten_numeric_metrics(learner_metrics, prefix="train/ppo/learners", out=metrics)
+        entropy_mean = extract_entropy_mean(learner_metrics)
+        if entropy_mean is not None:
+            metrics["train/ppo/entropy_mean"] = float(entropy_mean)
     return metrics
 
 

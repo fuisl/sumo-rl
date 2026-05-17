@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
+from sumo_rl.experiments.metric_utils import build_namespaced_metrics
 from sumo_rl.experiments.runner import _prepare_env_kwargs, _resolve_num_gpus
 
 
@@ -315,6 +316,15 @@ def episode_steps(cfg: Any) -> int:
 
 def training_episode_target(cfg: Any) -> int:
     return max(1, int(getattr(getattr(cfg, "experiment", None), "episodes", 1) or 1))
+
+
+def trace_mode(cfg: Any) -> str:
+    logging_cfg = getattr(cfg, "logging", None)
+    value = getattr(logging_cfg, "trace_mode", "training") if logging_cfg is not None else "training"
+    mode = str(value or "training").strip().lower()
+    if mode not in {"training", "debug"}:
+        return "training"
+    return mode
 
 
 def train_log_freq_steps(cfg: Any) -> int:
@@ -630,12 +640,6 @@ def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iterat
                 metrics[target_key] = float(value)
     if "train/env_steps_sampled" in metrics:
         metrics["train/env_step"] = metrics["train/env_steps_sampled"]
-    if "train/episode_return_mean" in metrics:
-        metrics.setdefault("train/reward_mean", metrics["train/episode_return_mean"])
-    if "train/episode_return_min" in metrics:
-        metrics.setdefault("train/reward_min", metrics["train/episode_return_min"])
-    if "train/episode_return_max" in metrics:
-        metrics.setdefault("train/reward_max", metrics["train/episode_return_max"])
     evaluation_metrics = result.get("evaluation")
     if isinstance(evaluation_metrics, dict):
         env_runner_eval = evaluation_metrics.get("env_runners")
@@ -655,41 +659,150 @@ def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iterat
     return metrics
 
 
+def extract_entropy_mean(value: Any) -> Optional[float]:
+    candidates: list[tuple[int, float]] = []
+
+    def _walk(node: Any, path: str = "") -> None:
+        if isinstance(node, (int, float, np.integer, np.floating)) and not isinstance(node, bool):
+            numeric_value = float(node)
+            if not np.isfinite(numeric_value):
+                return
+            lower_path = path.lower()
+            if "entropy" not in lower_path:
+                return
+            if any(token in lower_path for token in ("target_entropy", "entropy_coeff", "curr_kl_coeff")):
+                return
+            # RLlib learner outputs are not perfectly stable across algorithms and
+            # versions, so prefer keys that explicitly look like entropy means
+            # before falling back to other entropy-like diagnostics.
+            score = 0
+            if lower_path.endswith("entropy_mean"):
+                score += 4
+            if lower_path.endswith("curr_entropy"):
+                score += 3
+            if "mean" in lower_path:
+                score += 2
+            candidates.append((score, numeric_value))
+            return
+        if not isinstance(node, dict):
+            return
+        for key, item in node.items():
+            next_path = f"{path}/{key}" if path else str(key)
+            _walk(item, next_path)
+
+    _walk(value)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return float(candidates[0][1])
+
+
+def _copy_numeric_metric(row: Dict[str, Any], key: str, value: Any) -> None:
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+        row[key] = float(value)
+
+
+def _summary_value(summary: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in summary:
+            return summary[key]
+    return None
+
+
+def _append_common_training_metrics(row: Dict[str, Any], episode_summary: Dict[str, Any]) -> None:
+    reward_key_map = {
+        "train/reward_mean": "reward/mean",
+        "train/reward_max": "reward/max",
+        "train/reward_std": "reward/std",
+    }
+    for row_key, summary_key in reward_key_map.items():
+        _copy_numeric_metric(row, row_key, episode_summary.get(summary_key))
+
+    resco_key_map = {
+        "train/resco_delay_mean": ("resco_delay_mean", "resco_avg_delay"),
+        "train/resco_delay_max": ("resco_delay_max",),
+        "train/resco_delay_std": ("resco_delay_std", "resco_avg_delay_std"),
+        "train/resco_wait_mean": ("resco_wait_mean", "resco_wait"),
+        "train/resco_wait_max": ("resco_wait_max",),
+        "train/resco_wait_std": ("resco_wait_std",),
+        "train/resco_trip_time_mean": ("resco_trip_time_mean", "resco_trip_time"),
+        "train/resco_queue_mean": ("resco_queue_mean", "resco_queue"),
+        "train/resco_queue_max": ("resco_queue_max", "resco_max_queue"),
+        "train/resco_tripinfo_count": ("resco_tripinfo_count",),
+    }
+    for row_key, summary_keys in resco_key_map.items():
+        _copy_numeric_metric(row, row_key, _summary_value(episode_summary, *summary_keys))
+
+    namespaced_metrics = build_namespaced_metrics(
+        {key: value for key, value in episode_summary.items() if key.startswith("system_")}
+    )
+    for key, value in namespaced_metrics.items():
+        _copy_numeric_metric(row, f"train/{key}", value)
+
+    for key, value in episode_summary.items():
+        if key.startswith("reward/agent/"):
+            row[f"debug/reward/{key[len('reward/agent/'):]}"] = float(value)
+
+
+def _append_debug_metrics(row: Dict[str, Any], metrics: Dict[str, Any]) -> None:
+    exact_map = {
+        "train/rllib/training_iteration": "debug/rllib/training_iteration",
+        "train/rllib/time_total_s": "debug/rllib/time_total_s",
+        "train/rllib/time_this_iter_s": "debug/rllib/time_this_iter_s",
+        "train/env_steps_sampled": "debug/env_steps_sampled",
+        "train/agent_steps_sampled": "debug/agent_steps_sampled",
+        "train/episodes_total": "debug/episodes_total",
+        "train/episode_return_mean": "debug/episode_return_mean",
+        "train/episode_return_min": "debug/episode_return_min",
+        "train/episode_return_max": "debug/episode_return_max",
+        "train/episode_len_mean": "debug/episode_len_mean",
+        "train/ppo/entropy_mean": "debug/ppo/entropy_mean",
+        "train/sac/entropy_mean": "debug/sac/entropy_mean",
+        "train/td_error_mean": "debug/td_error_mean",
+        "train/td_error_abs_mean": "debug/td_error_abs_mean",
+    }
+    prefix_map = {
+        "train/ppo/learners/": "debug/ppo/learners/",
+        "train/dqn/learners/": "debug/dqn/learners/",
+        "train/dqn/replay/": "debug/dqn/replay/",
+        "train/sac/learners/": "debug/sac/learners/",
+        "train/sac/replay/": "debug/sac/replay/",
+    }
+    for source_key, target_key in exact_map.items():
+        _copy_numeric_metric(row, target_key, metrics.get(source_key))
+    for source_key, value in metrics.items():
+        for prefix, replacement in prefix_map.items():
+            if source_key.startswith(prefix):
+                _copy_numeric_metric(row, source_key.replace(prefix, replacement, 1), value)
+                break
+
+
 def build_training_episode_row(
     metrics: Dict[str, Any],
     episode_summary: Dict[str, Any],
     *,
     algorithm_kind: str,
+    cfg: Any,
 ) -> Dict[str, Any]:
-    row = dict(metrics)
-    row["algorithm/kind"] = algorithm_kind
-    row["train/episode_summary_available"] = 1.0 if episode_summary else 0.0
+    row: Dict[str, Any] = {"algorithm/kind": algorithm_kind}
 
     episode_index = episode_summary.get("episode/index")
     if isinstance(episode_index, (int, float, np.integer, np.floating)):
         row["train/episode_index"] = float(episode_index)
     else:
-        fallback_episode = row.get("train/episodes_total")
+        fallback_episode = metrics.get("train/episodes_total")
         if isinstance(fallback_episode, (int, float, np.integer, np.floating)):
             row["train/episode_index"] = float(fallback_episode)
 
-    reward_mean = row.get("train/reward_mean", row.get("train/episode_return_mean"))
-    if isinstance(reward_mean, (int, float, np.integer, np.floating)) and not isinstance(reward_mean, bool):
-        row["train/reward_mean"] = float(reward_mean)
-        row["train/episode_reward"] = float(reward_mean)
+    fallback_env_step = metrics.get("train/env_step", metrics.get("train/env_steps_sampled"))
+    if isinstance(fallback_env_step, (int, float, np.integer, np.floating)) and not isinstance(fallback_env_step, bool):
+        row["train/env_step"] = float(fallback_env_step)
 
     if isinstance(episode_summary, dict):
-        for key, value in episode_summary.items():
-            if key.startswith("resco_"):
-                row_key = f"train/resco/{key[len('resco_'):]}"
-            elif key.startswith("tripinfo/"):
-                row_key = f"train/{key}"
-            else:
-                continue
-            if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
-                row[row_key] = float(value)
-            else:
-                row[row_key] = value
+        _append_common_training_metrics(row, episode_summary)
+
+    if trace_mode(cfg) == "debug":
+        _append_debug_metrics(row, metrics)
     return row
 
 
@@ -708,7 +821,7 @@ def emit_training_episode_rows(
 
     rows_by_step: Dict[int, Dict[str, Any]] = {}
     for episode_summary in episode_summaries:
-        row = build_training_episode_row(metrics, episode_summary, algorithm_kind=algorithm_kind)
+        row = build_training_episode_row(metrics, episode_summary, algorithm_kind=algorithm_kind, cfg=cfg)
         row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
         if row_step > int(last_logged_episode):
             rows_by_step[row_step] = row
@@ -716,7 +829,7 @@ def emit_training_episode_rows(
     completed_episodes = completed_training_episodes(metrics, cfg)
     for episode_index in range(int(last_logged_episode) + 1, completed_episodes + 1):
         if episode_index not in rows_by_step:
-            row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind)
+            row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind, cfg=cfg)
             row["train/episode_index"] = float(episode_index)
             rows_by_step[episode_index] = row
 
@@ -730,7 +843,7 @@ def emit_training_episode_rows(
         current_last = row_step
 
     if force and current_last == int(last_logged_episode) and not rows_by_step:
-        row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind)
+        row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind, cfg=cfg)
         row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
         if row_step > 0:
             emit_metrics(row, row_step)

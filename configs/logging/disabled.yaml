@@ -8,6 +8,7 @@ tags: []
 job_type: train
 log_freq: 1000
 eval_freq: 5000
+trace_mode: training
 train_log_freq_steps: 1
 train_log_freq_episodes: 1
 validation_log_freq_episodes: 1

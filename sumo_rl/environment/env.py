@@ -206,6 +206,7 @@ class SumoEnvironment(gym.Env):
         self.observations = {ts: None for ts in self.ts_ids}
         self.rewards = {ts: None for ts in self.ts_ids}
         self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
+        self.episode_agent_reward_totals = {ts: 0.0 for ts in self.ts_ids}
 
     def _build_traffic_signals(self, conn):
         if not isinstance(self.reward_fn, dict):
@@ -306,6 +307,7 @@ class SumoEnvironment(gym.Env):
         self.num_emergency_brakes = 0
         self.num_collisions = 0
         self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
+        self.episode_agent_reward_totals = {ts: 0.0 for ts in self.ts_ids}
 
         if self.single_agent:
             return self._compute_observations()[self.ts_ids[0]], self._compute_info()
@@ -404,7 +406,14 @@ class SumoEnvironment(gym.Env):
                 if self.traffic_signals[ts].time_to_act or self.fixed_ts
             }
         )
-        return {ts: self.rewards[ts] for ts in self.rewards.keys() if self.traffic_signals[ts].time_to_act or self.fixed_ts}
+        active_rewards = {
+            ts: self.rewards[ts] for ts in self.rewards.keys() if self.traffic_signals[ts].time_to_act or self.fixed_ts
+        }
+        for ts, reward in active_rewards.items():
+            reward_value = self._reward_to_scalar(reward)
+            if reward_value is not None:
+                self.episode_agent_reward_totals[ts] = float(self.episode_agent_reward_totals.get(ts, 0.0)) + reward_value
+        return active_rewards
 
     @property
     def observation_space(self):
@@ -554,6 +563,24 @@ class SumoEnvironment(gym.Env):
         return Path(f"{self.tripinfo_output_name}_conn{self.label}_ep{self.episode}.xml")
 
     @staticmethod
+    def _reward_to_scalar(value) -> Optional[float]:
+        if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+            numeric_value = float(value)
+            if np.isfinite(numeric_value):
+                return numeric_value
+            return None
+        try:
+            array_value = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
+            return None
+        if array_value.size != 1:
+            return None
+        numeric_value = float(array_value.reshape(-1)[0])
+        if np.isfinite(numeric_value):
+            return numeric_value
+        return None
+
+    @staticmethod
     def _is_truthy_xml_value(value: Optional[str]) -> bool:
         return str(value).strip().lower() in {"1", "true", "yes"}
 
@@ -571,11 +598,20 @@ class SumoEnvironment(gym.Env):
             "tripinfo/std_time_loss": nan,
             "tripinfo/avg_delay": nan,
             "tripinfo/std_delay": nan,
+            "tripinfo/max_delay": nan,
+            "tripinfo/max_waiting_time": nan,
             "resco_avg_delay": nan,
             "resco_avg_delay_std": nan,
+            "resco_delay_mean": nan,
+            "resco_delay_max": nan,
+            "resco_delay_std": nan,
             "resco_trip_time": nan,
             "resco_trip_time_std": nan,
+            "resco_trip_time_mean": nan,
             "resco_wait": nan,
+            "resco_wait_std": nan,
+            "resco_wait_mean": nan,
+            "resco_wait_max": nan,
             "resco_wait_std": nan,
             "resco_tripinfo_count": 0.0,
             "tripinfo/parse_success": 0.0,
@@ -621,10 +657,12 @@ class SumoEnvironment(gym.Env):
         total_count = finished_count + unfinished_count
         avg_delay = float(np.mean(delays)) if delays else nan
         std_delay = float(np.std(delays)) if delays else nan
+        max_delay = float(np.max(delays)) if delays else nan
         avg_trip_time = float(np.mean(trip_times)) if trip_times else nan
         std_trip_time = float(np.std(trip_times)) if trip_times else nan
         avg_wait = float(np.mean(waits)) if waits else nan
         std_wait = float(np.std(waits)) if waits else nan
+        max_wait = float(np.max(waits)) if waits else nan
         avg_time_loss = float(np.mean(time_losses)) if time_losses else nan
         std_time_loss = float(np.std(time_losses)) if time_losses else nan
         return {
@@ -639,11 +677,20 @@ class SumoEnvironment(gym.Env):
             "tripinfo/std_time_loss": std_time_loss,
             "tripinfo/avg_delay": avg_delay,
             "tripinfo/std_delay": std_delay,
+            "tripinfo/max_delay": max_delay,
+            "tripinfo/max_waiting_time": max_wait,
             "resco_avg_delay": avg_delay,
             "resco_avg_delay_std": std_delay,
+            "resco_delay_mean": avg_delay,
+            "resco_delay_max": max_delay,
+            "resco_delay_std": std_delay,
             "resco_trip_time": avg_trip_time,
             "resco_trip_time_std": std_trip_time,
+            "resco_trip_time_mean": avg_trip_time,
             "resco_wait": avg_wait,
+            "resco_wait_std": std_wait,
+            "resco_wait_mean": avg_wait,
+            "resco_wait_max": max_wait,
             "resco_wait_std": std_wait,
             "resco_tripinfo_count": float(finished_count),
             "tripinfo/parse_success": 1.0,
@@ -670,7 +717,28 @@ class SumoEnvironment(gym.Env):
         return {
             "resco_queue": float(np.mean(queue_values)) if queue_values else 0.0,
             "resco_max_queue": float(np.max(max_queue_values)) if max_queue_values else 0.0,
+            "resco_queue_mean": float(np.mean(queue_values)) if queue_values else 0.0,
+            "resco_queue_max": float(np.max(max_queue_values)) if max_queue_values else 0.0,
         }
+
+    def _reward_summary(self) -> dict:
+        numeric_rewards = {
+            str(agent_id): float(value)
+            for agent_id, value in (self.episode_agent_reward_totals or {}).items()
+            if isinstance(value, (int, float, np.integer, np.floating)) and np.isfinite(float(value))
+        }
+        if not numeric_rewards:
+            return {}
+
+        reward_values = np.asarray(list(numeric_rewards.values()), dtype=float)
+        summary = {
+            "reward/mean": float(np.mean(reward_values)),
+            "reward/max": float(np.max(reward_values)),
+            "reward/std": float(np.std(reward_values)),
+        }
+        for agent_id, reward_value in numeric_rewards.items():
+            summary[f"reward/agent/{agent_id}"] = reward_value
+        return summary
 
     def _cache_episode_summary(self, summary: dict) -> None:
         episode_index = summary.get("episode/index")
@@ -723,6 +791,7 @@ class SumoEnvironment(gym.Env):
             else:
                 summary["tripinfo/parse_pending"] = 1.0
         summary.update(self._parse_queue_summary())
+        summary.update(self._reward_summary())
         self.last_episode_summary = summary
         self._cache_episode_summary(summary)
         self.last_episode_final_info = last_info

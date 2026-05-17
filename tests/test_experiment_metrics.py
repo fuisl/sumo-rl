@@ -51,6 +51,7 @@ def _summary_env(tmp_path, tripinfo_xml: str):
     env.last_episode_final_info = {}
     env.last_episode_lane_waiting_times = {}
     env.last_lane_waiting_times = {"tls_1": [1.0], "tls_2": [2.0]}
+    env.episode_agent_reward_totals = {"tls_1": 3.0, "tls_2": 5.0}
     env.completed_episode_summaries = []
     return env, tripinfo_path
 
@@ -91,10 +92,22 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
     assert summary["tripinfo/unfinished_count"] == 1.0
     assert summary["tripinfo/avg_delay"] == 12.0
     assert summary["resco_avg_delay"] == 12.0
+    assert summary["resco_delay_mean"] == 12.0
+    assert summary["resco_delay_max"] == 14.0
+    assert summary["resco_delay_std"] == 2.0
     assert summary["resco_trip_time"] == 40.0
+    assert summary["resco_trip_time_mean"] == 40.0
     assert summary["resco_wait"] == 6.0
+    assert summary["resco_wait_mean"] == 6.0
+    assert summary["resco_wait_max"] == 7.0
     assert summary["resco_queue"] == 3.0
+    assert summary["resco_queue_mean"] == 3.0
     assert summary["resco_max_queue"] == 7.0
+    assert summary["resco_queue_max"] == 7.0
+    assert summary["reward/mean"] == 4.0
+    assert summary["reward/max"] == 5.0
+    assert summary["reward/std"] == 1.0
+    assert summary["reward/agent/tls_1"] == 3.0
     assert summary["tripinfo/parse_success"] == 1.0
     assert summary["tripinfo/parse_pending"] == 0.0
     assert env.completed_episode_summaries[-1]["resco_trip_time"] == 40.0

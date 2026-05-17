@@ -11,16 +11,19 @@ from sumo_rl.experiments import rllib_runner
 from sumo_rl.experiments.runner import _log_outputs
 from sumo_rl.experiments.rllib_runner import _build_policy_mapping, _policy_id_for_agent
 from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
+from sumo_rl.agents.ppo.ppo import extract_training_metrics as extract_ppo_training_metrics
+from sumo_rl.agents.sac.sac import extract_training_metrics as extract_sac_training_metrics
 from sumo_rl.agents.rllib_common import (
     apply_standard_evaluation_settings,
-    episode_steps,
     build_training_episode_row,
     completed_training_episodes,
     emit_validation_if_due,
     emit_training_episode_rows,
     emit_training_metrics_by_step,
+    episode_steps,
     should_log_training_episode,
     should_log_training_metrics,
+    trace_mode,
     train_log_freq_steps,
     training_episode_target,
     training_should_stop,
@@ -126,48 +129,66 @@ def test_evaluate_closes_env_before_building_final_summary(monkeypatch, tmp_path
 
 
 def test_training_episode_row_uses_episode_cadence_and_resco_metrics():
-    cfg = SimpleNamespace(logging=SimpleNamespace(train_log_freq_episodes=2, train_log_freq_steps=1, log_freq=1000))
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(train_log_freq_episodes=2, train_log_freq_steps=1, log_freq=1000, trace_mode="training")
+    )
     metrics = {
         "algorithm/kind": "ppo",
         "train/episode_return_mean": 4.5,
+        "train/env_step": 40.0,
         "train/episodes_total": 2.0,
         "train/iteration": 7,
     }
     episode_summary = {
         "episode/index": 2.0,
-        "resco_avg_delay": 12.0,
-        "resco_wait": 7.0,
-        "resco_queue": 3.0,
-        "resco_trip_time": 33.0,
-        "resco_max_queue": 9.0,
-        "resco_avg_delay_std": 1.5,
+        "reward/mean": 4.5,
+        "reward/max": 6.0,
+        "reward/std": 1.5,
+        "reward/agent/tls_1": 3.0,
+        "reward/agent/tls_2": 6.0,
+        "resco_delay_mean": 12.0,
+        "resco_delay_max": 14.0,
+        "resco_delay_std": 1.5,
+        "resco_wait_mean": 7.0,
+        "resco_wait_max": 9.0,
         "resco_wait_std": 0.5,
-        "tripinfo/finished_count": 4.0,
-        "tripinfo/parse_success": 1.0,
+        "resco_queue_mean": 3.0,
+        "resco_queue_max": 9.0,
+        "resco_trip_time_mean": 33.0,
+        "resco_tripinfo_count": 4.0,
+        "system_total_running": 8.0,
     }
 
     assert should_log_training_episode(1, cfg, last_logged_episode=0) is False
     assert should_log_training_episode(2, cfg, last_logged_episode=0) is True
 
-    row = build_training_episode_row(metrics, episode_summary, algorithm_kind="ppo")
+    row = build_training_episode_row(metrics, episode_summary, algorithm_kind="ppo", cfg=cfg)
 
     assert row["train/episode_index"] == 2.0
-    assert row["train/episode_summary_available"] == 1.0
+    assert row["train/env_step"] == 40.0
     assert row["train/reward_mean"] == 4.5
-    assert row["train/episode_reward"] == 4.5
-    assert row["train/resco/avg_delay"] == 12.0
-    assert row["train/resco/wait"] == 7.0
-    assert row["train/resco/queue"] == 3.0
-    assert row["train/resco/trip_time"] == 33.0
-    assert row["train/resco/max_queue"] == 9.0
-    assert row["train/resco/avg_delay_std"] == 1.5
-    assert row["train/resco/wait_std"] == 0.5
-    assert row["train/tripinfo/finished_count"] == 4.0
-    assert row["train/tripinfo/parse_success"] == 1.0
+    assert row["train/reward_max"] == 6.0
+    assert row["train/reward_std"] == 1.5
+    assert row["train/resco_delay_mean"] == 12.0
+    assert row["train/resco_delay_max"] == 14.0
+    assert row["train/resco_delay_std"] == 1.5
+    assert row["train/resco_wait_mean"] == 7.0
+    assert row["train/resco_wait_max"] == 9.0
+    assert row["train/resco_wait_std"] == 0.5
+    assert row["train/resco_queue_mean"] == 3.0
+    assert row["train/resco_queue_max"] == 9.0
+    assert row["train/resco_trip_time_mean"] == 33.0
+    assert row["train/resco_tripinfo_count"] == 4.0
+    assert row["train/efficiency_total_running"] == 8.0
+    assert row["debug/reward/tls_1"] == 3.0
+    assert row["debug/reward/tls_2"] == 6.0
+    assert "debug/episode_return_mean" not in row
 
 
 def test_rllib_training_episode_emission_logs_every_summary_episode():
-    cfg = SimpleNamespace(logging=SimpleNamespace(train_log_freq_episodes=1, train_log_freq_steps=1, log_freq=1000))
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(train_log_freq_episodes=1, train_log_freq_steps=1, log_freq=1000, trace_mode="training")
+    )
     metrics = {
         "algorithm/kind": "ppo",
         "train/episode_return_mean": 4.5,
@@ -179,8 +200,8 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
     last_logged = emit_training_episode_rows(
         metrics,
         [
-            {"episode/index": 1.0, "resco_wait": 5.0},
-            {"episode/index": 2.0, "resco_wait": 6.0},
+            {"episode/index": 1.0, "resco_wait_mean": 5.0},
+            {"episode/index": 2.0, "resco_wait_mean": 6.0},
         ],
         cfg,
         algorithm_kind="ppo",
@@ -190,15 +211,14 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
 
     assert last_logged == 2
     assert [step for step, _ in emitted] == [1, 2]
-    assert emitted[0][1]["train/resco/wait"] == 5.0
-    assert emitted[1][1]["train/resco/wait"] == 6.0
-    assert emitted[0][1]["train/episode_summary_available"] == 1.0
+    assert emitted[0][1]["train/resco_wait_mean"] == 5.0
+    assert emitted[1][1]["train/resco_wait_mean"] == 6.0
 
 
 def test_rllib_training_episode_emission_falls_back_to_completed_episode_counters():
     cfg = SimpleNamespace(
         experiment=SimpleNamespace(episodes=3, episode_seconds=100),
-        logging=SimpleNamespace(train_log_freq_episodes=1, train_log_freq_steps=1, log_freq=1000),
+        logging=SimpleNamespace(train_log_freq_episodes=1, train_log_freq_steps=1, log_freq=1000, trace_mode="training"),
     )
     metrics = {
         "algorithm/kind": "ppo",
@@ -220,8 +240,73 @@ def test_rllib_training_episode_emission_falls_back_to_completed_episode_counter
     assert last_logged == 3
     assert [step for step, _ in emitted] == [1, 2, 3]
     assert [row["train/episode_index"] for _, row in emitted] == [1.0, 2.0, 3.0]
-    assert all(row["train/episode_summary_available"] == 0.0 for _, row in emitted)
-    assert all(row["train/episode_reward"] == 4.5 for _, row in emitted)
+    assert all(row["train/env_step"] == 60.0 for _, row in emitted)
+    assert all("train/reward_mean" not in row for _, row in emitted)
+
+
+def test_trace_mode_defaults_to_training():
+    cfg = SimpleNamespace(logging=SimpleNamespace())
+
+    assert trace_mode(cfg) == "training"
+
+
+def test_debug_trace_mode_moves_internal_metrics_under_debug_namespace():
+    cfg = SimpleNamespace(logging=SimpleNamespace(trace_mode="debug"))
+    metrics = {
+        "train/env_step": 25.0,
+        "train/episodes_total": 2.0,
+        "train/env_steps_sampled": 25.0,
+        "train/episode_return_mean": 4.5,
+        "train/episode_return_min": 3.0,
+        "train/episode_return_max": 6.0,
+        "train/episode_len_mean": 12.0,
+        "train/rllib/training_iteration": 3.0,
+        "train/rllib/time_total_s": 15.0,
+        "train/ppo/learners/default_policy/loss": 1.25,
+        "train/ppo/entropy_mean": 0.33,
+    }
+    episode_summary = {
+        "episode/index": 2.0,
+        "reward/agent/tls_1": 2.0,
+    }
+
+    row = build_training_episode_row(metrics, episode_summary, algorithm_kind="ppo", cfg=cfg)
+
+    assert row["debug/reward/tls_1"] == 2.0
+    assert row["debug/episode_return_mean"] == 4.5
+    assert row["debug/episode_return_min"] == 3.0
+    assert row["debug/episode_return_max"] == 6.0
+    assert row["debug/episode_len_mean"] == 12.0
+    assert row["debug/rllib/training_iteration"] == 3.0
+    assert row["debug/rllib/time_total_s"] == 15.0
+    assert row["debug/ppo/learners/default_policy/loss"] == 1.25
+    assert row["debug/ppo/entropy_mean"] == 0.33
+    assert "train/episode_return_mean" not in row
+
+
+def test_ppo_extract_training_metrics_adds_entropy_mean():
+    metrics = extract_ppo_training_metrics(
+        {
+            "env_runners": {"num_episodes_lifetime": 1.0},
+            "learners": {"default_policy": {"curr_entropy": 0.42, "loss": 1.0}},
+        },
+        iteration=1,
+    )
+
+    assert metrics["train/ppo/entropy_mean"] == 0.42
+
+
+def test_sac_extract_training_metrics_adds_entropy_mean():
+    metrics = extract_sac_training_metrics(
+        {
+            "env_runners": {"num_episodes_lifetime": 1.0},
+            "learners": {"default_policy": {"entropy_mean": 0.18, "critic_loss": 2.0}},
+        },
+        iteration=1,
+        algorithm_kind="sac_builtin",
+    )
+
+    assert metrics["train/sac/entropy_mean"] == 0.18
 
 
 def test_rllib_training_budget_uses_experiment_episodes():
