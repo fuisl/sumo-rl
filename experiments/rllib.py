@@ -1,6 +1,14 @@
 import os
 import sys
 
+import sumo_rl
+import ray
+import sys
+
+print("DEBUG sumo_rl:", sumo_rl.__file__)
+print("DEBUG ray:", ray.__version__)
+print("DEBUG python:", sys.executable)
+
 
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")

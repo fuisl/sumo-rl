@@ -11,7 +11,7 @@ experiment:
   tags: []
   seed: 42
   runs: 1
-  episodes: 1400
+  episodes: 200
   episode_seconds: 3600
   validation_interval_episodes: 5
   validation_interval_steps: null
