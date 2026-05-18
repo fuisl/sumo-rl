@@ -1,0 +1,31 @@
+# @package _global_
+algorithm:
+  kind: frap
+  params:
+    policy_mode: independent
+    lr: 0.001
+    gamma: 0.95
+    grad_clip: 5.0
+    train_batch_size_per_learner: 64
+    num_env_runners: 0
+    num_envs_per_env_runner: 1
+    num_gpus_per_learner: auto
+    ray_num_gpus: auto
+    replay_buffer_type: MultiAgentPrioritizedEpisodeReplayBuffer
+    replay_buffer_capacity: 50000
+    replay_buffer_alpha: 0.6
+    replay_buffer_beta: 0.4
+    num_steps_sampled_before_learning_starts: 1000
+    target_network_update_freq: 500
+    epsilon:
+      - [0, 0.1]
+      - [100000, 0.01]
+    dueling: false
+    double_q: true
+    num_atoms: 1
+    model_config:
+      architecture_tag: frap_phase_competition
+      demand_shape: 2
+      demand_layout: split
+      observation_has_phase: true
+      observation_has_min_green: true

@@ -185,7 +185,7 @@ This is the simplest path.
 
 Use this path as the easiest reference when learning the codebase.
 
-### DQN and PPO through RLlib
+### DQN, FRAP, and PPO through RLlib
 
 These methods use the PettingZoo parallel env and then hand it to RLlib as a shared-policy multi-agent environment.
 In the current thesis config, PPO and DQN default to independent policies, so each
@@ -205,6 +205,8 @@ Key files:
 - `sumo_rl/experiments/rllib_runner.py`
 - `sumo_rl/agents/ppo/ppo.py`
 - `sumo_rl/agents/dqn/dqn.py`
+- `sumo_rl/agents/frap/frap.py`
+- `sumo_rl/agents/frap/model.py`
 - `sumo_rl/agents/rllib_common.py`
 
 The algorithm modules log training metrics:
@@ -224,6 +226,20 @@ For thesis-style runs, evaluation should use a reproducible seed schedule rather
 
 The final benchmark row is not created by the callback.
 It is created by the runner after a dedicated final evaluation pass.
+
+### FRAP through RLlib
+
+FRAP is implemented as a DQN-family algorithm under `sumo_rl/agents/frap/`.
+RLlib owns replay, target-network updates, epsilon-greedy exploration, and
+multi-agent policy mapping. The project-owned part is the Q-function: it embeds
+the current phase and movement demand, builds phase-pair embeddings, applies the
+competition mask, and sums pairwise competition scores into one Q-value per
+action.
+
+The default Hydra config is `configs/algorithm/frap.yaml`. If a road network's
+movement order differs from the built-in FRAP defaults, set
+`algorithm.params.model_config.phase_pairs` in the scenario or launch override
+so the phase-pair list matches the observation's lane-demand order.
 
 ### SAC through RLlib
 

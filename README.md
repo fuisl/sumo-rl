@@ -210,13 +210,21 @@ python experiments/fixed_time.py scenario=resco_grid4x4
 python experiments/static_max_pressure.py scenario=resco_cologne1
 ```
 
-### RLlib PPO, DQN, and SAC:
+### RLlib PPO, DQN, FRAP, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
+python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
+
+FRAP is implemented as a DQN-family RLlib module with the phase-competition
+Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
+uses the SUMO-RL observation tail as per-movement demand features
+`[density_i, queue_i]` from the default split observation layout; override
+`algorithm.params.model_config.phase_pairs` when a network needs custom
+movement-pair ordering.
 
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action

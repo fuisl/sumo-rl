@@ -25,6 +25,7 @@ from sumo_rl.experiments.runner import (
     _update_wandb_summary,
 )
 from sumo_rl.agents.dqn import dqn as dqn_agent
+from sumo_rl.agents.frap import frap as frap_agent
 from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.rllib_common import (
     build_rllib_parallel_env,
@@ -38,7 +39,7 @@ from sumo_rl.agents.rllib_common import (
 from sumo_rl.agents.sac import sac as sac_agent
 
 
-SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, *sac_agent.KINDS}
+SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, frap_agent.KIND, *sac_agent.KINDS}
 
 
 def _eval_seeds(cfg: DictConfig) -> list[int]:
@@ -71,6 +72,8 @@ def _algorithm_module(algorithm_kind: str):
         return ppo_agent
     if algorithm_kind == dqn_agent.KIND:
         return dqn_agent
+    if algorithm_kind == frap_agent.KIND:
+        return frap_agent
     if algorithm_kind in sac_agent.KINDS:
         return sac_agent
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
