@@ -37,8 +37,8 @@ The repo logs metrics at four different stages.
 
 The runner uses these namespaces:
 
-- `train/*`: training-trace namespace, including the shared training metrics such as `train/resco_*`, `train/efficiency_*`, and `train/safety_*`
-- `debug/*`: per-agent reward traces and debug-only trainer diagnostics
+- `train/*`: training-trace namespace for shared episode-level metrics such as `train/resco_*`, selected throughput totals, and `train/safety_*`
+- `debug/*`: per-agent reward traces, end-of-episode snapshot diagnostics, and debug-only trainer diagnostics
 - `eval/*`: periodic evaluation traces
 - `summary/*`: run-level aggregate rows, mostly seed averages
 
@@ -94,12 +94,21 @@ The shared training metrics are:
 - `train/resco_queue_mean`
 - `train/resco_queue_max`
 - `train/resco_tripinfo_count`
-- `train/efficiency_*`
+- `train/efficiency_total_arrived`
+- `train/efficiency_total_departed`
 - `train/safety_*`
 - `debug/reward/<agent_id>`
 
 The debug-only training metrics are:
 
+- `debug/efficiency_total_running`
+- `debug/efficiency_total_backlogged`
+- `debug/efficiency_total_stopped`
+- `debug/efficiency_total_queued`
+- `debug/efficiency_total_waiting_time`
+- `debug/efficiency_mean_speed`
+- `debug/efficiency_mean_average_speed`
+- `debug/efficiency_mean_pressure`
 - `debug/rllib/*`
 - `debug/env_steps_sampled`
 - `debug/agent_steps_sampled`
@@ -133,6 +142,8 @@ Removed from the always-on RLlib training trace:
 | `train/reward_std` | algorithm runner | std of per-agent episode reward totals from the completed episode | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
 | `debug/reward/<agent_id>` | algorithm runner | completed-episode reward total for one signal | every `logging.train_log_freq_episodes` completed episodes in both trace modes |
 | `train/resco_*` | algorithm runner | cached completed-episode benchmark summary | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `train/efficiency_total_arrived` / `train/efficiency_total_departed` | algorithm runner | cumulative throughput totals from the completed episode summary | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `debug/efficiency_*` | algorithm runner | final live-system snapshot captured at the end of the completed episode | every `logging.train_log_freq_episodes` completed episodes in both trace modes |
 | `debug/episode_return_*` | RLlib runners | trainer-return summary for the training iteration | debug trace mode only |
 | `debug/ppo/entropy_mean` | PPO runner | trainer-level learner entropy diagnostic when available | debug trace mode only |
 | `debug/sac/entropy_mean` | SAC runner | trainer-level learner entropy diagnostic when available | debug trace mode only |
@@ -187,6 +198,11 @@ For the training trace, the runner remaps the completed-episode summary into:
 
 These `train/*` fields are not recomputed from a separate source.
 They are copied from the cached completed-episode summary that the environment builds at episode end.
+
+Only the episode-facing throughput totals stay in `train/*`.
+The end-of-episode live-state efficiency snapshot fields move to `debug/*`
+because they describe the network at the horizon boundary rather than the
+whole-episode outcome.
 
 ### Entropy diagnostics
 

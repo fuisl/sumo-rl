@@ -212,7 +212,7 @@ The algorithm modules log training metrics:
 - `train/*`
 - training uses `experiment.episodes` as the episode budget
 - training rows use completed training episodes as the W&B/CSV step axis and are emitted every episode by default via `logging.train_log_freq_episodes=1`
-- `train/resco/*` is emitted on the same episode cadence as the rest of the training trace
+- shared `train/*` metrics, `debug/reward/<agent_id>`, and any retained `debug/*` episode-end diagnostics all follow that same episode cadence
 
 The runner keeps validation and benchmark metrics shared:
 

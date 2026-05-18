@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sumo_rl.experiments import rllib_runner
-from sumo_rl.experiments.runner import _log_outputs
+from sumo_rl.experiments.runner import _init_wandb, _log_outputs
 from sumo_rl.experiments.rllib_runner import _build_policy_mapping, _policy_id_for_agent
 from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
 from sumo_rl.agents.ppo.ppo import extract_training_metrics as extract_ppo_training_metrics
@@ -156,7 +156,11 @@ def test_training_episode_row_uses_episode_cadence_and_resco_metrics():
         "resco_queue_max": 9.0,
         "resco_trip_time_mean": 33.0,
         "resco_tripinfo_count": 4.0,
+        "system_total_arrived": 11.0,
+        "system_total_departed": 12.0,
+        "system_total_teleported": 1.0,
         "system_total_running": 8.0,
+        "system_mean_queued": 2.0,
     }
 
     assert should_log_training_episode(1, cfg, last_logged_episode=0) is False
@@ -179,7 +183,12 @@ def test_training_episode_row_uses_episode_cadence_and_resco_metrics():
     assert row["train/resco_queue_max"] == 9.0
     assert row["train/resco_trip_time_mean"] == 33.0
     assert row["train/resco_tripinfo_count"] == 4.0
-    assert row["train/efficiency_total_running"] == 8.0
+    assert row["train/efficiency_total_arrived"] == 11.0
+    assert row["train/efficiency_total_departed"] == 12.0
+    assert row["train/safety_total_teleported"] == 1.0
+    assert "train/efficiency_total_running" not in row
+    assert "train/efficiency_mean_queued" not in row
+    assert row["debug/efficiency_total_running"] == 8.0
     assert row["debug/reward/tls_1"] == 3.0
     assert row["debug/reward/tls_2"] == 6.0
     assert "debug/episode_return_mean" not in row
@@ -268,11 +277,15 @@ def test_debug_trace_mode_moves_internal_metrics_under_debug_namespace():
     episode_summary = {
         "episode/index": 2.0,
         "reward/agent/tls_1": 2.0,
+        "system_total_arrived": 8.0,
+        "system_total_running": 5.0,
     }
 
     row = build_training_episode_row(metrics, episode_summary, algorithm_kind="ppo", cfg=cfg)
 
+    assert row["train/efficiency_total_arrived"] == 8.0
     assert row["debug/reward/tls_1"] == 2.0
+    assert row["debug/efficiency_total_running"] == 5.0
     assert row["debug/episode_return_mean"] == 4.5
     assert row["debug/episode_return_min"] == 3.0
     assert row["debug/episode_return_max"] == 6.0
@@ -524,3 +537,42 @@ def test_log_outputs_lets_wandb_custom_step_axes_control_train_and_validation_st
         ({"train/env_step": 40320.0, "train/episode_index": 62.0}, None),
         ({"validation/env_step": 45360.0, "validation/eval/mean_reward": 1.0}, None),
     ]
+
+
+def test_init_wandb_binds_debug_metrics_to_train_env_step(monkeypatch, tmp_path):
+    class DummyRun:
+        def __init__(self):
+            self.metric_calls = []
+
+        def define_metric(self, *args, **kwargs):
+            self.metric_calls.append((args, kwargs))
+
+    run = DummyRun()
+
+    class DummyWandb:
+        @staticmethod
+        def init(**kwargs):
+            return run
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=True,
+            env_file="",
+            name=None,
+            project=None,
+            entity=None,
+            group=None,
+            tags=[],
+            job_type="train",
+            mode="disabled",
+        ),
+        experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[]),
+    )
+
+    result = _init_wandb(cfg, tmp_path)
+
+    assert result is run
+    assert (("train/*",), {"step_metric": "train/env_step"}) in run.metric_calls
+    assert (("debug/*",), {"step_metric": "train/env_step"}) in run.metric_calls

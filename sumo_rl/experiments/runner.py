@@ -539,6 +539,7 @@ def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = Non
     )
     try:
         run.define_metric("train/*", step_metric="train/env_step")
+        run.define_metric("debug/*", step_metric="train/env_step")
         run.define_metric("train/env_step")
         run.define_metric("validation/*", step_metric="validation/env_step")
         run.define_metric("validation/env_step")
@@ -979,6 +980,8 @@ def _build_final_eval_summary_row(
         "algorithm/kind": algorithm_kind,
         "final/eval/mean_reward": float(eval_mean_reward),
         "final/eval/std_reward": float(eval_std_reward),
+        "eval/mean_reward": float(eval_mean_reward),
+        "eval/std_reward": float(eval_std_reward),
         "episode/sim_time_abs": float(summary.get("episode/sim_time_abs", summary.get("episode/steps", 0.0))),
         "episode/elapsed_seconds": float(summary.get("episode/elapsed_seconds", 0.0)),
     }
@@ -986,28 +989,45 @@ def _build_final_eval_summary_row(
     traffic_metrics, _ = _build_namespaced_metrics(_get_final_info(base_env), include_agent_metrics_local=False)
 
     if _logging_flag(logging_cfg, "log_final_traffic_metrics", True):
-        final_row.update(
-            {
-                "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
-                "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
-                "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
-                "final/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
-                "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
-                "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
-                "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
-                "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
-                "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
-                "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
-                "tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
-                "tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
-                "final/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
-                "final/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
-                "final/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
-                "final/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
-                "final/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
-                "final/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
-            }
-        )
+        eval_traffic_row = {
+            "eval/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
+            "eval/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
+            "eval/resco/wait": float(summary.get("resco_wait", float("nan"))),
+            "eval/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
+            "eval/resco/queue": float(summary.get("resco_queue", float("nan"))),
+            "eval/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
+            "eval/tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
+            "eval/tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
+            "eval/tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
+            "eval/tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
+            "eval/tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
+            "eval/tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
+            "eval/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
+            "eval/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
+            "eval/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
+            "eval/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
+            "eval/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
+            "eval/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
+            "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
+            "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
+            "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
+            "final/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
+            "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
+            "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
+            "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
+            "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
+            "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
+            "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
+            "tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
+            "tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
+            "final/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
+            "final/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
+            "final/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
+            "final/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
+            "final/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
+            "final/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
+        }
+        final_row.update(eval_traffic_row)
 
     final_row["final/reward/name"] = reward_metadata["reward/name"]
     final_row["final/reward/formula"] = reward_metadata["reward/formula"]

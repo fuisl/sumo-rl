@@ -709,6 +709,26 @@ def _summary_value(summary: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
+TRAIN_SYSTEM_METRIC_KEYS = {
+    "efficiency_total_arrived",
+    "efficiency_total_departed",
+    "safety_total_teleported",
+    "safety_total_emergency_brake",
+    "safety_total_collisions",
+}
+
+DEBUG_SYSTEM_METRIC_KEYS = {
+    "efficiency_total_running",
+    "efficiency_total_backlogged",
+    "efficiency_total_stopped",
+    "efficiency_total_queued",
+    "efficiency_total_waiting_time",
+    "efficiency_mean_speed",
+    "efficiency_mean_average_speed",
+    "efficiency_mean_pressure",
+}
+
+
 def _append_common_training_metrics(row: Dict[str, Any], episode_summary: Dict[str, Any]) -> None:
     reward_key_map = {
         "train/reward_mean": "reward/mean",
@@ -737,7 +757,10 @@ def _append_common_training_metrics(row: Dict[str, Any], episode_summary: Dict[s
         {key: value for key, value in episode_summary.items() if key.startswith("system_")}
     )
     for key, value in namespaced_metrics.items():
-        _copy_numeric_metric(row, f"train/{key}", value)
+        if key in TRAIN_SYSTEM_METRIC_KEYS:
+            _copy_numeric_metric(row, f"train/{key}", value)
+        elif key in DEBUG_SYSTEM_METRIC_KEYS:
+            _copy_numeric_metric(row, f"debug/{key}", value)
 
     for key, value in episode_summary.items():
         if key.startswith("reward/agent/"):

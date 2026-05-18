@@ -259,9 +259,15 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
 
     assert row["algorithm/kind"] == "static_max_pressure"
     assert row["final/eval/mean_reward"] == 1.5
+    assert row["eval/mean_reward"] == 1.5
+    assert row["eval/std_reward"] == 0.25
     assert row["final/resco/avg_delay"] == 12.0
     assert row["final/resco/avg_delay_std"] == 1.25
     assert row["final/resco/wait_std"] == 0.5
+    assert row["eval/resco/avg_delay"] == 12.0
+    assert row["eval/resco/avg_delay_std"] == 1.25
+    assert row["eval/safety/total_emergency_brake"] == 2.0
+    assert row["eval/safety/total_collisions"] == 1.0
     assert row["final/efficiency/total_arrived"] == 8.0
     assert row["final/efficiency/total_departed"] == 6.0
     assert row["final/efficiency/total_running"] == 10.0
