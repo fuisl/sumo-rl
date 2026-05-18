@@ -29,8 +29,9 @@ Hydra is used as the experiment composition layer.
   - `resco_trip_time` from SUMO tripinfo `duration`
   - `resco_wait` from SUMO tripinfo `waitingTime`
   - `resco_queue` and `resco_max_queue` from the live queue metrics
-  - `efficiency_*` for queue, speed, waiting-time, and throughput aggregates
+  - `efficiency_*` for queue, speed, waiting-time, and throughput diagnostics in episode summaries and eval/final outputs
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
+  - the RLlib training trace keeps only the episode-facing throughput totals in `train/*`; the end-of-episode live snapshot diagnostics stay under `debug/*`
   - tripinfo XML is generated to compute metrics and deleted by default; set `logging.save_tripinfo_output=true` to keep the raw XML files under `outputs/<experiment-name>/<timestamp>/tripinfo/`
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup

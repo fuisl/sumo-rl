@@ -21,7 +21,7 @@ from sumo_rl.agents.rllib_common import (
     extract_entropy_mean,
     flatten_numeric_metrics,
     plain_dict,
-    rllib_counter_metrics,
+    extract_rllib_result_metrics,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
@@ -119,7 +119,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
 
 
 def extract_training_metrics(result: Dict[str, Any], iteration: int, *, algorithm_kind: str) -> Dict[str, Any]:
-    metrics = rllib_counter_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
+    metrics = extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
         flatten_numeric_metrics(learner_metrics, prefix="train/sac/learners", out=metrics)

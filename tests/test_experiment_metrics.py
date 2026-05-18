@@ -4,12 +4,12 @@ from pathlib import Path
 import types
 
 import numpy as np
-from sumo_rl.environment.env import SumoEnvironment
-
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from sumo_rl.environment.env import SumoEnvironment
 
 _MODULE_PATH = ROOT / "sumo_rl" / "experiments" / "metric_utils.py"
 _SPEC = importlib.util.spec_from_file_location("metric_utils", _MODULE_PATH)
@@ -23,8 +23,8 @@ assert _RUNNER_SPEC is not None and _RUNNER_SPEC.loader is not None
 _RUNNER_MODULE = importlib.util.module_from_spec(_RUNNER_SPEC)
 _RUNNER_SPEC.loader.exec_module(_RUNNER_MODULE)
 
-_build_namespaced_metrics = _MODULE.build_namespaced_metrics
-_build_resco_summary_row = _RUNNER_MODULE._build_resco_summary_row
+_map_system_metrics_to_namespaces = _MODULE.map_system_metrics_to_namespaces
+_build_episode_benchmark_summary_row = _RUNNER_MODULE._build_episode_benchmark_summary_row
 _build_final_eval_summary_row = _RUNNER_MODULE._build_final_eval_summary_row
 
 
@@ -65,7 +65,7 @@ def test_namespaced_metrics_split_efficiency_and_safety() -> None:
         "system_total_collisions": 2,
     }
 
-    metrics = _build_namespaced_metrics(info)
+    metrics = _map_system_metrics_to_namespaces(info)
 
     assert metrics["efficiency_mean_speed"] == 8.5
     assert metrics["safety_total_emergency_brake"] == 3.0
@@ -181,7 +181,9 @@ def test_resco_summary_row_uses_standard_static_metric_names() -> None:
         def finalize_episode_summary(self):
             return dict(self.last_episode_summary)
 
-    row = _build_resco_summary_row(DummyBaseEnv(), extra={"algorithm/kind": "fixed_time", "static/policy": "fixed_time"})
+    row = _build_episode_benchmark_summary_row(
+        DummyBaseEnv(), extra={"algorithm/kind": "fixed_time", "static/policy": "fixed_time"}
+    )
 
     assert row["algorithm/kind"] == "fixed_time"
     assert row["static/policy"] == "fixed_time"

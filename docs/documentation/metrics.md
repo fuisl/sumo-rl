@@ -30,7 +30,7 @@ The repo logs metrics at four different stages.
 | --- | --- | --- | --- |
 | Live env step | `SumoEnvironment._compute_info()` | `info["step"]` in SUMO seconds | `system_*`, optional per-agent waiting-time fields |
 | Training trace | algorithm runner | training timesteps or episode boundary | shared `train/*` metrics plus optional `debug/*` diagnostics |
-| Episode summary | `runner._build_resco_summary_row(...)` | final episode step or final training timestep | `resco_*`, `efficiency_*`, `safety_*`, reward metadata |
+| Episode summary | `runner._build_episode_benchmark_summary_row(...)` | final episode step or final training timestep | `resco_*`, `efficiency_*`, `safety_*`, reward metadata |
 | Run summary | runner aggregate helpers plus `wandb.run.summary` | final run write | `summary/*` seed averages for multi-run methods and pinned final W&B summary values |
 
 ## Namespaces

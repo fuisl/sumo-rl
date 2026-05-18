@@ -160,7 +160,7 @@ At episode end, `finalize_episode_summary()` builds the benchmark summary from:
 
 The runner then converts that cached episode state into the final summary row with:
 
-- `_build_resco_summary_row(...)`
+- `_build_episode_benchmark_summary_row(...)`
 
 ### W&B and CSV
 
@@ -314,7 +314,7 @@ Use this recipe if the library can already consume a Gym, VecEnv, or PettingZoo-
 4. Add an algorithm module under `sumo_rl/agents/<algorithm>/`.
 5. Keep algorithm-specific training metrics inside that module.
 6. Register the module in `sumo_rl/experiments/rllib_runner.py` if it is an RLlib method.
-7. Reuse `_build_resco_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
+7. Reuse `_build_episode_benchmark_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
 8. Make sure the method logs final summaries from the completed episode cache, not from the post-reset env state.
 9. Add the launcher script.
 10. Add the algorithm config.

@@ -612,7 +612,6 @@ class SumoEnvironment(gym.Env):
             "resco_wait_std": nan,
             "resco_wait_mean": nan,
             "resco_wait_max": nan,
-            "resco_wait_std": nan,
             "resco_tripinfo_count": 0.0,
             "tripinfo/parse_success": 0.0,
             "tripinfo/parse_pending": 0.0,
@@ -691,13 +690,12 @@ class SumoEnvironment(gym.Env):
             "resco_wait_std": std_wait,
             "resco_wait_mean": avg_wait,
             "resco_wait_max": max_wait,
-            "resco_wait_std": std_wait,
             "resco_tripinfo_count": float(finished_count),
             "tripinfo/parse_success": 1.0,
             "tripinfo/parse_pending": 0.0,
         }
 
-    def _parse_queue_summary(self) -> dict:
+    def _build_resco_queue_summary(self) -> dict:
         if not self.metrics:
             return {"resco_queue": 0.0, "resco_max_queue": 0.0}
 
@@ -721,7 +719,9 @@ class SumoEnvironment(gym.Env):
             "resco_queue_max": float(np.max(max_queue_values)) if max_queue_values else 0.0,
         }
 
-    def _reward_summary(self) -> dict:
+    def _build_episode_reward_summary(self) -> dict:
+        """Aggregate per-agent episode reward totals into the shared training trace."""
+
         numeric_rewards = {
             str(agent_id): float(value)
             for agent_id, value in (self.episode_agent_reward_totals or {}).items()
@@ -790,8 +790,13 @@ class SumoEnvironment(gym.Env):
                         pass
             else:
                 summary["tripinfo/parse_pending"] = 1.0
-        summary.update(self._parse_queue_summary())
-        summary.update(self._reward_summary())
+        # Queue metrics summarize the whole episode from `self.metrics`, while
+        # the raw `system_*` values copied above are only the final live
+        # snapshot. Keeping both here lets the training row split them into
+        # episode-level `train/*` metrics and end-of-episode `debug/*`
+        # diagnostics without recomputing formulas in the runner.
+        summary.update(self._build_resco_queue_summary())
+        summary.update(self._build_episode_reward_summary())
         self.last_episode_summary = summary
         self._cache_episode_summary(summary)
         self.last_episode_final_info = last_info

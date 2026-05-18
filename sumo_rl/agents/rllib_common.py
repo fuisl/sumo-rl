@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
-from sumo_rl.experiments.metric_utils import build_namespaced_metrics
+from sumo_rl.experiments.metric_utils import map_system_metrics_to_namespaces
 from sumo_rl.experiments.runner import _prepare_env_kwargs, _resolve_num_gpus
 
 
@@ -607,7 +607,9 @@ def emit_training_metrics_by_step(
     return logged_step
 
 
-def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
+def extract_rllib_result_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
+    """Collect raw RLlib iteration outputs before the trace-mode namespace split."""
+
     metrics: Dict[str, Any] = {
         "algorithm/kind": algorithm_kind,
         "train/iteration": iteration,
@@ -709,7 +711,7 @@ def _summary_value(summary: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
-TRAIN_SYSTEM_METRIC_KEYS = {
+TRAIN_EPISODE_SYSTEM_METRIC_KEYS = {
     "efficiency_total_arrived",
     "efficiency_total_departed",
     "safety_total_teleported",
@@ -717,7 +719,7 @@ TRAIN_SYSTEM_METRIC_KEYS = {
     "safety_total_collisions",
 }
 
-DEBUG_SYSTEM_METRIC_KEYS = {
+DEBUG_EPISODE_END_SYSTEM_METRIC_KEYS = {
     "efficiency_total_running",
     "efficiency_total_backlogged",
     "efficiency_total_stopped",
@@ -753,13 +755,17 @@ def _append_common_training_metrics(row: Dict[str, Any], episode_summary: Dict[s
     for row_key, summary_keys in resco_key_map.items():
         _copy_numeric_metric(row, row_key, _summary_value(episode_summary, *summary_keys))
 
-    namespaced_metrics = build_namespaced_metrics(
+    # The cached episode summary mixes true episode aggregates (for example
+    # RESCO delay/wait/queue) with the final live `system_*` snapshot. Keep
+    # only episode-facing totals in `train/*` and move the final snapshot
+    # diagnostics into `debug/*` so the training namespace stays comparable.
+    namespaced_metrics = map_system_metrics_to_namespaces(
         {key: value for key, value in episode_summary.items() if key.startswith("system_")}
     )
     for key, value in namespaced_metrics.items():
-        if key in TRAIN_SYSTEM_METRIC_KEYS:
+        if key in TRAIN_EPISODE_SYSTEM_METRIC_KEYS:
             _copy_numeric_metric(row, f"train/{key}", value)
-        elif key in DEBUG_SYSTEM_METRIC_KEYS:
+        elif key in DEBUG_EPISODE_END_SYSTEM_METRIC_KEYS:
             _copy_numeric_metric(row, f"debug/{key}", value)
 
     for key, value in episode_summary.items():
