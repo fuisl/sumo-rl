@@ -229,6 +229,10 @@ movement-pair ordering.
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
 adapter anymore.
+Use `algorithm=sac_builtin` as the reference RLlib baseline. Use
+`algorithm=sac_custom` when you want to expose and modify the SAC RLModule
+architecture through `algorithm.params.model_config`, including actor, twin
+critic, and future message-passing/GAT hook settings.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash

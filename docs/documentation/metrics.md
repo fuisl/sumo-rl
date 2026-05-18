@@ -29,18 +29,16 @@ The repo logs metrics at four different stages.
 | Stage | Producer | Step axis | Main payload |
 | --- | --- | --- | --- |
 | Live env step | `SumoEnvironment._compute_info()` | `info["step"]` in SUMO seconds | `system_*`, optional per-agent waiting-time fields |
-| Training trace | algorithm runner | training timesteps or episode boundary | `train/*`, `eval/*`, per-episode summaries |
-| Episode summary | `runner._build_resco_summary_row(...)` | final episode step or final training timestep | `resco_*`, `efficiency_*`, `safety_*`, reward metadata |
+| Training trace | algorithm runner | training timesteps or episode boundary | shared `train/*` metrics plus optional `debug/*` diagnostics |
+| Episode summary | `runner._build_episode_benchmark_summary_row(...)` | final episode step or final training timestep | `resco_*`, `efficiency_*`, `safety_*`, reward metadata |
 | Run summary | runner aggregate helpers plus `wandb.run.summary` | final run write | `summary/*` seed averages for multi-run methods and pinned final W&B summary values |
 
 ## Namespaces
 
 The runner uses these namespaces:
 
-- `resco/*`: benchmark-style episode summary
-- `efficiency/*`: network flow and throughput diagnostics
-- `safety/*`: safety and instability proxies
-- `train/*`: training traces
+- `train/*`: training-trace namespace for shared episode-level metrics such as `train/resco_*`, selected throughput totals, and `train/safety_*`
+- `debug/*`: per-agent reward traces, end-of-episode snapshot diagnostics, and debug-only trainer diagnostics
 - `eval/*`: periodic evaluation traces
 - `summary/*`: run-level aggregate rows, mostly seed averages
 
@@ -69,13 +67,86 @@ The runner also logs reward metadata in the final episode summary:
 | `pressure` | `TrafficSignal.get_pressure()` | outgoing vehicle count minus incoming vehicle count | Diagnostic reward with implementation-specific sign |
 | `co2` | `-TrafficSignal.get_total_co2()` | SUMO CO2 emissions on incoming lanes | Higher is better because emissions are negated |
 
+## Trace Modes
+
+Training trace logging is controlled by `logging.trace_mode`.
+The default is `training`.
+
+| Mode | Always logged | Extra logged | Main intent |
+| --- | --- | --- | --- |
+| `training` | shared `train/*` metrics and `debug/reward/<agent_id>` | none | keep the thesis-facing training trace compact |
+| `debug` | the same shared metrics and `debug/reward/<agent_id>` | trainer diagnostics under `debug/*` | inspect learning dynamics and RLlib internals |
+
+The shared training metrics are:
+
+- `train/episode_index`
+- `train/env_step`
+- `train/reward_mean`
+- `train/reward_max`
+- `train/reward_std`
+- `train/resco_delay_mean`
+- `train/resco_delay_max`
+- `train/resco_delay_std`
+- `train/resco_wait_mean`
+- `train/resco_wait_max`
+- `train/resco_wait_std`
+- `train/resco_trip_time_mean`
+- `train/resco_queue_mean`
+- `train/resco_queue_max`
+- `train/resco_tripinfo_count`
+- `train/efficiency_total_arrived`
+- `train/efficiency_total_departed`
+- `train/safety_*`
+- `debug/reward/<agent_id>`
+
+The debug-only training metrics are:
+
+- `debug/efficiency_total_running`
+- `debug/efficiency_total_backlogged`
+- `debug/efficiency_total_stopped`
+- `debug/efficiency_total_queued`
+- `debug/efficiency_total_waiting_time`
+- `debug/efficiency_mean_speed`
+- `debug/efficiency_mean_average_speed`
+- `debug/efficiency_mean_pressure`
+- `debug/rllib/*`
+- `debug/env_steps_sampled`
+- `debug/agent_steps_sampled`
+- `debug/episodes_total`
+- `debug/episode_return_mean`
+- `debug/episode_return_min`
+- `debug/episode_return_max`
+- `debug/episode_len_mean`
+- `debug/ppo/learners/*`
+- `debug/dqn/learners/*`
+- `debug/dqn/replay/*`
+- `debug/sac/learners/*`
+- `debug/sac/replay/*`
+- `debug/ppo/entropy_mean`
+- `debug/sac/entropy_mean`
+- `debug/td_error_mean`
+- `debug/td_error_abs_mean`
+
+Removed from the always-on RLlib training trace:
+
+- `train/episode_summary_available`
+- `train/episode_reward`
+- trainer-return aliases under `train/*`
+
 ### Training reward traces
 
 | Metric | Producer | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `train/reward_mean` | algorithm runner | latest reward batch from the trainer result | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
-| `train/episode_reward` | algorithm runner | latest episode return snapshot from the trainer result | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
-| `train/resco/*` | algorithm runner | cached RESCO episode summary from the completed training episode | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `train/reward_mean` | algorithm runner | mean of per-agent episode reward totals from the completed episode | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `train/reward_max` | algorithm runner | max of per-agent episode reward totals from the completed episode | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `train/reward_std` | algorithm runner | std of per-agent episode reward totals from the completed episode | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `debug/reward/<agent_id>` | algorithm runner | completed-episode reward total for one signal | every `logging.train_log_freq_episodes` completed episodes in both trace modes |
+| `train/resco_*` | algorithm runner | cached completed-episode benchmark summary | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `train/efficiency_total_arrived` / `train/efficiency_total_departed` | algorithm runner | cumulative throughput totals from the completed episode summary | every `logging.train_log_freq_episodes` completed episodes; default is every episode |
+| `debug/efficiency_*` | algorithm runner | final live-system snapshot captured at the end of the completed episode | every `logging.train_log_freq_episodes` completed episodes in both trace modes |
+| `debug/episode_return_*` | RLlib runners | trainer-return summary for the training iteration | debug trace mode only |
+| `debug/ppo/entropy_mean` | PPO runner | trainer-level learner entropy diagnostic when available | debug trace mode only |
+| `debug/sac/entropy_mean` | SAC runner | trainer-level learner entropy diagnostic when available | debug trace mode only |
 | `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
 | `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
 
@@ -96,17 +167,63 @@ These are the main thesis comparison metrics.
 | Metric | Formula | Inputs | Logged when |
 | --- | --- | --- | --- |
 | `resco_avg_delay` | `mean(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_delay_mean` | same value as `resco_avg_delay` | SUMO tripinfo XML | episode summary and training trace |
+| `resco_delay_max` | `max(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
+| `resco_delay_std` | std of `timeLoss + departDelay` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_trip_time` | `mean(duration)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_trip_time_mean` | same value as `resco_trip_time` | SUMO tripinfo XML | episode summary and training trace |
 | `resco_wait` | `mean(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_wait_mean` | same value as `resco_wait` | SUMO tripinfo XML | episode summary and training trace |
+| `resco_wait_max` | `max(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
+| `resco_wait_std` | std of `waitingTime` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_tripinfo_count` | count of completed non-ghost tripinfo rows | SUMO tripinfo XML | episode summary |
 | `resco_queue` | mean of recorded queue-per-signal values across the episode | `system_mean_queued`, else `system_total_queued / num_signals`, else `system_total_stopped / num_signals` | episode summary |
 | `resco_max_queue` | max recorded queue-per-signal value across the episode | `system_max_queue` from live step info | episode summary |
+| `resco_queue_mean` | same value as `resco_queue` | live queue metrics | episode summary and training trace |
+| `resco_queue_max` | same value as `resco_max_queue` | live queue metrics | episode summary and training trace |
 
 Interpretation:
 
 - lower is better for delay, trip time, wait, and queue
 - `resco_queue` is an episode average
 - `resco_max_queue` is a worst-case episode peak
+
+For the training trace, the runner remaps the completed-episode summary into:
+
+- `train/resco_delay_mean|max|std`
+- `train/resco_wait_mean|max|std`
+- `train/resco_trip_time_mean`
+- `train/resco_queue_mean|max`
+- `train/resco_tripinfo_count`
+
+These `train/*` fields are not recomputed from a separate source.
+They are copied from the cached completed-episode summary that the environment builds at episode end.
+
+Only the episode-facing throughput totals stay in `train/*`.
+The end-of-episode live-state efficiency snapshot fields move to `debug/*`
+because they describe the network at the horizon boundary rather than the
+whole-episode outcome.
+
+### Entropy diagnostics
+
+Entropy is logged only for PPO and SAC, and only in `debug` mode.
+
+The runner does not compute entropy itself from action probabilities.
+Instead, it searches the RLlib learner metrics for numeric fields whose key path contains `entropy`,
+while skipping control/configuration fields such as `target_entropy`, `entropy_coeff`, and `curr_kl_coeff`.
+
+When multiple entropy-like fields are present, the code prefers them in this order:
+
+1. keys ending with `entropy_mean`
+2. keys ending with `curr_entropy`
+3. any other entropy-like numeric field
+
+The selected value is then logged as:
+
+- `debug/ppo/entropy_mean`
+- `debug/sac/entropy_mean`
+
+This keeps entropy as a debug diagnostic instead of treating it as a benchmark metric.
 
 ### Efficiency and safety metrics
 

@@ -23,13 +23,15 @@ Hydra is used as the experiment composition layer.
 - A local metrics CSV is written to `outputs/<experiment-name>/<timestamp>/logs/metrics.csv` for quick debugging
 - Episode horizon is configured in seconds with `experiment.episode_seconds`. If you need the decision-step horizon, divide by `delta_time`; for example, `3600` seconds with `delta_time=5` is about `720` steps.
 - RLlib validation is episode-based by default with `experiment.validation_interval_episodes=5`; `logging.eval_freq` is only the step-based fallback when the episode interval is unset.
+- Training trace logging defaults to `logging.trace_mode=training`; switch to `logging.trace_mode=debug` to add RLlib learner, replay, return, and entropy diagnostics under `debug/*`.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
   - `resco_avg_delay` from SUMO tripinfo `timeLoss`
   - `resco_trip_time` from SUMO tripinfo `duration`
   - `resco_wait` from SUMO tripinfo `waitingTime`
   - `resco_queue` and `resco_max_queue` from the live queue metrics
-  - `efficiency_*` for queue, speed, waiting-time, and throughput aggregates
+  - `efficiency_*` for queue, speed, waiting-time, and throughput diagnostics in episode summaries and eval/final outputs
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
+  - the RLlib training trace keeps only the episode-facing throughput totals in `train/*`; the end-of-episode live snapshot diagnostics stay under `debug/*`
   - tripinfo XML is generated to compute metrics and deleted by default; set `logging.save_tripinfo_output=true` to keep the raw XML files under `outputs/<experiment-name>/<timestamp>/tripinfo/`
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup
@@ -70,6 +72,13 @@ the built-in/custom SAC paths train directly on those discrete policies.
 That means there is no project-side joint Box action adapter in the current SAC
 path. If SAC fails, the issue is in the RLlib discrete SAC path or the env/policy
 setup, not in a custom continuous-action wrapper.
+
+`sac_builtin` should be treated as the reference RLlib SAC baseline.
+`sac_custom` uses the same trainer and replay setup, but replaces the RLModule
+boundary with project-owned actor, twin-critic, and communication hook points.
+Use `configs/algorithm/sac_custom.yaml` or command-line overrides under
+`algorithm.params.model_config` to change actor/critic MLP sizes or enable
+placeholder message-passing metadata for later GAT experiments.
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.

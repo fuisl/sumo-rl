@@ -14,8 +14,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from sumo_rl.experiments.metric_utils import (
     add_namespace_aliases as _metric_add_namespace_aliases,
-    build_namespaced_metrics as _metric_build_namespaced_metrics,
     keep_namespaced_metrics as _metric_keep_namespaced_metrics,
+    map_system_metrics_to_namespaces as _metric_map_system_metrics_to_namespaces,
     reward_formula_text as _metric_reward_formula_text,
 )
 
@@ -539,6 +539,7 @@ def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = Non
     )
     try:
         run.define_metric("train/*", step_metric="train/env_step")
+        run.define_metric("debug/*", step_metric="train/env_step")
         run.define_metric("train/env_step")
         run.define_metric("validation/*", step_metric="validation/env_step")
         run.define_metric("validation/env_step")
@@ -642,39 +643,6 @@ def _reward_metadata_from_env(env) -> Dict[str, Any]:
         "reward/source": "sumo_rl.environment.traffic_signal.TrafficSignal.compute_reward",
         "reward/scope": "per-agent environment reward",
     }
-
-
-def _prefix_metric_keys(metrics: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-    return {f"{prefix}{key}": value for key, value in metrics.items()}
-
-
-def _add_namespace_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
-    return _metric_add_namespace_aliases(row)
-
-
-def _build_namespaced_metrics(info: Any, include_agent_metrics_local: bool = False) -> tuple[Dict[str, float], Dict[str, float]]:
-    del include_agent_metrics_local
-    return _metric_build_namespaced_metrics(info), {}
-
-
-def _log_resco_metrics(
-    wandb_run,
-    csv_run,
-    shared_metrics: Dict[str, Any],
-    info: Any,
-    step: Optional[int] = None,
-    include_agent_metrics_local: bool = False,
-) -> None:
-    del include_agent_metrics_local
-    namespaced_metrics, _ = _build_namespaced_metrics(info)
-    wandb_metrics = dict(shared_metrics)
-    wandb_metrics.update(namespaced_metrics)
-    csv_metrics = dict(wandb_metrics)
-
-    if wandb_run is not None:
-        wandb_run.log(wandb_metrics, step=step)
-    if csv_run is not None:
-        csv_run.log(csv_metrics, step=step)
 
 
 def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
@@ -944,7 +912,9 @@ def _build_episode_summary_row(
     return row
 
 
-def _build_resco_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _build_episode_benchmark_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Build one episode-end benchmark row for CSV/W&B summary style outputs."""
+
     base_env = _get_base_env(env)
     summary = _get_completed_episode_summary(base_env)
     row = {
@@ -954,8 +924,11 @@ def _build_resco_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dic
         or key.startswith("tripinfo/")
         or key in {"sim_step", "episode/index", "episode/steps", "episode/sim_time_abs", "episode/elapsed_seconds"}
     }
-    namespaced_metrics, _ = _build_namespaced_metrics(_get_final_info(env), include_agent_metrics_local=False)
-    row.update(namespaced_metrics)
+    # The cached summary already contains episode-wide RESCO values. Pull the
+    # final `system_*` snapshot separately here so the benchmark row keeps the
+    # same efficiency/safety fields as evaluation and final summaries.
+    system_namespace_metrics = _metric_map_system_metrics_to_namespaces(_get_final_info(env))
+    row.update(system_namespace_metrics)
     row.update(_reward_metadata_from_env(base_env))
     if extra:
         row.update(extra)
@@ -979,35 +952,54 @@ def _build_final_eval_summary_row(
         "algorithm/kind": algorithm_kind,
         "final/eval/mean_reward": float(eval_mean_reward),
         "final/eval/std_reward": float(eval_std_reward),
+        "eval/mean_reward": float(eval_mean_reward),
+        "eval/std_reward": float(eval_std_reward),
         "episode/sim_time_abs": float(summary.get("episode/sim_time_abs", summary.get("episode/steps", 0.0))),
         "episode/elapsed_seconds": float(summary.get("episode/elapsed_seconds", 0.0)),
     }
     reward_metadata = _reward_metadata_from_env(base_env)
-    traffic_metrics, _ = _build_namespaced_metrics(_get_final_info(base_env), include_agent_metrics_local=False)
+    traffic_metrics = _metric_map_system_metrics_to_namespaces(_get_final_info(base_env))
 
     if _logging_flag(logging_cfg, "log_final_traffic_metrics", True):
-        final_row.update(
-            {
-                "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
-                "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
-                "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
-                "final/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
-                "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
-                "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
-                "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
-                "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
-                "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
-                "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
-                "tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
-                "tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
-                "final/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
-                "final/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
-                "final/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
-                "final/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
-                "final/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
-                "final/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
-            }
-        )
+        eval_traffic_row = {
+            "eval/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
+            "eval/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
+            "eval/resco/wait": float(summary.get("resco_wait", float("nan"))),
+            "eval/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
+            "eval/resco/queue": float(summary.get("resco_queue", float("nan"))),
+            "eval/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
+            "eval/tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
+            "eval/tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
+            "eval/tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
+            "eval/tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
+            "eval/tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
+            "eval/tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
+            "eval/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
+            "eval/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
+            "eval/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
+            "eval/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
+            "eval/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
+            "eval/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
+            "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
+            "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
+            "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
+            "final/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
+            "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
+            "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
+            "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
+            "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
+            "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
+            "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
+            "tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
+            "tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
+            "final/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
+            "final/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
+            "final/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
+            "final/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
+            "final/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
+            "final/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
+        }
+        final_row.update(eval_traffic_row)
 
     final_row["final/reward/name"] = reward_metadata["reward/name"]
     final_row["final/reward/formula"] = reward_metadata["reward/formula"]
@@ -1212,7 +1204,9 @@ def _run_direct_q_learning(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -
 
             for episode_idx in range(1, total_episodes + 1):
                 if episode_idx > 1:
-                    previous_summary = _build_resco_summary_row(env, extra={"episode/reward": previous_episode_reward})
+                    previous_summary = _build_episode_benchmark_summary_row(
+                        env, extra={"episode/reward": previous_episode_reward}
+                    )
                     previous_summary["train/episode_reward"] = previous_episode_reward
                     previous_summary["train/td_error_mean"] = previous_td_error_mean
                     previous_summary["train/td_error_abs_mean"] = previous_td_error_abs_mean
@@ -1305,7 +1299,9 @@ def _run_aec_q_learning(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> N
 
             for episode_idx in range(1, total_episodes + 1):
                 if episode_idx > 1:
-                    previous_summary = _build_resco_summary_row(env, extra={"episode/reward": previous_episode_reward})
+                    previous_summary = _build_episode_benchmark_summary_row(
+                        env, extra={"episode/reward": previous_episode_reward}
+                    )
                     previous_summary["train/episode_reward"] = previous_episode_reward
                     previous_summary["train/td_error_mean"] = previous_td_error_mean
                     previous_summary["train/td_error_abs_mean"] = previous_td_error_abs_mean
@@ -1419,7 +1415,9 @@ def _run_fixed_time(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
                     last_step = _get_env_step(base_env)
                     final_step = max(final_step, last_step)
                     save_env.close()
-                    episode_summary = _build_resco_summary_row(base_env, extra={"static/policy": "fixed_time"})
+                    episode_summary = _build_episode_benchmark_summary_row(
+                        base_env, extra={"static/policy": "fixed_time"}
+                    )
                     row_step = run_idx
                     _log_episode_summary(
                         wandb_run,
@@ -1495,7 +1493,9 @@ def _run_static_policy(cfg: DictConfig, run_dir: Path, wandb_run, csv_run, polic
                     last_step = _get_env_step(base_env)
                     final_step = max(final_step, last_step)
                     save_env.close()
-                    episode_summary = _build_resco_summary_row(base_env, extra={"static/policy": policy_name})
+                    episode_summary = _build_episode_benchmark_summary_row(
+                        base_env, extra={"static/policy": policy_name}
+                    )
                     row_step = run_idx
                     _log_episode_summary(
                         wandb_run,

@@ -7,6 +7,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import sumo_rl
+import ray
+import sys
+
+print("DEBUG sumo_rl:", sumo_rl.__file__)
+print("DEBUG ray:", ray.__version__)
+print("DEBUG python:", sys.executable)
+
 
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")

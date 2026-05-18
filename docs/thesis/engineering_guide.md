@@ -160,7 +160,7 @@ At episode end, `finalize_episode_summary()` builds the benchmark summary from:
 
 The runner then converts that cached episode state into the final summary row with:
 
-- `_build_resco_summary_row(...)`
+- `_build_episode_benchmark_summary_row(...)`
 
 ### W&B and CSV
 
@@ -214,7 +214,7 @@ The algorithm modules log training metrics:
 - `train/*`
 - training uses `experiment.episodes` as the episode budget
 - training rows use completed training episodes as the W&B/CSV step axis and are emitted every episode by default via `logging.train_log_freq_episodes=1`
-- `train/resco/*` is emitted on the same episode cadence as the rest of the training trace
+- shared `train/*` metrics, `debug/reward/<agent_id>`, and any retained `debug/*` episode-end diagnostics all follow that same episode cadence
 
 The runner keeps validation and benchmark metrics shared:
 
@@ -250,15 +250,22 @@ DQN, and the SAC module owns SAC-specific config and training metrics.
 
 ### Custom SAC module
 
-The custom SAC path uses the same SAC agent folder but swaps in a project-owned
-RLModule boundary on top of the native discrete SAC path.
+`sac_builtin` is the reference RLlib SAC baseline. `sac_custom` keeps the same
+native discrete multi-agent SAC setup, but swaps in project-owned single-agent
+and multi-agent RLModule boundaries.
 
 This is the right place to change:
 
 - the encoder architecture
 - the policy and Q-head layout
-- the training loop cadence in `sumo_rl/agents/sac/sac.py`
-- checkpoint timing and evaluation behavior
+- actor-only or critic-only latent hooks
+- future GAT or message-passing blocks among agents
+
+The custom path is configured through `algorithm.params.model_config` in
+`configs/algorithm/sac_custom.yaml`. Actor and critic MLP sizes, head sizes,
+the `twin_q` setting, and the communication hook metadata are exposed there.
+Training still uses RLlib's SAC learner, replay buffer, target updates, and
+optimizer ownership; the repo only owns the module architecture boundary.
 
 ## Shared Pieces Across Methods
 
@@ -323,7 +330,7 @@ Use this recipe if the library can already consume a Gym, VecEnv, or PettingZoo-
 4. Add an algorithm module under `sumo_rl/agents/<algorithm>/`.
 5. Keep algorithm-specific training metrics inside that module.
 6. Register the module in `sumo_rl/experiments/rllib_runner.py` if it is an RLlib method.
-7. Reuse `_build_resco_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
+7. Reuse `_build_episode_benchmark_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
 8. Make sure the method logs final summaries from the completed episode cache, not from the post-reset env state.
 9. Add the launcher script.
 10. Add the algorithm config.

@@ -5,7 +5,27 @@ from typing import Any, Dict
 import numpy as np
 
 
-def numeric_metrics(data: Any, prefix: str = "") -> Dict[str, float]:
+SYSTEM_METRIC_NAMESPACE_MAP = {
+    "system_total_running": "efficiency_total_running",
+    "system_total_backlogged": "efficiency_total_backlogged",
+    "system_total_stopped": "efficiency_total_stopped",
+    "system_total_queued": "efficiency_total_queued",
+    "system_mean_queued": "efficiency_mean_queued",
+    "system_mean_pressure": "efficiency_mean_pressure",
+    "system_mean_average_speed": "efficiency_mean_average_speed",
+    "system_max_queue": "efficiency_max_queue",
+    "system_total_arrived": "efficiency_total_arrived",
+    "system_total_departed": "efficiency_total_departed",
+    "system_total_teleported": "safety_total_teleported",
+    "system_total_emergency_brake": "safety_total_emergency_brake",
+    "system_total_collisions": "safety_total_collisions",
+    "system_total_waiting_time": "efficiency_total_waiting_time",
+    "system_mean_waiting_time": "efficiency_mean_waiting_time",
+    "system_mean_speed": "efficiency_mean_speed",
+}
+
+
+def flatten_numeric_metric_values(data: Any, prefix: str = "") -> Dict[str, float]:
     metrics: Dict[str, float] = {}
     if isinstance(data, dict):
         for key, value in data.items():
@@ -13,41 +33,21 @@ def numeric_metrics(data: Any, prefix: str = "") -> Dict[str, float]:
             if isinstance(value, (int, float, np.integer, np.floating)):
                 metrics[nested_prefix] = float(value)
             elif isinstance(value, dict):
-                metrics.update(numeric_metrics(value, nested_prefix))
+                metrics.update(flatten_numeric_metric_values(value, nested_prefix))
     return metrics
 
 
-def namespace_system_metrics(info: Any) -> Dict[str, float]:
-    flat_metrics = numeric_metrics(info)
-    namespaced: Dict[str, float] = {}
-    mapping = {
-        "system_total_running": "efficiency_total_running",
-        "system_total_backlogged": "efficiency_total_backlogged",
-        "system_total_stopped": "efficiency_total_stopped",
-        "system_total_queued": "efficiency_total_queued",
-        "system_mean_queued": "efficiency_mean_queued",
-        "system_mean_pressure": "efficiency_mean_pressure",
-        "system_mean_average_speed": "efficiency_mean_average_speed",
-        "system_max_queue": "efficiency_max_queue",
-        "system_total_arrived": "efficiency_total_arrived",
-        "system_total_departed": "efficiency_total_departed",
-        "system_total_teleported": "safety_total_teleported",
-        "system_total_emergency_brake": "safety_total_emergency_brake",
-        "system_total_collisions": "safety_total_collisions",
-        "system_total_waiting_time": "efficiency_total_waiting_time",
-        "system_mean_waiting_time": "efficiency_mean_waiting_time",
-        "system_mean_speed": "efficiency_mean_speed",
-    }
+def map_system_metrics_to_namespaces(info: Any) -> Dict[str, float]:
+    """Map raw `system_*` info fields into the public efficiency/safety namespaces."""
 
-    for source_key, target_key in mapping.items():
+    flat_metrics = flatten_numeric_metric_values(info)
+    namespaced: Dict[str, float] = {}
+
+    for source_key, target_key in SYSTEM_METRIC_NAMESPACE_MAP.items():
         if source_key in flat_metrics:
             namespaced[target_key] = float(flat_metrics[source_key])
 
     return namespaced
-
-
-def build_namespaced_metrics(info: Any) -> Dict[str, float]:
-    return namespace_system_metrics(info)
 
 
 def reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:

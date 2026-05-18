@@ -18,14 +18,19 @@ from sumo_rl.agents.rllib_common import (
     completed_training_episodes,
     emit_training_episode_rows,
     emit_validation_if_due,
+    extract_entropy_mean,
     flatten_numeric_metrics,
     plain_dict,
-    rllib_counter_metrics,
+    extract_rllib_result_metrics,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
 )
-from sumo_rl.agents.sac.custom_sac import build_custom_sac_module_spec
+from sumo_rl.agents.sac.custom_sac import (
+    build_custom_sac_module_spec,
+    build_custom_sac_multi_module_spec,
+    normalize_custom_sac_model_config,
+)
 
 
 BUILTIN_KIND = "sac_builtin"
@@ -56,6 +61,11 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
     params["replay_buffer_config"] = build_replay_buffer_config(params)
+    custom_model_config = params.get("model_config")
+    if algorithm_kind == CUSTOM_KIND:
+        normalized_custom_model_config = normalize_custom_sac_model_config(custom_model_config)
+        custom_model_config = normalized_custom_model_config
+        params.setdefault("twin_q", bool(normalized_custom_model_config.get("twin_q", True)))
     if "num_steps_sampled_before_learning_starts" in params:
         params["num_steps_sampled_before_learning_starts"] = max(
             int(params["num_steps_sampled_before_learning_starts"]),
@@ -90,26 +100,32 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     config = apply_standard_evaluation_settings(config, params)
 
     if algorithm_kind == CUSTOM_KIND:
-        from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
-
         rl_module_specs = {
             policy_id: build_custom_sac_module_spec(
                 policy_spec.observation_space,
                 policy_spec.action_space,
-                model_config=context.params.get("model_config"),
+                model_config=custom_model_config,
             )
             for policy_id, policy_spec in context.active_policies.items()
         }
-        config = config.rl_module(rl_module_spec=MultiRLModuleSpec(rl_module_specs=rl_module_specs))
+        config = config.rl_module(
+            rl_module_spec=build_custom_sac_multi_module_spec(
+                rl_module_specs,
+                model_config=custom_model_config,
+            )
+        )
 
     return config.callbacks(callbacks_class)
 
 
 def extract_training_metrics(result: Dict[str, Any], iteration: int, *, algorithm_kind: str) -> Dict[str, Any]:
-    metrics = rllib_counter_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
+    metrics = extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
         flatten_numeric_metrics(learner_metrics, prefix="train/sac/learners", out=metrics)
+        entropy_mean = extract_entropy_mean(learner_metrics)
+        if entropy_mean is not None:
+            metrics["train/sac/entropy_mean"] = float(entropy_mean)
     replay_metrics = result.get("replay_buffer") or result.get("replay_buffers")
     if isinstance(replay_metrics, dict):
         flatten_numeric_metrics(replay_metrics, prefix="train/sac/replay", out=metrics)
