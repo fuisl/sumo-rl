@@ -1,0 +1,36 @@
+# @package _global_
+algorithm:
+  kind: colight
+  params:
+    policy_mode: shared
+    lr: 0.001
+    gamma: 0.95
+    grad_clip: 5.0
+    train_batch_size_per_learner: 64
+    num_env_runners: 0
+    num_envs_per_env_runner: 1
+    num_gpus_per_learner: auto
+    ray_num_gpus: auto
+    replay_buffer_type: MultiAgentPrioritizedEpisodeReplayBuffer
+    replay_buffer_capacity: 50000
+    replay_buffer_alpha: 0.6
+    replay_buffer_beta: 0.4
+    num_steps_sampled_before_learning_starts: 1000
+    target_network_update_freq: 500
+    epsilon:
+      - [0, 0.8]
+      - [100000, 0.01]
+    dueling: false
+    double_q: true
+    num_atoms: 1
+    model_config:
+      architecture_tag: colight_graph_attention
+      include_phase: true
+      phase_encoding: one_hot
+      vehicle_max: 1.0
+      node_embedding_dims: [128, 128]
+      num_gat_layers: 1
+      num_heads: 5
+      head_dim: 16
+      gat_output_dim: 128
+      output_layers: []

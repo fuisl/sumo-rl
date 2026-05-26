@@ -661,6 +661,12 @@ def extract_rllib_result_metrics(result: Dict[str, Any], *, algorithm_kind: str,
     return metrics
 
 
+def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
+    """Compatibility alias for algorithm modules that only need RLlib counters."""
+
+    return extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
+
+
 def extract_entropy_mean(value: Any) -> Optional[float]:
     candidates: list[tuple[int, float]] = []
 

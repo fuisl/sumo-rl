@@ -24,6 +24,7 @@ from sumo_rl.experiments.runner import (
     _resolve_num_gpus,
     _update_wandb_summary,
 )
+from sumo_rl.agents.colight import colight as colight_agent
 from sumo_rl.agents.dqn import dqn as dqn_agent
 from sumo_rl.agents.frap import frap as frap_agent
 from sumo_rl.agents.ppo import ppo as ppo_agent
@@ -39,7 +40,13 @@ from sumo_rl.agents.rllib_common import (
 from sumo_rl.agents.sac import sac as sac_agent
 
 
-SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, frap_agent.KIND, *sac_agent.KINDS}
+SUPPORTED_RLLIB_ALGORITHMS = {
+    ppo_agent.KIND,
+    dqn_agent.KIND,
+    frap_agent.KIND,
+    colight_agent.KIND,
+    *sac_agent.KINDS,
+}
 
 
 def _eval_seeds(cfg: DictConfig) -> list[int]:
@@ -74,6 +81,8 @@ def _algorithm_module(algorithm_kind: str):
         return dqn_agent
     if algorithm_kind == frap_agent.KIND:
         return frap_agent
+    if algorithm_kind == colight_agent.KIND:
+        return colight_agent
     if algorithm_kind in sac_agent.KINDS:
         return sac_agent
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
@@ -102,7 +111,13 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             import torch
             from ray.rllib.core.columns import Columns
 
-            obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32).unsqueeze(0)
+            if isinstance(obs, dict):
+                obs_batch = {
+                    key: torch.as_tensor(np.asarray(value)).unsqueeze(0)
+                    for key, value in obs.items()
+                }
+            else:
+                obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32).unsqueeze(0)
             with torch.no_grad():
                 output = module.forward_inference({Columns.OBS: obs_batch})
                 if Columns.ACTIONS not in output and Columns.ACTION_DIST_INPUTS in output:
@@ -126,6 +141,19 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
     policy = algo.get_policy(policy_id) if policy_id else algo.get_policy()
     action = policy.compute_single_action(obs, explore=False)
     return action[0] if isinstance(action, tuple) else action
+
+
+def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind: str, policy_mode: str):
+    module = _algorithm_module(algorithm_kind)
+    build_eval_env = getattr(module, "build_eval_env", None)
+    if callable(build_eval_env):
+        return build_eval_env(cfg, run_dir, seed=seed)
+    return build_rllib_parallel_env(
+        cfg,
+        run_dir,
+        seed=seed,
+        pad_spaces=(policy_mode == "shared"),
+    )
 
 
 def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float:
@@ -169,11 +197,12 @@ def _evaluate(
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
         eval_episode = seed_index + 1
-        eval_env = build_rllib_parallel_env(
+        eval_env = _build_eval_env(
             cfg,
             run_dir,
             seed=seed,
-            pad_spaces=(policy_mode == "shared"),
+            algorithm_kind=algorithm_kind,
+            policy_mode=policy_mode,
         )
         try:
             episode_reward = _run_multi_agent_episode(algo, eval_env, seed, policy_mode=policy_mode)

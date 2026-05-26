@@ -52,6 +52,7 @@ python experiments/static_max_pressure.py scenario=resco_cologne1
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
@@ -64,6 +65,11 @@ custom RLModule replaces the Q-network with the paper's phase-competition
 architecture. The default model config consumes SUMO-RL's default observation as
 `[phase_one_hot, min_green, density, queue]` and treats `[density, queue]` as the
 per-movement demand vector by using the split density/queue layout.
+
+CoLight is available as `algorithm=colight`. It uses a shared graph-attention
+Q-network over the whole traffic-signal graph and forces
+`algorithm.params.policy_mode=shared`, because independent policies would remove
+the network-level cooperation that defines CoLight.
 
 SAC now uses RLlib's native discrete-action support. The repo hands each traffic
 signal its own discrete action space through the multi-agent RLlib wrapper, and

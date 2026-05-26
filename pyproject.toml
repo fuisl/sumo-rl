@@ -38,6 +38,7 @@ rllib = [
 rllib-custom = [
    "ray[rllib]>=2.55.0",
    "torch>=2.0",
+   "torch-geometric>=2.5.0",
 ]
 all = [
    "pyvirtualdisplay",
@@ -45,6 +46,7 @@ all = [
    "wandb>=0.17.0",
    "ray[rllib]>=2.55.0",
    "torch>=2.0",
+   "torch-geometric>=2.5.0",
    "supersuit>=3.9.1",
 ]
 testing = ["pytest ==7.1.3"]

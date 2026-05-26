@@ -210,11 +210,12 @@ python experiments/fixed_time.py scenario=resco_grid4x4
 python experiments/static_max_pressure.py scenario=resco_cologne1
 ```
 
-### RLlib PPO, DQN, FRAP, and SAC:
+### RLlib PPO, DQN, FRAP, CoLight, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
@@ -225,6 +226,12 @@ uses the SUMO-RL observation tail as per-movement demand features
 `[density_i, queue_i]` from the default split observation layout; override
 `algorithm.params.model_config.phase_pairs` when a network needs custom
 movement-pair ordering.
+
+CoLight is available as `algorithm=colight`. It is a DQN-family RLlib method
+with one shared graph-attention Q-network over all controlled intersections.
+The wrapper gives each traffic signal the full node-feature graph plus an ego
+index and action mask, so the shared policy remains faithful to the CoLight
+paper's network-level cooperation rather than independent per-agent DQN.
 
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
