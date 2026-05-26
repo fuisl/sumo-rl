@@ -15,6 +15,7 @@ algorithm:
     replay_buffer_capacity: 50000
     replay_buffer_alpha: 0.6
     replay_buffer_beta: 0.4
+    render_topology: true
     num_steps_sampled_before_learning_starts: 1000
     target_network_update_freq: 500
     epsilon:

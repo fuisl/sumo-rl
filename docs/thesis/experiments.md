@@ -70,6 +70,9 @@ CoLight is available as `algorithm=colight`. It uses a shared graph-attention
 Q-network over the whole traffic-signal graph and forces
 `algorithm.params.policy_mode=shared`, because independent policies would remove
 the network-level cooperation that defines CoLight.
+CoLight also writes a SUMO map overlay of its directed topology to
+`topology/colight_topology.svg` plus a machine-readable edge list at
+`topology/colight_topology_edges.json` inside the run directory.
 
 SAC now uses RLlib's native discrete-action support. The repo hands each traffic
 signal its own discrete action space through the multi-agent RLlib wrapper, and

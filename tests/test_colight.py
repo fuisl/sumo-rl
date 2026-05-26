@@ -22,6 +22,7 @@ from sumo_rl.agents.colight import colight
 from sumo_rl.agents.colight.graph_env import CoLightGraphParallelEnv
 from sumo_rl.agents.colight.model import CoLightGATLayer, CoLightQNetwork
 from sumo_rl.agents.colight.rllib_module import build_colight_dqn_module_spec
+from sumo_rl.agents.colight.topology import render_colight_topology
 from sumo_rl.experiments import rllib_runner
 
 
@@ -165,6 +166,33 @@ def test_colight_graph_wrapper_builds_stable_graph_observations_and_masks_action
 
     assert base_env.last_actions["tls_0"] == 3
     assert base_env.last_actions["tls_1"] == 1
+
+
+def test_colight_topology_renderer_writes_svg_and_edge_list(tmp_path):
+    net_file = tmp_path / "tiny.net.xml"
+    net_file.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<net version="1.20">
+    <location netOffset="0.00,0.00" convBoundary="0.00,0.00,100.00,0.00"
+        origBoundary="0.00,0.00,100.00,0.00" projParameter="!"/>
+    <edge id="ab" from="tls_0" to="tls_1" priority="1">
+        <lane id="ab_0" index="0" speed="13.89" length="100.00" shape="0.00,0.00 100.00,0.00"/>
+    </edge>
+    <junction id="tls_0" type="traffic_light" x="0.00" y="0.00" incLanes="" intLanes="" shape="-5,-5 -5,5 5,5 5,-5"/>
+    <junction id="tls_1" type="traffic_light" x="100.00" y="0.00" incLanes="ab_0" intLanes="" shape="95,-5 95,5 105,5 105,-5"/>
+</net>
+""",
+        encoding="utf-8",
+    )
+    env = CoLightGraphParallelEnv(_DummyParallelEnv())
+
+    paths = render_colight_topology(env, str(net_file), tmp_path / "topology")
+
+    svg = paths["svg"].read_text(encoding="utf-8")
+    edge_json = paths["json"].read_text(encoding="utf-8")
+    assert "marker-end" in svg
+    assert "tls_0" in svg
+    assert '"source": "tls_0"' in edge_json
 
 
 def test_colight_module_spec_uses_dict_observation_space():

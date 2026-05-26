@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Optional
 from ray.rllib.policy.policy import PolicySpec
 
 from sumo_rl.agents.colight.graph_env import CoLightGraphParallelEnv, make_colight_observation_class
+from sumo_rl.agents.colight.topology import render_colight_topology
 from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
 from sumo_rl.agents.rllib_common import (
     RllibAlgorithmContext,
@@ -118,6 +119,12 @@ def _build_colight_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> R
             )
             for agent_id in sample_env.possible_agents
         }
+        if bool(params.get("render_topology", True)):
+            env_kwargs = _prepare_env_kwargs(cfg, run_dir)
+            net_file = str(env_kwargs.get("net_file", ""))
+            if net_file:
+                render_paths = render_colight_topology(sample_env, net_file, run_dir / "topology")
+                print(f"[{KIND}] wrote topology overlay to {render_paths['svg']}")
     finally:
         sample_env.close()
 
@@ -262,4 +269,3 @@ def train(
         )
         if is_final:
             break
-
