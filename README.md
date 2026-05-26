@@ -210,13 +210,14 @@ python experiments/fixed_time.py scenario=resco_grid4x4
 python experiments/static_max_pressure.py scenario=resco_cologne1
 ```
 
-### RLlib PPO, DQN, FRAP, and SAC:
+### RLlib PPO, DQN, FRAP, SAC, and FMA2C:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=fma2c scenario=resco_grid4x4
 ```
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition

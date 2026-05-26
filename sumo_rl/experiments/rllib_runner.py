@@ -25,6 +25,7 @@ from sumo_rl.experiments.runner import (
     _update_wandb_summary,
 )
 from sumo_rl.agents.dqn import dqn as dqn_agent
+from sumo_rl.agents.fma2c import fma2c as fma2c_agent
 from sumo_rl.agents.frap import frap as frap_agent
 from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.rllib_common import (
@@ -39,7 +40,7 @@ from sumo_rl.agents.rllib_common import (
 from sumo_rl.agents.sac import sac as sac_agent
 
 
-SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, frap_agent.KIND, *sac_agent.KINDS}
+SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, frap_agent.KIND, fma2c_agent.KIND, *sac_agent.KINDS}
 
 
 def _eval_seeds(cfg: DictConfig) -> list[int]:
@@ -74,6 +75,8 @@ def _algorithm_module(algorithm_kind: str):
         return dqn_agent
     if algorithm_kind == frap_agent.KIND:
         return frap_agent
+    if algorithm_kind == fma2c_agent.KIND:
+        return fma2c_agent
     if algorithm_kind in sac_agent.KINDS:
         return sac_agent
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
@@ -94,7 +97,7 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
         module.train(algo, cfg, emit_metrics=emit_metrics, validate=validate)
 
 
-def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
+def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None, state=None, return_state: bool = False):
     get_module = getattr(algo, "get_module", None)
     if callable(get_module):
         module = get_module(policy_id) if policy_id is not None else get_module()
@@ -102,18 +105,65 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             import torch
             from ray.rllib.core.columns import Columns
 
-            obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32).unsqueeze(0)
-            with torch.no_grad():
-                output = module.forward_inference({Columns.OBS: obs_batch})
-                if Columns.ACTIONS not in output and Columns.ACTION_DIST_INPUTS in output:
-                    action_dist = module.get_inference_action_dist_cls().from_logits(
-                        output[Columns.ACTION_DIST_INPUTS]
-                    )
-                    output[Columns.ACTIONS] = action_dist.to_deterministic().sample()
-            action = output[Columns.ACTIONS]
-            if hasattr(action, "detach"):
-                action = action.detach().cpu().numpy()
-            return np.asarray(action).reshape(-1)[0].item()
+            is_stateful = False
+            module_is_stateful = getattr(module, "is_stateful", None)
+            if callable(module_is_stateful):
+                try:
+                    is_stateful = bool(module_is_stateful())
+                except Exception:
+                    is_stateful = False
+
+            obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32).reshape(1, -1)
+            batch = {Columns.OBS: obs_batch}
+            if is_stateful:
+                if state is None:
+                    state = module.get_initial_state()
+                state_in = {}
+                for key, value in dict(state).items():
+                    tensor = torch.as_tensor(value, dtype=torch.float32)
+                    if tensor.ndim == 1:
+                        tensor = tensor.reshape(1, 1, -1)
+                    elif tensor.ndim == 2:
+                        tensor = tensor.unsqueeze(0)
+                    state_in[key] = tensor
+                batch = {
+                    Columns.OBS: obs_batch.reshape(1, 1, -1),
+                    Columns.STATE_IN: state_in,
+                    Columns.SEQ_LENS: torch.tensor([1], dtype=torch.int32),
+                }
+
+            try:
+                with torch.no_grad():
+                    output = module.forward_inference(batch)
+                    if Columns.ACTIONS not in output and Columns.ACTION_DIST_INPUTS in output:
+                        logits = output[Columns.ACTION_DIST_INPUTS]
+                        if hasattr(logits, "ndim") and logits.ndim > 2:
+                            logits = logits.reshape(-1, logits.shape[-1])
+                        action_dist = module.get_inference_action_dist_cls().from_logits(
+                            logits
+                        )
+                        output[Columns.ACTIONS] = action_dist.to_deterministic().sample()
+                action = output[Columns.ACTIONS]
+                if hasattr(action, "detach"):
+                    action = action.detach().cpu().numpy()
+                next_state = output.get(Columns.STATE_OUT)
+                if isinstance(next_state, dict):
+                    next_state = {
+                        key: value.squeeze(0).detach().cpu()
+                        if hasattr(value, "detach") and getattr(value, "ndim", 0) >= 3
+                        else value.detach().cpu()
+                        if hasattr(value, "detach")
+                        else value
+                        for key, value in next_state.items()
+                    }
+                action_value = np.asarray(action).reshape(-1)[0].item()
+                if return_state:
+                    return action_value, next_state
+                return action_value
+            except Exception:
+                # Recurrent modules need stateful sampling through RLlib's public
+                # action API. Fall through to compute_single_action below.
+                pass
 
     compute_single_action = getattr(algo, "compute_single_action", None)
     if callable(compute_single_action):
@@ -121,28 +171,42 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             action = compute_single_action(obs, explore=False)
         else:
             action = compute_single_action(obs, policy_id=policy_id, explore=False)
-        return action[0] if isinstance(action, tuple) else action
+        action_value = action[0] if isinstance(action, tuple) else action
+        if return_state:
+            return action_value, state
+        return action_value
 
     policy = algo.get_policy(policy_id) if policy_id else algo.get_policy()
     action = policy.compute_single_action(obs, explore=False)
-    return action[0] if isinstance(action, tuple) else action
+    action_value = action[0] if isinstance(action, tuple) else action
+    if return_state:
+        return action_value, state
+    return action_value
 
 
-def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float:
+def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str, policy_id_fn=None) -> float:
     obs, _ = env.reset(seed=seed)
     done = False
     total_reward = 0.0
     possible_agents = _possible_agents(env)
+    resolve_policy_id = policy_id_fn or (lambda agent_id: _policy_id_for_agent(str(agent_id), policy_mode))
+    policy_states = {}
     while not done:
         actions = {}
         for agent_id, agent_obs in obs.items():
             if agent_id.startswith("__"):
                 continue
-            actions[agent_id] = _compute_single_action(
+            policy_id = resolve_policy_id(str(agent_id))
+            action, next_state = _compute_single_action(
                 algo,
                 agent_obs,
-                policy_id=_policy_id_for_agent(str(agent_id), policy_mode),
+                policy_id=policy_id,
+                state=policy_states.get(str(agent_id)),
+                return_state=True,
             )
+            actions[agent_id] = action
+            if next_state is not None:
+                policy_states[str(agent_id)] = next_state
         obs, rewards, terminations, truncations, _ = env.step(actions)
         total_reward += float(sum(float(value) for value in rewards.values()))
         done = bool(
@@ -167,16 +231,32 @@ def _evaluate(
     seed_rows = []
     eval_seeds = _eval_seeds(cfg)
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
+    module = _algorithm_module(algorithm_kind)
+    build_eval_env = getattr(module, "build_eval_env", None)
+    resolve_policy_id = getattr(module, "policy_id_for_agent", None)
     for seed_index, seed in enumerate(eval_seeds):
         eval_episode = seed_index + 1
-        eval_env = build_rllib_parallel_env(
-            cfg,
-            run_dir,
-            seed=seed,
-            pad_spaces=(policy_mode == "shared"),
-        )
+        if callable(build_eval_env):
+            eval_env = build_eval_env(cfg, run_dir, seed=seed, pad_spaces=(policy_mode == "shared"))
+        else:
+            eval_env = build_rllib_parallel_env(
+                cfg,
+                run_dir,
+                seed=seed,
+                pad_spaces=(policy_mode == "shared"),
+            )
         try:
-            episode_reward = _run_multi_agent_episode(algo, eval_env, seed, policy_mode=policy_mode)
+            episode_reward = _run_multi_agent_episode(
+                algo,
+                eval_env,
+                seed,
+                policy_mode=policy_mode,
+                policy_id_fn=(
+                    (lambda agent_id: resolve_policy_id(agent_id, policy_mode))
+                    if callable(resolve_policy_id)
+                    else None
+                ),
+            )
         finally:
             # SUMO writes tripinfo XML on close; build summaries only after the
             # file has been flushed so RESCO trip metrics do not become NaN.

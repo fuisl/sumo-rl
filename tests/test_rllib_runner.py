@@ -11,6 +11,7 @@ from sumo_rl.experiments import rllib_runner
 from sumo_rl.experiments.runner import _init_wandb, _log_outputs
 from sumo_rl.experiments.rllib_runner import _build_policy_mapping, _policy_id_for_agent
 from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
+from sumo_rl.agents.fma2c.fma2c import policy_id_for_agent as fma2c_policy_id_for_agent
 from sumo_rl.agents.ppo.ppo import extract_training_metrics as extract_ppo_training_metrics
 from sumo_rl.agents.sac.sac import extract_training_metrics as extract_sac_training_metrics
 from sumo_rl.agents.rllib_common import (
@@ -50,6 +51,11 @@ def test_build_policy_mapping_independent_mode_keeps_agent_identity():
     mapping_fn = _build_policy_mapping("independent")
     assert mapping_fn("tls_1") == "tls_1"
     assert mapping_fn("tls_2") == "tls_2"
+
+
+def test_fma2c_shared_by_level_maps_managers_and_workers_separately():
+    assert fma2c_policy_id_for_agent("A0", "shared_by_level") == "worker_policy"
+    assert fma2c_policy_id_for_agent("fma2c_manager_0", "shared_by_level") == "manager_policy"
 
 
 def test_dqn_uses_multi_agent_episode_replay_buffer_by_default():

@@ -1,0 +1,41 @@
+# @package _global_
+algorithm:
+  kind: fma2c
+  params:
+    policy_mode: independent
+    lr: 0.00025
+    gamma: 0.96
+    lambda_: 1.0
+    use_kl_loss: false
+    entropy_coeff: 0.01
+    vf_loss_coeff: 0.5
+    grad_clip: 40.0
+    train_batch_size_per_learner: 120
+    minibatch_size: 120
+    num_epochs: 1
+    num_env_runners: 0
+    num_envs_per_env_runner: 1
+    num_gpus_per_learner: auto
+    ray_num_gpus: auto
+    spatial_discount: 0.75
+    worker_reward_neighbor_depth: 1
+    manager_grid: [2, 2]
+    norm_wave: 5.0
+    norm_wait: 100.0
+    clip_wave: 2.0
+    clip_wait: 2.0
+    coef_wait: 0.2
+    goal_reward_coeff: 1.0
+    fingerprint_source: last_action
+    include_manager_neighbor_goals: true
+    manager_action_vectors:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+    model_config:
+      use_lstm: true
+      max_seq_len: 20
+      lstm_cell_size: 64
+      fcnet_hiddens: [64]
+      fcnet_activation: tanh
