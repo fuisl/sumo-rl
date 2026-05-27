@@ -26,6 +26,7 @@ from sumo_rl.experiments.runner import (
 )
 from sumo_rl.agents.colight import colight as colight_agent
 from sumo_rl.agents.dqn import dqn as dqn_agent
+from sumo_rl.agents.fgs import fgs as fgs_agent
 from sumo_rl.agents.frap import frap as frap_agent
 from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.rllib_common import (
@@ -45,6 +46,7 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     dqn_agent.KIND,
     frap_agent.KIND,
     colight_agent.KIND,
+    fgs_agent.KIND,
     *sac_agent.KINDS,
 }
 
@@ -83,6 +85,8 @@ def _algorithm_module(algorithm_kind: str):
         return frap_agent
     if algorithm_kind == colight_agent.KIND:
         return colight_agent
+    if algorithm_kind == fgs_agent.KIND:
+        return fgs_agent
     if algorithm_kind in sac_agent.KINDS:
         return sac_agent
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")

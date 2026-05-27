@@ -53,6 +53,7 @@ python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
+python experiments/rllib.py algorithm=fgs scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
@@ -96,6 +97,72 @@ boundary with project-owned actor, twin-critic, and communication hook points.
 Use `configs/algorithm/sac_custom.yaml` or command-line overrides under
 `algorithm.params.model_config` to change actor/critic MLP sizes or enable
 placeholder message-passing metadata for later GAT experiments.
+
+FGS is available as `algorithm=fgs`. FGS stands for FRAP-GNN-SAC: it applies a
+FRAP-style local phase-competition encoder to each SUMO-RL default observation,
+passes the node embeddings through a CoLight-style GAT over a TLS graph, and
+trains a shared discrete SAC actor with centralized graph critics. The actor is
+decentralized at execution time because each agent receives the graph observation
+through the wrapper and selects one discrete phase. During training, the twin
+critics receive the full graph embedding plus all nodes' current policy
+distributions, avoiding exponential joint-action enumeration while keeping the
+critic centralized.
+
+FGS defaults to the existing `diff-waiting-time` reward. Its graph construction
+defaults to the TLS super-edge parser inspired by HMARL-TSC: it reads the SUMO
+`.net.xml`, follows legal road-edge transitions, connects each traffic light to
+the nearest downstream traffic light, and writes `topology/fgs_topology.svg`
+plus `topology/fgs_topology_edges.json` in the Hydra run directory.
+
+```mermaid
+flowchart TD
+    O["Per-TLS observation o_i^t<br/>phase one-hot, min_green, density, queue"]
+    F["FRAP local phase-competition encoder"]
+    E["Local embedding e_i^t"]
+    G["GAT over TLS topology"]
+    H["Neighbor-aware embedding h_i^t"]
+    A["Discrete SAC actor<br/>pi(a_i | h_i)"]
+    C["Centralized twin critics<br/>Q_k(S_graph, Pi_all, ego_i, a_i)"]
+    SUMO["SUMO step"]
+
+    O --> F --> E --> G --> H --> A --> SUMO
+    H --> C
+    A --> C
+```
+
+```mermaid
+flowchart LR
+    subgraph Execution["Decentralized execution"]
+        OE["local + neighbor observations at t"]
+        AE["shared actor pi_theta"]
+        PE["phase action a_i"]
+        OE --> AE --> PE
+    end
+
+    subgraph Training["Centralized training"]
+        GT["full graph embeddings H_all"]
+        PT["all actor distributions Pi_all"]
+        QT["centralized twin critics"]
+        LT["discrete SAC losses"]
+        GT --> QT
+        PT --> QT
+        QT --> LT
+    end
+```
+
+For the intended smoke path, use the `marl` conda environment:
+
+```bash
+conda run -n marl python -m pytest tests/test_fgs.py tests/test_sac_discrete.py tests/test_frap.py tests/test_colight.py
+conda run -n marl python experiments/rllib.py algorithm=fgs scenario=single_intersection experiment.episodes=1 experiment.episode_seconds=60 logging=disabled
+```
+
+Method references: FRAP, "Learning Phase Competition for Traffic Signal
+Control" (arXiv:1905.04722); CoLight, "Learning Network-level Cooperation for
+Traffic Signal Control" (arXiv:1905.05717); SAC, "Soft Actor-Critic:
+Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor"
+(arXiv:1801.01290); and "Soft Actor-Critic for Discrete Action Settings"
+(arXiv:1910.07207).
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.

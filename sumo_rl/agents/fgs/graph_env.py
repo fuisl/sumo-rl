@@ -1,0 +1,208 @@
+"""Graph-observation wrapper for FGS."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import numpy as np
+from gymnasium import spaces
+
+from sumo_rl.agents.fgs.topology import (
+    TLSTopology,
+    bidirectional_message_edges,
+    extract_tls_topology,
+    render_fgs_topology,
+)
+
+
+def _base_sumo_env(env: Any) -> Any:
+    current = env
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if hasattr(current, "traffic_signals") and hasattr(current, "ts_ids"):
+            return current
+        for attr in ("par_env", "aec_env", "env", "base_env", "unwrapped"):
+            candidate = getattr(current, attr, None)
+            if candidate is not None and candidate is not current:
+                current = candidate
+                break
+        else:
+            break
+    return env
+
+
+class FGSGraphParallelEnv:
+    """PettingZoo parallel wrapper exposing full-graph observations per TLS."""
+
+    metadata = {"name": "sumo_rl_fgs_graph_v0", "is_parallelizable": True}
+
+    def __init__(
+        self,
+        env: Any,
+        *,
+        net_file: Optional[str] = None,
+        topology_source: str = "tls_super_edges",
+        render_topology_dir: Optional[Path] = None,
+    ) -> None:
+        self.env = env
+        self.net_file = str(net_file or "")
+        self.topology_source = str(topology_source or "tls_super_edges")
+        self.possible_agents = [str(agent_id) for agent_id in getattr(env, "possible_agents", getattr(env, "agents", []))]
+        self.agents = list(getattr(env, "agents", self.possible_agents))
+        self._agent_to_index = {agent_id: index for index, agent_id in enumerate(self.possible_agents)}
+        self._latest_local_obs: Dict[str, np.ndarray] = {}
+        self._topology: Optional[TLSTopology] = None
+        if self.topology_source == "tls_super_edges" and self.net_file:
+            self._topology = extract_tls_topology(self.net_file)
+            if render_topology_dir is not None:
+                render_fgs_topology(self._topology, Path(render_topology_dir))
+        self._refresh_spaces()
+
+    def _refresh_spaces(self) -> None:
+        self._num_nodes = max(1, len(self.possible_agents))
+        local_dims = [int(self.env.observation_space(agent_id).shape[0]) for agent_id in self.possible_agents]
+        action_sizes = [int(self.env.action_space(agent_id).n) for agent_id in self.possible_agents]
+        if len(set(local_dims)) > 1:
+            raise ValueError("FGS v1 requires homogeneous observation dimensions across traffic signals.")
+        if len(set(action_sizes)) > 1:
+            raise ValueError("FGS v1 requires homogeneous discrete action spaces across traffic signals.")
+        self._node_feature_dim = local_dims[0] if local_dims else 1
+        self._num_actions = action_sizes[0] if action_sizes else 1
+        self._action_sizes = {agent_id: self._num_actions for agent_id in self.possible_agents}
+        self._edges, self._edge_weights = self._build_edges()
+        self._max_edges = max(1, len(self._edges))
+
+        self.observation_spaces = {
+            agent_id: spaces.Dict(
+                {
+                    "node_features": spaces.Box(
+                        low=-np.inf,
+                        high=np.inf,
+                        shape=(self._num_nodes, self._node_feature_dim),
+                        dtype=np.float32,
+                    ),
+                    "edge_index": spaces.Box(
+                        low=0,
+                        high=max(0, self._num_nodes - 1),
+                        shape=(2, self._max_edges),
+                        dtype=np.int64,
+                    ),
+                    "edge_mask": spaces.Box(low=0.0, high=1.0, shape=(self._max_edges,), dtype=np.float32),
+                    "edge_weight": spaces.Box(low=0.0, high=np.inf, shape=(self._max_edges,), dtype=np.float32),
+                    "ego_index": spaces.Box(low=0, high=max(0, self._num_nodes - 1), shape=(), dtype=np.int64),
+                    "action_mask": spaces.Box(low=0.0, high=1.0, shape=(self._num_actions,), dtype=np.float32),
+                    "node_action_mask": spaces.Box(
+                        low=0.0,
+                        high=1.0,
+                        shape=(self._num_nodes, self._num_actions),
+                        dtype=np.float32,
+                    ),
+                }
+            )
+            for agent_id in self.possible_agents
+        }
+        shared_action_space = spaces.Discrete(self._num_actions)
+        self.action_spaces = {agent_id: shared_action_space for agent_id in self.possible_agents}
+
+    def _build_edges(self) -> tuple[list[tuple[int, int]], list[float]]:
+        if self._topology is not None:
+            edges = bidirectional_message_edges(self._topology, self.possible_agents)
+            indexed_edges = []
+            weights = []
+            for source_id, target_id in edges:
+                source_index = self._agent_to_index[source_id]
+                target_index = self._agent_to_index[target_id]
+                key = (source_id, target_id) if source_id <= target_id else (target_id, source_id)
+                indexed_edges.append((source_index, target_index))
+                weights.append(float(self._topology.edge_weights.get(key, 1.0)))
+            return indexed_edges, weights
+
+        base_env = _base_sumo_env(self.env)
+        traffic_signals = getattr(base_env, "traffic_signals", {})
+        edges = set()
+        for source_id in self.possible_agents:
+            source_signal = traffic_signals.get(source_id)
+            if source_signal is None:
+                continue
+            source_out_lanes = set(getattr(source_signal, "out_lanes", []) or [])
+            for target_id in self.possible_agents:
+                if source_id == target_id:
+                    continue
+                target_signal = traffic_signals.get(target_id)
+                if target_signal is None:
+                    continue
+                if source_out_lanes.intersection(set(getattr(target_signal, "lanes", []) or [])):
+                    edges.add((self._agent_to_index[source_id], self._agent_to_index[target_id]))
+                    edges.add((self._agent_to_index[target_id], self._agent_to_index[source_id]))
+        indexed = sorted(edges)
+        return indexed, [1.0] * len(indexed)
+
+    def _graph_obs(self, agent_id: str) -> Dict[str, np.ndarray]:
+        node_features = np.zeros((self._num_nodes, self._node_feature_dim), dtype=np.float32)
+        for node_id, node_index in self._agent_to_index.items():
+            if node_id in self._latest_local_obs:
+                node_features[node_index] = np.asarray(self._latest_local_obs[node_id], dtype=np.float32)
+
+        edge_index = np.zeros((2, self._max_edges), dtype=np.int64)
+        edge_mask = np.zeros(self._max_edges, dtype=np.float32)
+        edge_weight = np.zeros(self._max_edges, dtype=np.float32)
+        for edge_offset, (source, target) in enumerate(self._edges[: self._max_edges]):
+            edge_index[:, edge_offset] = [source, target]
+            edge_mask[edge_offset] = 1.0
+            edge_weight[edge_offset] = self._edge_weights[edge_offset]
+
+        action_mask = np.ones(self._num_actions, dtype=np.float32)
+        node_action_mask = np.ones((self._num_nodes, self._num_actions), dtype=np.float32)
+        return {
+            "node_features": node_features,
+            "edge_index": edge_index,
+            "edge_mask": edge_mask,
+            "edge_weight": edge_weight,
+            "ego_index": np.asarray(self._agent_to_index[agent_id], dtype=np.int64),
+            "action_mask": action_mask,
+            "node_action_mask": node_action_mask,
+        }
+
+    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+        reset_result = self.env.reset(seed=seed, options=options)
+        if isinstance(reset_result, tuple) and len(reset_result) == 2:
+            local_obs, infos = reset_result
+        else:
+            local_obs, infos = reset_result, {agent_id: {} for agent_id in self.possible_agents}
+        self.agents = list(getattr(self.env, "agents", self.possible_agents))
+        self._latest_local_obs = {str(agent_id): np.asarray(obs, dtype=np.float32) for agent_id, obs in local_obs.items()}
+        self._refresh_spaces()
+        return {str(agent_id): self._graph_obs(str(agent_id)) for agent_id in local_obs.keys()}, infos
+
+    def step(self, actions):
+        clipped_actions = {
+            str(agent_id): int(np.clip(int(action), 0, self._num_actions - 1))
+            for agent_id, action in dict(actions or {}).items()
+        }
+        local_obs, rewards, terminations, truncations, infos = self.env.step(clipped_actions)
+        self.agents = list(getattr(self.env, "agents", []))
+        for agent_id, obs in local_obs.items():
+            self._latest_local_obs[str(agent_id)] = np.asarray(obs, dtype=np.float32)
+        graph_obs = {str(agent_id): self._graph_obs(str(agent_id)) for agent_id in local_obs.keys()}
+        return graph_obs, rewards, terminations, truncations, infos
+
+    def observation_space(self, agent):
+        return self.observation_spaces[str(agent)]
+
+    def action_space(self, agent):
+        return self.action_spaces[str(agent)]
+
+    def close(self):
+        return self.env.close()
+
+    def render(self):
+        return self.env.render()
+
+    def save_csv(self, out_csv_name, episode):
+        save = getattr(self.env, "save_csv", None)
+        if callable(save):
+            return save(out_csv_name, episode)
+        return None
+

@@ -28,6 +28,13 @@ This project will be organized in phases so the thesis work stays incremental an
 - Add a short benchmark comparison note or table that states which fields are canonical for thesis reporting and how they map to the raw RESCO tripinfo values.
 - Verify the max-pressure and greedy presets still produce the intended five-seed summary behavior on the RESCO scenarios.
 
+### Phase 5: FGS FRAP-GNN-SAC
+- Status: implemented as a project-owned, third-party-inspired RLlib integration.
+- FGS combines FRAP-style local phase competition, CoLight-style GAT communication, and discrete SAC.
+- It is not a handwritten baseline; it is a modular learning method whose components can be ablated through Hydra config.
+- The v1 critic is centralized over graph embeddings and all agents' policy distributions, while execution remains decentralized through a shared policy.
+- The default reward remains SUMO-RL's existing `diff-waiting-time`.
+
 ## Assumptions
 - `SUMO_HOME` remains required for all simulation runs.
 - W&B should support disabled or offline mode for local development.
