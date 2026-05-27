@@ -15,7 +15,23 @@ class CoLightObservationFunction(ObservationFunction):
 
     include_phase = True
     phase_encoding = "one_hot"
-    vehicle_max = 1.0
+    vehicle_max: Any = "capacity"
+    clip_vehicle_counts = True
+
+    def _lane_vehicle_capacity(self, lane_id: str) -> float:
+        lane_length = float(getattr(self.ts, "lanes_length", {}).get(lane_id, 0.0) or 0.0)
+        if lane_length <= 0.0:
+            return 1.0
+        vehicle_length = float(self.ts.sumo.lane.getLastStepLength(lane_id))
+        denominator = max(float(self.ts.MIN_GAP) + vehicle_length, 1e-6)
+        return max(lane_length / denominator, 1.0)
+
+    def _vehicle_count_scale(self, lane_id: str) -> float:
+        if isinstance(self.vehicle_max, str):
+            if self.vehicle_max.lower() in {"capacity", "lane_capacity"}:
+                return self._lane_vehicle_capacity(lane_id)
+            raise ValueError(f"Unsupported CoLight vehicle_max: {self.vehicle_max!r}.")
+        return max(float(self.vehicle_max), 1e-6)
 
     def __call__(self) -> np.ndarray:
         features: list[float] = []
@@ -28,7 +44,6 @@ class CoLightObservationFunction(ObservationFunction):
             else:
                 raise ValueError(f"Unsupported CoLight phase_encoding: {self.phase_encoding!r}.")
 
-        scale = max(float(self.vehicle_max), 1e-6)
         for lane_id in self.ts.lanes:
             vehicle_count = len(
                 [
@@ -37,7 +52,10 @@ class CoLightObservationFunction(ObservationFunction):
                     if not str(veh).startswith("ghost")
                 ]
             )
-            features.append(float(vehicle_count) / scale)
+            value = float(vehicle_count) / self._vehicle_count_scale(lane_id)
+            if self.clip_vehicle_counts:
+                value = min(value, 1.0)
+            features.append(value)
         return np.asarray(features, dtype=np.float32)
 
     def observation_space(self) -> spaces.Box:
@@ -45,9 +63,10 @@ class CoLightObservationFunction(ObservationFunction):
         if self.include_phase:
             phase_width = self.ts.num_green_phases if self.phase_encoding == "one_hot" else 1
         width = phase_width + len(self.ts.lanes)
+        high = 1.0 if self.clip_vehicle_counts else np.inf
         return spaces.Box(
             low=np.zeros(width, dtype=np.float32),
-            high=np.full(width, np.inf, dtype=np.float32),
+            high=np.full(width, high, dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -56,14 +75,16 @@ def make_colight_observation_class(
     *,
     include_phase: bool = True,
     phase_encoding: str = "one_hot",
-    vehicle_max: float = 1.0,
+    vehicle_max: Any = "capacity",
+    clip_vehicle_counts: bool = True,
 ):
     class ConfiguredCoLightObservationFunction(CoLightObservationFunction):
         pass
 
     ConfiguredCoLightObservationFunction.include_phase = bool(include_phase)
     ConfiguredCoLightObservationFunction.phase_encoding = str(phase_encoding)
-    ConfiguredCoLightObservationFunction.vehicle_max = float(vehicle_max)
+    ConfiguredCoLightObservationFunction.vehicle_max = vehicle_max
+    ConfiguredCoLightObservationFunction.clip_vehicle_counts = bool(clip_vehicle_counts)
     ConfiguredCoLightObservationFunction.__name__ = "ConfiguredCoLightObservationFunction"
     return ConfiguredCoLightObservationFunction
 
@@ -204,6 +225,18 @@ class CoLightGraphParallelEnv:
             clipped_actions[str(agent_id)] = int(np.clip(int(action), 0, action_size - 1))
 
         local_obs, rewards, terminations, truncations, infos = self.env.step(clipped_actions)
+        infos = {str(agent_id): dict(info or {}) for agent_id, info in dict(infos or {}).items()}
+        for agent_id, raw_action in dict(actions or {}).items():
+            agent_id = str(agent_id)
+            if agent_id not in clipped_actions:
+                continue
+            if int(raw_action) != clipped_actions[agent_id]:
+                infos.setdefault(agent_id, {})
+                infos[agent_id]["colight/action_clipped"] = 1.0
+                infos[agent_id]["colight/raw_action"] = float(raw_action)
+                infos[agent_id]["colight/clipped_action"] = float(clipped_actions[agent_id])
+            elif agent_id in infos:
+                infos[agent_id].setdefault("colight/action_clipped", 0.0)
         self.agents = list(getattr(self.env, "agents", []))
         for agent_id, obs in local_obs.items():
             self._latest_local_obs[str(agent_id)] = np.asarray(obs, dtype=np.float32)

@@ -235,9 +235,11 @@ def render_colight_topology(
         "net_file": str(net_file),
         "num_nodes": len(agent_ids),
         "num_directed_edges": len(topology_edges),
-        "nodes": [{"id": agent_id, "position": positions.get(agent_id)} for agent_id in agent_ids],
+        "nodes": [
+            {"id": agent_id, "index": index, "position": positions.get(agent_id)}
+            for index, agent_id in enumerate(agent_ids)
+        ],
         "directed_edges": [{"source": source, "target": target} for source, target in topology_edges],
     }
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return {"svg": svg_path, "json": json_path}
-

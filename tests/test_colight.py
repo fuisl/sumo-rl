@@ -19,7 +19,7 @@ from gymnasium.spaces import Box, Dict as DictSpace, Discrete
 
 import sumo_rl
 from sumo_rl.agents.colight import colight
-from sumo_rl.agents.colight.graph_env import CoLightGraphParallelEnv
+from sumo_rl.agents.colight.graph_env import CoLightGraphParallelEnv, make_colight_observation_class
 from sumo_rl.agents.colight.model import CoLightGATLayer, CoLightQNetwork
 from sumo_rl.agents.colight.rllib_module import build_colight_dqn_module_spec
 from sumo_rl.agents.colight.topology import render_colight_topology
@@ -115,6 +115,33 @@ class _DummyBaseEnv:
         del out_csv_name, episode
 
 
+class _DummyLaneDomain:
+    def getLastStepVehicleIDs(self, lane_id):
+        assert lane_id == "lane_0"
+        return ["veh_0", "veh_1", "veh_2", "ghost_0"]
+
+    def getLastStepLength(self, lane_id):
+        assert lane_id == "lane_0"
+        return 5.0
+
+
+def test_colight_observation_normalizes_lane_counts_by_capacity():
+    ts = SimpleNamespace(
+        green_phase=1,
+        num_green_phases=2,
+        lanes=["lane_0"],
+        lanes_length={"lane_0": 75.0},
+        MIN_GAP=2.5,
+        sumo=SimpleNamespace(lane=_DummyLaneDomain()),
+    )
+    observation_fn = make_colight_observation_class(vehicle_max="capacity", clip_vehicle_counts=True)(ts)
+
+    obs = observation_fn()
+
+    assert obs.tolist() == pytest.approx([0.0, 1.0, 0.3])
+    assert observation_fn.observation_space().high.tolist() == [1.0, 1.0, 1.0]
+
+
 class _DummyParallelEnv:
     possible_agents = ["tls_0", "tls_1"]
     agents = ["tls_0", "tls_1"]
@@ -162,10 +189,12 @@ def test_colight_graph_wrapper_builds_stable_graph_observations_and_masks_action
     assert obs["tls_0"]["edge_mask"].tolist() == [1.0, 1.0]
     assert obs["tls_1"]["action_mask"].tolist() == [1.0, 1.0, 0.0, 0.0]
 
-    env.step({"tls_0": 3, "tls_1": 3})
+    _, _, _, _, infos = env.step({"tls_0": 3, "tls_1": 3})
 
     assert base_env.last_actions["tls_0"] == 3
     assert base_env.last_actions["tls_1"] == 1
+    assert infos["tls_1"]["colight/action_clipped"] == 1.0
+    assert infos["tls_1"]["colight/raw_action"] == 3.0
 
 
 def test_colight_topology_renderer_writes_svg_and_edge_list(tmp_path):
@@ -192,6 +221,7 @@ def test_colight_topology_renderer_writes_svg_and_edge_list(tmp_path):
     edge_json = paths["json"].read_text(encoding="utf-8")
     assert "marker-end" in svg
     assert "tls_0" in svg
+    assert '"index": 0' in edge_json
     assert '"source": "tls_0"' in edge_json
 
 
@@ -244,7 +274,8 @@ def test_colight_build_config_registers_shared_custom_rl_module(monkeypatch, tmp
     assert set(multi_spec.rl_module_specs.keys()) == {"shared_policy"}
     spec = multi_spec.rl_module_specs["shared_policy"]
     assert spec.model_config["architecture_tag"] == "colight_graph_attention"
-    assert spec.model_config["epsilon"] == [(0, 0.8), (100000, 0.01)]
+    assert spec.model_config["epsilon"] == [(0, 0.8), (200000, 0.01)]
+    assert config.replay_buffer_config["type"] == "MultiAgentEpisodeReplayBuffer"
 
 
 def test_colight_rejects_independent_policy_mode(monkeypatch, tmp_path):

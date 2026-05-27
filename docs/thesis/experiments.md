@@ -73,6 +73,14 @@ the network-level cooperation that defines CoLight.
 CoLight also writes a SUMO map overlay of its directed topology to
 `topology/colight_topology.svg` plus a machine-readable edge list at
 `topology/colight_topology_edges.json` inside the run directory.
+For unstable CoLight curves, debug in this order: first confirm the exact same
+scenario files, seed, and episode length against fixed-time or max-pressure;
+then inspect reward scale, phase switching, observation scale, and the rendered
+neighbor graph. The default CoLight preset now uses a smaller learning rate,
+gradient clipping, slower epsilon decay, a larger replay buffer, and
+capacity-normalized lane-count observations. If you switch away from
+`diff-waiting-time`, prefer `normalized-queue` or `normalized-pressure` before
+using raw queue or pressure rewards.
 
 SAC now uses RLlib's native discrete-action support. The repo hands each traffic
 signal its own discrete action space through the multi-agent RLlib wrapper, and

@@ -42,7 +42,8 @@ def _colight_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
     model_config.setdefault("architecture_tag", "colight_graph_attention")
     model_config.setdefault("include_phase", True)
     model_config.setdefault("phase_encoding", "one_hot")
-    model_config.setdefault("vehicle_max", 1.0)
+    model_config.setdefault("vehicle_max", "capacity")
+    model_config.setdefault("clip_vehicle_counts", True)
     model_config.setdefault("node_embedding_dims", [128, 128])
     model_config.setdefault("num_gat_layers", 1)
     model_config.setdefault("num_heads", 5)
@@ -68,7 +69,8 @@ def _with_colight_observation(cfg: Any, run_dir: Path, model_config: Dict[str, A
     kwargs["observation_class"] = make_colight_observation_class(
         include_phase=bool(model_config.get("include_phase", True)),
         phase_encoding=str(model_config.get("phase_encoding", "one_hot")),
-        vehicle_max=float(model_config.get("vehicle_max", 1.0)),
+        vehicle_max=model_config.get("vehicle_max", "capacity"),
+        clip_vehicle_counts=bool(model_config.get("clip_vehicle_counts", True)),
     )
 
     factory = str(getattr(getattr(cfg, "env", None), "factory", "parallel_env") or "parallel_env")
@@ -165,11 +167,12 @@ def build_config(cfg: Any, run_dir: Path):
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     params = dict(params)
     params.setdefault("policy_mode", "shared")
+    params.setdefault("replay_buffer_type", "MultiAgentEpisodeReplayBuffer")
     params["replay_buffer_config"] = build_replay_buffer_config(params)
     params.setdefault("dueling", False)
     params.setdefault("double_q", True)
     params.setdefault("num_atoms", 1)
-    params.setdefault("epsilon", [(0, 0.8), (100000, 0.01)])
+    params.setdefault("epsilon", [(0, 0.8), (200000, 0.01)])
     if "num_steps_sampled_before_learning_starts" in params:
         params["num_steps_sampled_before_learning_starts"] = max(
             int(params["num_steps_sampled_before_learning_starts"]),
