@@ -130,7 +130,7 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
 
 
 def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float:
-    total_reward, _, _ = _run_multi_agent_episode_trace(algo, env, seed, policy_mode=policy_mode)
+    total_reward, _, _, _ = _run_multi_agent_episode_trace(algo, env, seed, policy_mode=policy_mode)
     return total_reward
 
 
@@ -158,7 +158,66 @@ def _to_discrete_action(action: Any) -> int:
     return int(array.reshape(-1)[0])
 
 
-def _run_multi_agent_episode_trace(algo, env, seed: int, *, policy_mode: str) -> tuple[float, Dict[str, list[int]], Dict[str, int]]:
+def _env_children(env: Any) -> list[Any]:
+    children = []
+    get_sub_environments = getattr(env, "get_sub_environments", None)
+    if callable(get_sub_environments):
+        try:
+            children.extend(get_sub_environments() or [])
+        except Exception:
+            pass
+    for attr in ("base_env", "env", "aec_env", "unwrapped", "gym_env", "par_env", "venv"):
+        candidate = getattr(env, attr, None)
+        if candidate is not None:
+            children.append(candidate)
+    for attr in ("envs", "vector_env"):
+        candidate = getattr(env, attr, None)
+        if isinstance(candidate, (list, tuple)):
+            children.extend(item for item in candidate if item is not None)
+        elif candidate is not None and candidate is not env:
+            children.append(candidate)
+    return children
+
+
+def _resolve_sumo_base_env(env: Any) -> Any:
+    queue = [env]
+    visited = set()
+    fallback = env
+    while queue:
+        current = queue.pop(0)
+        if current is None or id(current) in visited:
+            continue
+        visited.add(id(current))
+        fallback = current
+        if hasattr(current, "traffic_signals") and hasattr(current, "sim_step"):
+            return current
+        queue.extend(_env_children(current))
+    return fallback
+
+
+def _collect_phase_queue_snapshot(env: Any, agent_ids: list[str]) -> Dict[str, Dict[str, Any]]:
+    base_env = _resolve_sumo_base_env(env)
+    traffic_signals = getattr(base_env, "traffic_signals", {})
+    snapshot: Dict[str, Dict[str, Any]] = {}
+    for agent_id in agent_ids:
+        traffic_signal = traffic_signals.get(agent_id)
+        if traffic_signal is None:
+            continue
+        phase_queues = list(getattr(traffic_signal, "get_phase_queued_counts", lambda: [])() or [])
+        snapshot[agent_id] = {
+            "active_phase": int(getattr(traffic_signal, "green_phase", 0) or 0),
+            "phase_queues": [int(value) for value in phase_queues],
+        }
+    return snapshot
+
+
+def _run_multi_agent_episode_trace(
+    algo,
+    env,
+    seed: int,
+    *,
+    policy_mode: str,
+) -> tuple[float, Dict[str, list[int]], Dict[str, int], Dict[str, list[Dict[str, Any]]]]:
     obs, _ = env.reset(seed=seed)
     done = False
     total_reward = 0.0
@@ -166,6 +225,7 @@ def _run_multi_agent_episode_trace(algo, env, seed: int, *, policy_mode: str) ->
     agent_ids = [str(agent_id) for agent_id in possible_agents if not str(agent_id).startswith("__")]
     action_traces = {agent_id: [] for agent_id in agent_ids}
     action_space_sizes = {agent_id: _action_space_size(env, agent_id) for agent_id in agent_ids}
+    phase_queue_traces = {agent_id: [] for agent_id in agent_ids}
     while not done:
         actions = {}
         for agent_id, agent_obs in obs.items():
@@ -180,6 +240,15 @@ def _run_multi_agent_episode_trace(algo, env, seed: int, *, policy_mode: str) ->
             action_traces[str(agent_id)].append(_to_discrete_action(action))
         obs, rewards, terminations, truncations, _ = env.step(actions)
         total_reward += float(sum(float(value) for value in rewards.values()))
+        phase_queue_snapshot = _collect_phase_queue_snapshot(env, agent_ids)
+        for agent_id, agent_snapshot in phase_queue_snapshot.items():
+            phase_queue_traces[agent_id].append(
+                {
+                    "step": float(len(phase_queue_traces[agent_id]) + 1),
+                    "active_phase": int(agent_snapshot["active_phase"]),
+                    "phase_queues": [int(value) for value in agent_snapshot["phase_queues"]],
+                }
+            )
         done = bool(
             terminations.get("__all__", False)
             or truncations.get("__all__", False)
@@ -189,7 +258,7 @@ def _run_multi_agent_episode_trace(algo, env, seed: int, *, policy_mode: str) ->
     for agent_id, trace in action_traces.items():
         if trace:
             action_space_sizes[agent_id] = max(int(action_space_sizes.get(agent_id, 0)), max(trace) + 1)
-    return total_reward, action_traces, action_space_sizes
+    return total_reward, action_traces, action_space_sizes, phase_queue_traces
 
 
 def _copy_numeric_metric(row: Dict[str, Any], key: str, value: Any) -> None:
@@ -381,6 +450,63 @@ def _build_validation_action_timeline_rows(
             aggregated.append(int(np.argmax(bincount)))
         if aggregated:
             payload[agent_id] = aggregated
+    return payload
+
+
+def _build_validation_phase_queue_rows(
+    phase_queue_traces_by_seed: list[Dict[str, list[Dict[str, Any]]]],
+    *,
+    max_agents: Optional[int] = None,
+) -> Dict[str, list[Dict[str, float]]]:
+    agent_ids = sorted(
+        {
+            str(agent_id)
+            for seed_rows in phase_queue_traces_by_seed
+            for agent_id, rows in seed_rows.items()
+            if rows
+        }
+    )
+    if max_agents is not None:
+        agent_ids = agent_ids[:max_agents]
+
+    payload: Dict[str, list[Dict[str, float]]] = {}
+    for agent_id in agent_ids:
+        max_length = max((len(seed_rows.get(agent_id, [])) for seed_rows in phase_queue_traces_by_seed), default=0)
+        if max_length <= 0:
+            continue
+        max_phase_count = max(
+            (
+                len(row.get("phase_queues", []))
+                for seed_rows in phase_queue_traces_by_seed
+                for row in seed_rows.get(agent_id, [])
+            ),
+            default=0,
+        )
+        if max_phase_count <= 0:
+            continue
+        rows: list[Dict[str, float]] = []
+        for row_index in range(max_length):
+            active_rows = [
+                seed_rows.get(agent_id, [])[row_index]
+                for seed_rows in phase_queue_traces_by_seed
+                if row_index < len(seed_rows.get(agent_id, []))
+            ]
+            if not active_rows:
+                continue
+            row: Dict[str, float] = {"step": float(row_index + 1)}
+            active_phases = [int(item.get("active_phase", 0)) for item in active_rows]
+            bincount = np.bincount(np.asarray(active_phases, dtype=int), minlength=max_phase_count)
+            row["active_phase"] = float(int(np.argmax(bincount)))
+            for phase_index in range(max_phase_count):
+                values = []
+                for item in active_rows:
+                    phase_queues = item.get("phase_queues", [])
+                    if phase_index < len(phase_queues):
+                        values.append(float(phase_queues[phase_index]))
+                row[f"phase_{phase_index}"] = float(np.mean(values)) if values else 0.0
+            rows.append(row)
+        if rows:
+            payload[agent_id] = rows
     return payload
 
 
@@ -615,24 +741,155 @@ def _render_validation_action_timeline_image(
     return image
 
 
+def _render_validation_phase_queue_image(
+    agent_id: str,
+    rows: list[Dict[str, float]],
+    *,
+    decision_seconds: int,
+    width: int = 1040,
+    height: int = 520,
+) -> Image.Image:
+    image = Image.new("RGB", (width, height), color=(248, 250, 252))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    card_left = 18
+    card_top = 18
+    card_right = width - 18
+    card_bottom = height - 18
+    draw.rounded_rectangle(
+        (card_left, card_top, card_right, card_bottom),
+        radius=18,
+        fill=(255, 255, 255),
+        outline=(225, 232, 240),
+        width=2,
+    )
+
+    left = card_left + 86
+    right = card_right - 28
+    top = card_top + 78
+    bottom = card_bottom - 70
+    plot_width = max(1, right - left)
+    plot_height = max(1, bottom - top)
+
+    draw.text((card_left + 22, card_top + 18), f"phase queue {agent_id}", fill=(28, 37, 54), font=font)
+    draw.text(
+        (card_left + 22, card_top + 38),
+        "queued vehicles per phase lane-set; background shows active phase",
+        fill=(96, 109, 128),
+        font=font,
+    )
+
+    if not rows:
+        return image
+
+    phase_keys = [key for key in rows[0].keys() if key.startswith("phase_")]
+    max_queue = max([float(row.get(key, 0.0)) for row in rows for key in phase_keys] + [1.0])
+    y_max = max(1.0, float(np.ceil(max_queue)))
+    steps = [float(row["step"]) for row in rows]
+    min_step = steps[0]
+    max_step = steps[-1]
+    step_span = max(max_step - min_step, 1.0)
+
+    active_phase_runs = []
+    run_start = 0
+    previous_phase = int(rows[0].get("active_phase", 0))
+    for row_index in range(1, len(rows) + 1):
+        current_phase = None if row_index == len(rows) else int(rows[row_index].get("active_phase", 0))
+        if current_phase == previous_phase:
+            continue
+        active_phase_runs.append((run_start, row_index, previous_phase))
+        run_start = row_index
+        previous_phase = current_phase if current_phase is not None else previous_phase
+
+    for run_start, run_end, phase_index in active_phase_runs:
+        x0 = left + (float(run_start) / max(1.0, float(len(rows)))) * plot_width
+        x1 = left + (float(run_end) / max(1.0, float(len(rows)))) * plot_width
+        red, green, blue = _action_color(phase_index)
+        fill_color = (
+            int(0.85 * 255 + 0.15 * red),
+            int(0.85 * 255 + 0.15 * green),
+            int(0.85 * 255 + 0.15 * blue),
+        )
+        draw.rectangle((x0, top, max(x0 + 1, x1), bottom), fill=fill_color)
+
+    y_tick_values = [0.0, y_max * 0.25, y_max * 0.5, y_max * 0.75, y_max]
+    for tick_value in y_tick_values:
+        y = top + (1.0 - (tick_value / y_max)) * plot_height
+        is_baseline = abs(tick_value) <= 1e-9
+        draw.line((left, y, right, y), fill=(214, 223, 233) if is_baseline else (234, 239, 244), width=1)
+        label = f"{int(round(tick_value))}"
+        draw.text((card_left + 18, y - 6), label, fill=(94, 105, 122), font=font)
+
+    x_tick_values = [min_step, min_step + step_span * 0.25, min_step + step_span * 0.5, min_step + step_span * 0.75, max_step]
+    for tick_value in x_tick_values:
+        x = left + ((tick_value - min_step) / step_span) * plot_width
+        draw.line((x, top, x, bottom), fill=(244, 247, 250), width=1)
+
+    draw.line((left, top, left, bottom), fill=(122, 134, 153), width=1)
+    draw.line((left, bottom, right, bottom), fill=(122, 134, 153), width=1)
+    draw.text((width // 2 - 26, card_bottom - 28), "env time (mm:ss)", fill=(94, 105, 122), font=font)
+    draw.text((card_left + 18, top - 20), "queued", fill=(94, 105, 122), font=font)
+
+    x_coords = [left + ((float(row["step"]) - min_step) / step_span) * plot_width for row in rows]
+    for phase_index, phase_key in enumerate(phase_keys):
+        points = []
+        for row_index, row in enumerate(rows):
+            value = float(row.get(phase_key, 0.0))
+            y = top + (1.0 - (value / y_max)) * plot_height
+            points.append((x_coords[row_index], y))
+        if len(points) >= 2:
+            draw.line(points, fill=_action_color(phase_index), width=3)
+        elif points:
+            x, y = points[0]
+            draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=_action_color(phase_index), outline=_action_color(phase_index))
+
+    legend_x = left + 12
+    legend_y = top + 12
+    legend_items_per_row = max(1, min(4, len(phase_keys)))
+    legend_row_height = 22
+    legend_col_width = 118
+    for phase_index, phase_key in enumerate(phase_keys):
+        row_index = phase_index // legend_items_per_row
+        col_index = phase_index % legend_items_per_row
+        item_x = legend_x + col_index * legend_col_width
+        item_y = legend_y + row_index * legend_row_height
+        color = _action_color(phase_index)
+        draw.rounded_rectangle((item_x, item_y, item_x + 12, item_y + 12), radius=3, fill=color, outline=color)
+        draw.text((item_x + 18, item_y), phase_key.replace("_", " "), fill=(70, 79, 94), font=font)
+
+    for tick_value in x_tick_values:
+        x = left + ((tick_value - min_step) / step_span) * plot_width
+        draw.line((x, bottom, x, bottom + 5), fill=(122, 134, 153), width=1)
+        label = _format_env_time_label(float(max(0.0, tick_value - 1.0)) * float(decision_seconds))
+        label_x = int(x - (len(label) * 3))
+        draw.text((label_x, bottom + 10), label, fill=(94, 105, 122), font=font)
+
+    return image
+
+
 def _log_validation_action_plot_images(
     wandb_run,
     plot_rows_by_agent: Dict[str, list[Dict[str, float]]],
     timeline_actions_by_agent: Dict[str, list[int]],
+    phase_queue_rows_by_agent: Dict[str, list[Dict[str, float]]],
     *,
     pass_index: int,
     env_step: int,
+    episode_index: int,
     decision_seconds: int,
 ) -> None:
-    if wandb_run is None or (not plot_rows_by_agent and not timeline_actions_by_agent):
+    if wandb_run is None or (not plot_rows_by_agent and not timeline_actions_by_agent and not phase_queue_rows_by_agent):
         return
     import wandb
 
-    agent_ids = sorted(set(plot_rows_by_agent.keys()) | set(timeline_actions_by_agent.keys()))
+    agent_ids = sorted(set(plot_rows_by_agent.keys()) | set(timeline_actions_by_agent.keys()) | set(phase_queue_rows_by_agent.keys()))
     for agent_id in agent_ids:
         rows = plot_rows_by_agent.get(agent_id, [])
         timeline_actions = timeline_actions_by_agent.get(agent_id, [])
+        phase_queue_rows = phase_queue_rows_by_agent.get(agent_id, [])
         payload = {
+            "validation/episode_index": float(episode_index),
             "validation/pass_index": float(pass_index),
             "validation/env_step": float(env_step),
         }
@@ -652,7 +909,16 @@ def _log_validation_action_plot_images(
                 ),
                 caption=f"validation pass {pass_index} at env step {env_step}",
             )
-        if len(payload) > 2:
+        if phase_queue_rows:
+            payload[f"validation/phase_queue/{agent_id}"] = wandb.Image(
+                _render_validation_phase_queue_image(
+                    agent_id,
+                    phase_queue_rows,
+                    decision_seconds=decision_seconds,
+                ),
+                caption=f"validation pass {pass_index} at env step {env_step}",
+            )
+        if len(payload) > 3:
             wandb_run.log(payload)
 
 
@@ -826,10 +1092,17 @@ def _evaluate_with_details(
     logging_cfg,
     *,
     include_validation_metrics: bool = False,
-) -> tuple[Dict[str, Any], list[Dict[str, Any]], Dict[str, list[Dict[str, float]]], Dict[str, list[int]]]:
+) -> tuple[
+    Dict[str, Any],
+    list[Dict[str, Any]],
+    Dict[str, list[Dict[str, float]]],
+    Dict[str, list[int]],
+    Dict[str, list[Dict[str, float]]],
+]:
     seed_rows = []
     seed_action_traces = []
     seed_action_space_sizes = []
+    seed_phase_queue_traces = []
     eval_seeds = _eval_seeds(cfg)
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
@@ -841,7 +1114,7 @@ def _evaluate_with_details(
             pad_spaces=(policy_mode == "shared"),
         )
         try:
-            episode_reward, action_traces, action_space_sizes = _run_multi_agent_episode_trace(
+            episode_reward, action_traces, action_space_sizes, phase_queue_traces = _run_multi_agent_episode_trace(
                 algo,
                 eval_env,
                 seed,
@@ -871,6 +1144,7 @@ def _evaluate_with_details(
         seed_rows.append(seed_row)
         seed_action_traces.append(action_traces)
         seed_action_space_sizes.append(action_space_sizes)
+        seed_phase_queue_traces.append(phase_queue_traces)
 
     eval_mean_reward = float(np.mean([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
     eval_std_reward = float(np.std([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
@@ -884,6 +1158,7 @@ def _evaluate_with_details(
     summary["eval/episode"] = float(len(eval_seeds))
     action_plot_rows_by_agent: Dict[str, list[Dict[str, float]]] = {}
     action_timeline_by_agent: Dict[str, list[int]] = {}
+    phase_queue_rows_by_agent: Dict[str, list[Dict[str, float]]] = {}
     if include_validation_metrics and _should_log_validation_action_plots(logging_cfg):
         action_plot_rows_by_agent = _build_validation_action_plot_rows(
             seed_action_traces,
@@ -896,7 +1171,11 @@ def _evaluate_with_details(
             seed_action_space_sizes,
             max_agents=_validation_action_plot_max_agents(logging_cfg),
         )
-    return summary, seed_rows, action_plot_rows_by_agent, action_timeline_by_agent
+        phase_queue_rows_by_agent = _build_validation_phase_queue_rows(
+            seed_phase_queue_traces,
+            max_agents=_validation_action_plot_max_agents(logging_cfg),
+        )
+    return summary, seed_rows, action_plot_rows_by_agent, action_timeline_by_agent, phase_queue_rows_by_agent
 
 
 def _evaluate(
@@ -908,7 +1187,7 @@ def _evaluate(
     *,
     include_validation_metrics: bool = False,
 ) -> Dict[str, Any]:
-    summary, _, _, _ = _evaluate_with_details(
+    summary, _, _, _, _ = _evaluate_with_details(
         cfg,
         run_dir,
         algo,
@@ -919,8 +1198,11 @@ def _evaluate(
     return summary
 
 
-def _validation_summary_row(summary: Dict[str, Any], *, step: int) -> Dict[str, Any]:
-    row: Dict[str, Any] = {"validation/env_step": float(step)}
+def _validation_summary_row(summary: Dict[str, Any], *, step: int, episode_index: int) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        "validation/env_step": float(step),
+        "validation/episode_index": float(episode_index),
+    }
     for key, value in summary.items():
         if key == "algorithm/kind":
             row[key] = value
@@ -938,6 +1220,13 @@ def _summary_step_from_metrics(metrics: Dict[str, Any]) -> int:
     if isinstance(candidate, (int, float, np.integer, np.floating)) and not isinstance(candidate, bool):
         return int(float(candidate))
     candidate = metrics.get("train/env_steps_sampled")
+    if isinstance(candidate, (int, float, np.integer, np.floating)) and not isinstance(candidate, bool):
+        return int(float(candidate))
+    return 0
+
+
+def _summary_episode_index_from_metrics(metrics: Dict[str, Any]) -> int:
+    candidate = metrics.get("train/episode_index", metrics.get("train/episodes_total"))
     if isinstance(candidate, (int, float, np.integer, np.floating)) and not isinstance(candidate, bool):
         return int(float(candidate))
     return 0
@@ -963,7 +1252,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     algo = None
     final_summary: Dict[str, Any] = {}
     best_validation_state = _init_best_validation_checkpoint_state(run_dir, algorithm_kind, logging_cfg)
-    latest_training_state: Dict[str, int] = {"env_step": 0}
+    latest_training_state: Dict[str, int] = {"env_step": 0, "episode_index": 0}
     validation_pass_state: Dict[str, int] = {"index": 0}
     try:
         config = _build_algorithm_config(cfg, run_dir, algorithm_kind)
@@ -975,6 +1264,10 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 int(latest_training_state.get("env_step", 0)),
                 int(_summary_step_from_metrics(metrics) or 0),
             )
+            latest_training_state["episode_index"] = max(
+                int(latest_training_state.get("episode_index", 0)),
+                int(_summary_episode_index_from_metrics(metrics) or 0),
+            )
             _log_outputs(wandb_run, csv_run, metrics, step=step)
 
         def _validate_and_log(step: int) -> Dict[str, Any]:
@@ -985,6 +1278,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 evaluation_seed_rows,
                 action_plot_rows_by_agent,
                 action_timeline_by_agent,
+                phase_queue_rows_by_agent,
             ) = _evaluate_with_details(
                 cfg,
                 run_dir,
@@ -993,15 +1287,18 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 logging_cfg,
                 include_validation_metrics=True,
             )
-            validation_row = _validation_summary_row(evaluation_summary, step=step)
+            episode_index = int(latest_training_state.get("episode_index", 0))
+            validation_row = _validation_summary_row(evaluation_summary, step=step, episode_index=episode_index)
             validation_row["validation/pass_index"] = float(pass_index)
             _log_outputs(wandb_run, csv_run, validation_row, step=step)
             _log_validation_action_plot_images(
                 wandb_run,
                 action_plot_rows_by_agent,
                 action_timeline_by_agent,
+                phase_queue_rows_by_agent,
                 pass_index=pass_index,
                 env_step=step,
+                episode_index=episode_index,
                 decision_seconds=decision_interval_seconds(cfg),
             )
             _consider_best_validation_checkpoint(

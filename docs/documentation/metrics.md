@@ -102,6 +102,7 @@ The shared training metrics are:
 
 The shared validation metrics are:
 
+- `validation/episode_index`
 - `validation/env_step`
 - `validation/pass_index`
 - `validation/reward_mean`
@@ -131,6 +132,7 @@ Validation-only W&B media can also be logged under:
 
 - `validation/actions_share/<agent_id>`
 - `validation/actions_timeline/<agent_id>`
+- `validation/phase_queue/<agent_id>`
 
 These are history-backed per-agent validation plot images for the validation passes.
 They are not scalar metrics, so they are intended for W&B panels rather than CSV analysis.
@@ -209,6 +211,7 @@ RLlib validation can also log two action-usage payloads per traffic-signal agent
 
 - `validation/actions_share/<agent_id>`
 - `validation/actions_timeline/<agent_id>`
+- `validation/phase_queue/<agent_id>`
 
 `validation/actions_share/<agent_id>` is a stacked area chart image built from the validation rollout's chosen discrete actions:
 
@@ -235,6 +238,13 @@ So with `delta_time=5`, the plotted share window spans `12` decisions.
 - each colored block shows which phase was active between adjacent decision steps
 - exactly one phase is active for each interval
 
+`validation/phase_queue/<agent_id>` is a per-intersection starvation diagnostic:
+
+- x-axis: environment time over the validation rollout
+- y-axis: queued halting vehicles
+- one line per green phase, using the incoming lanes served by that phase
+- the background tint marks which phase was active over each interval
+
 For multi-seed validation, the runner:
 
 1. builds one action trace per seed
@@ -242,12 +252,17 @@ For multi-seed validation, the runner:
 3. averages the per-step proportions across seeds for the share plot
 4. uses a per-step majority vote across seeds for the timeline plot
 
+The public step key for scalar validation charts in W&B is:
+
+- `validation/episode_index`
+
+This keeps train and validation traces aligned to completed training episodes.
+`validation/env_step` is still logged as a comparable progress field, and
+`validation/pass_index` remains the dense counter for validation-media history.
+
 The public step key for browsing validation plot versions is:
 
 - `validation/pass_index`
-
-This is a dense monotonic counter for validation passes.
-It is separate from `validation/env_step`, which stays as the comparable training-progress axis.
 
 #### How to view the W&B slider under the action plots
 

@@ -117,6 +117,7 @@ class TrafficSignal:
         self.out_lanes = [link[0][1] for link in self.sumo.trafficlight.getControlledLinks(self.id) if link]
         self.out_lanes = list(set(self.out_lanes))
         self.lanes_length = {lane: self.sumo.lane.getLength(lane) for lane in self.lanes + self.out_lanes}
+        self.phase_lanes = self._build_phase_lanes()
 
         self.observation_space = self.observation_fn.observation_space()
         self.action_space = spaces.Discrete(self.num_green_phases)
@@ -132,6 +133,7 @@ class TrafficSignal:
     def _build_phases(self):
         phases = self.sumo.trafficlight.getAllProgramLogics(self.id)[0].phases
         if self.env.fixed_ts:
+            self.green_phases = [phase for index, phase in enumerate(phases) if index % 2 == 0]
             self.num_green_phases = len(phases) // 2  # Number of green phases == number of phases (green+yellow) divided by 2
             return
 
@@ -163,6 +165,25 @@ class TrafficSignal:
         logic.phases = self.all_phases
         self.sumo.trafficlight.setProgramLogic(self.id, logic)
         self.sumo.trafficlight.setRedYellowGreenState(self.id, self.all_phases[0].state)
+
+    def _build_phase_lanes(self) -> List[List[str]]:
+        phase_lanes = []
+        controlled_links = self.sumo.trafficlight.getControlledLinks(self.id)
+        for phase in getattr(self, "green_phases", []):
+            lanes = []
+            state = getattr(phase, "state", "")
+            for signal_index, signal_state in enumerate(state):
+                if signal_state not in ("G", "g"):
+                    continue
+                if signal_index >= len(controlled_links):
+                    continue
+                links = controlled_links[signal_index] or []
+                for link in links:
+                    incoming_lane = link[0]
+                    if incoming_lane not in lanes:
+                        lanes.append(incoming_lane)
+            phase_lanes.append(lanes)
+        return phase_lanes
 
     @property
     def time_to_act(self):
@@ -338,6 +359,18 @@ class TrafficSignal:
             for veh in self.sumo.lane.getLastStepVehicleIDs(lane)
             if not _is_ghost_vehicle(veh) and self.sumo.vehicle.getSpeed(veh) < 0.1
         )
+
+    def get_phase_queued_counts(self) -> List[int]:
+        """Returns queued-vehicle counts for the lane groups served by each green phase."""
+        return [
+            sum(
+                1
+                for lane in phase_lanes
+                for veh in self.sumo.lane.getLastStepVehicleIDs(lane)
+                if not _is_ghost_vehicle(veh) and self.sumo.vehicle.getSpeed(veh) < 0.1
+            )
+            for phase_lanes in self.phase_lanes
+        ]
 
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""

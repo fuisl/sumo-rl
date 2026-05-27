@@ -91,7 +91,7 @@ def test_evaluate_closes_env_before_building_final_summary(monkeypatch, tmp_path
 
     def fake_run_episode_trace(*args, **kwargs):
         del args, kwargs
-        return 12.5, {"tls_1": [0, 1, 0]}, {"tls_1": 2}
+        return 12.5, {"tls_1": [0, 1, 0]}, {"tls_1": 2}, {"tls_1": []}
 
     def fake_build_summary(env, **kwargs):
         assert env.closed is True
@@ -189,7 +189,7 @@ def test_evaluate_validation_metrics_use_episode_summary_and_average_across_eval
 
     def fake_run_episode_trace(*args, **kwargs):
         del args, kwargs
-        return 999.0, {"tls_1": [0, 1, 1]}, {"tls_1": 2}
+        return 999.0, {"tls_1": [0, 1, 1]}, {"tls_1": 2}, {"tls_1": []}
 
     def fake_completed_episode_summary(env):
         return dict(episode_summaries[env.seed])
@@ -337,6 +337,32 @@ def test_build_validation_action_timeline_rows_uses_majority_vote_per_step_and_c
     assert timeline_by_agent == {"tls_a": [1, 1, 0]}
 
 
+def test_build_validation_phase_queue_rows_averages_counts_and_keeps_active_phase():
+    rows_by_agent = rllib_runner._build_validation_phase_queue_rows(
+        [
+            {
+                "tls_a": [
+                    {"step": 1.0, "active_phase": 0, "phase_queues": [4, 1]},
+                    {"step": 2.0, "active_phase": 1, "phase_queues": [2, 3]},
+                ]
+            },
+            {
+                "tls_a": [
+                    {"step": 1.0, "active_phase": 0, "phase_queues": [6, 3]},
+                    {"step": 2.0, "active_phase": 1, "phase_queues": [4, 5]},
+                ]
+            },
+        ]
+    )
+
+    assert rows_by_agent == {
+        "tls_a": [
+            {"step": 1.0, "active_phase": 0.0, "phase_0": 5.0, "phase_1": 2.0},
+            {"step": 2.0, "active_phase": 1.0, "phase_0": 3.0, "phase_1": 4.0},
+        ]
+    }
+
+
 def test_render_validation_action_plot_image_returns_chart_image():
     image = rllib_runner._render_validation_action_plot_image(
         "tls_1",
@@ -359,6 +385,20 @@ def test_render_validation_action_timeline_image_returns_chart_image():
     )
 
     assert image.size == (1040, 420)
+
+
+def test_render_validation_phase_queue_image_returns_chart_image():
+    image = rllib_runner._render_validation_phase_queue_image(
+        "tls_1",
+        [
+            {"step": 1.0, "active_phase": 0.0, "phase_0": 4.0, "phase_1": 1.0},
+            {"step": 2.0, "active_phase": 0.0, "phase_0": 5.0, "phase_1": 2.0},
+            {"step": 3.0, "active_phase": 1.0, "phase_0": 2.0, "phase_1": 6.0},
+        ],
+        decision_seconds=5,
+    )
+
+    assert image.size == (1040, 520)
 
 
 def test_log_validation_action_plot_images_emits_one_image_per_agent(monkeypatch):
@@ -393,21 +433,34 @@ def test_log_validation_action_plot_images_emits_one_image_per_agent(monkeypatch
             "tls_1": [0, 1, 1, 0],
             "tls_2": [1, 1, 0],
         },
+        {
+            "tls_1": [
+                {"step": 1.0, "active_phase": 0.0, "phase_0": 4.0, "phase_1": 2.0},
+            ],
+            "tls_2": [
+                {"step": 1.0, "active_phase": 1.0, "phase_0": 1.0, "phase_1": 3.0},
+            ],
+        },
         pass_index=3,
         env_step=120,
+        episode_index=18,
         decision_seconds=5,
     )
 
     assert len(run.calls) == 2
+    assert run.calls[0]["validation/episode_index"] == 18.0
     assert run.calls[0]["validation/pass_index"] == 3.0
     assert run.calls[0]["validation/env_step"] == 120.0
     assert isinstance(run.calls[0]["validation/actions_share/tls_1"], DummyImage)
     assert run.calls[0]["validation/actions_share/tls_1"].image.size == (1040, 560)
     assert isinstance(run.calls[0]["validation/actions_timeline/tls_1"], DummyImage)
     assert run.calls[0]["validation/actions_timeline/tls_1"].image.size == (1040, 420)
+    assert isinstance(run.calls[0]["validation/phase_queue/tls_1"], DummyImage)
+    assert run.calls[0]["validation/phase_queue/tls_1"].image.size == (1040, 520)
     assert "validation pass 3" in run.calls[0]["validation/actions_share/tls_1"].caption
     assert isinstance(run.calls[1]["validation/actions_share/tls_2"], DummyImage)
     assert isinstance(run.calls[1]["validation/actions_timeline/tls_2"], DummyImage)
+    assert isinstance(run.calls[1]["validation/phase_queue/tls_2"], DummyImage)
 
 
 def test_evaluate_with_details_returns_validation_action_plot_rows(monkeypatch, tmp_path):
@@ -426,8 +479,18 @@ def test_evaluate_with_details_returns_validation_action_plot_rows(monkeypatch, 
         return DummyEvalEnv(seed)
 
     action_traces_by_seed = {
-        7: (10.0, {"tls_1": [0, 1, 1]}, {"tls_1": 2}),
-        8: (12.0, {"tls_1": [1, 1, 0]}, {"tls_1": 2}),
+        7: (
+            10.0,
+            {"tls_1": [0, 1, 1]},
+            {"tls_1": 2},
+            {"tls_1": [{"step": 1.0, "active_phase": 0, "phase_queues": [3, 1]}]},
+        ),
+        8: (
+            12.0,
+            {"tls_1": [1, 1, 0]},
+            {"tls_1": 2},
+            {"tls_1": [{"step": 1.0, "active_phase": 0, "phase_queues": [5, 2]}]},
+        ),
     }
 
     def fake_run_episode_trace(algo, env, seed, *, policy_mode):
@@ -463,7 +526,7 @@ def test_evaluate_with_details_returns_validation_action_plot_rows(monkeypatch, 
         validation_action_plot_max_agents=None,
     )
 
-    summary, seed_rows, plot_rows, timeline_rows = rllib_runner._evaluate_with_details(
+    summary, seed_rows, plot_rows, timeline_rows, phase_queue_rows = rllib_runner._evaluate_with_details(
         cfg,
         tmp_path,
         algo=object(),
@@ -478,6 +541,7 @@ def test_evaluate_with_details_returns_validation_action_plot_rows(monkeypatch, 
     assert [row["step"] for row in plot_rows["tls_1"]] == [1.0, 2.0, 3.0]
     assert all(abs((row["action_0"] + row["action_1"]) - 1.0) <= 1e-9 for row in plot_rows["tls_1"])
     assert timeline_rows == {"tls_1": [0, 1, 0]}
+    assert phase_queue_rows == {"tls_1": [{"step": 1.0, "active_phase": 0.0, "phase_0": 4.0, "phase_1": 1.5}]}
 
 
 def test_best_validation_checkpoint_retention_writes_full_metadata_and_keeps_top_three(tmp_path):
@@ -994,10 +1058,12 @@ def test_validation_summary_row_maps_final_metrics_to_validation_namespace():
             "episode/sim_time_abs": 3600.0,
         },
         step=100,
+        episode_index=5,
     )
 
     assert row["algorithm/kind"] == "ppo"
     assert row["validation/env_step"] == 100.0
+    assert row["validation/episode_index"] == 5.0
     assert row["validation/reward_mean"] == 12.0
     assert row["validation/resco_delay_mean"] == 4.0
     assert row["validation/efficiency_total_arrived"] == 8.0
@@ -1049,6 +1115,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             [{"eval/seed": 1.0, "validation/resco_delay_mean": 12.0}],
             {"tls_1": [{"step": 1.0, "action_0": 1.0, "action_1": 0.0}]},
             {"tls_1": [0, 1, 0]},
+            {"tls_1": [{"step": 1.0, "active_phase": 0.0, "phase_0": 3.0, "phase_1": 1.0}]},
         ),
         (
             {
@@ -1060,6 +1127,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             [{"eval/seed": 1.0, "validation/resco_delay_mean": 9.0}],
             {"tls_1": [{"step": 1.0, "action_0": 0.5, "action_1": 0.5}]},
             {"tls_1": [1, 1, 0]},
+            {"tls_1": [{"step": 1.0, "active_phase": 1.0, "phase_0": 2.0, "phase_1": 4.0}]},
         ),
         (
             {
@@ -1071,6 +1139,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             [{"eval/seed": 1.0, "validation/resco_delay_mean": 11.0}],
             {"tls_1": [{"step": 1.0, "action_0": 0.25, "action_1": 0.75}]},
             {"tls_1": [1, 0, 1]},
+            {"tls_1": [{"step": 1.0, "active_phase": 1.0, "phase_0": 1.0, "phase_1": 5.0}]},
         ),
         (
             {
@@ -1082,6 +1151,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             [{"eval/seed": 1.0, "validation/resco_delay_mean": 8.0}],
             {"tls_1": [{"step": 1.0, "action_0": 0.75, "action_1": 0.25}]},
             {"tls_1": [0, 0, 1]},
+            {"tls_1": [{"step": 1.0, "active_phase": 0.0, "phase_0": 4.0, "phase_1": 2.0}]},
         ),
         (
             {
@@ -1093,12 +1163,13 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             [{"eval/seed": 1.0, "validation/resco_delay_mean": 7.0}],
             {"tls_1": [{"step": 1.0, "action_0": 0.0, "action_1": 1.0}]},
             {"tls_1": [1, 1, 1]},
+            {"tls_1": [{"step": 1.0, "active_phase": 1.0, "phase_0": 0.0, "phase_1": 6.0}]},
         ),
     ]
 
     def fake_train_algorithm(algo_obj, cfg, algorithm_kind, emit_metrics, validate=None):
         del algo_obj, cfg, algorithm_kind
-        emit_metrics({"train/env_step": 40.0}, 4)
+        emit_metrics({"train/env_step": 40.0, "train/episode_index": 4.0}, 4)
         validate({}, 10)
         validate({}, 20)
         validate({}, 30)
@@ -1107,9 +1178,9 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     def fake_evaluate_with_details(cfg, run_dir, algo_obj, algorithm_kind, logging_cfg, *, include_validation_metrics=False):
         del cfg, run_dir, algo_obj, algorithm_kind, logging_cfg
         if include_validation_metrics:
-            summary, seed_rows, plot_rows, timeline_rows = validation_summaries.pop(0)
-            return dict(summary), list(seed_rows), dict(plot_rows), dict(timeline_rows)
-        return {"algorithm/kind": "ppo", "final/resco/avg_delay": 7.0, "eval/episode": 1.0}, [], {}, {}
+            summary, seed_rows, plot_rows, timeline_rows, phase_queue_rows = validation_summaries.pop(0)
+            return dict(summary), list(seed_rows), dict(plot_rows), dict(timeline_rows), dict(phase_queue_rows)
+        return {"algorithm/kind": "ppo", "final/resco/avg_delay": 7.0, "eval/episode": 1.0}, [], {}, {}, {}
 
     monkeypatch.setitem(sys.modules, "ray", DummyRay)
     monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
@@ -1120,13 +1191,15 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     monkeypatch.setattr(
         rllib_runner,
         "_log_validation_action_plot_images",
-        lambda wandb_run, plot_rows_by_agent, action_timeline_by_agent, *, pass_index, env_step, decision_seconds: action_plot_logs.append(
+        lambda wandb_run, plot_rows_by_agent, action_timeline_by_agent, phase_queue_rows_by_agent, *, pass_index, env_step, episode_index, decision_seconds: action_plot_logs.append(
             {
                 "wandb_run": wandb_run,
                 "plot_rows_by_agent": plot_rows_by_agent,
                 "action_timeline_by_agent": action_timeline_by_agent,
+                "phase_queue_rows_by_agent": phase_queue_rows_by_agent,
                 "pass_index": pass_index,
                 "env_step": env_step,
+                "episode_index": episode_index,
                 "decision_seconds": decision_seconds,
             }
         ),
@@ -1155,13 +1228,17 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert len(algo.saved_paths) == 6
     assert any(Path(path).name == "ppo" for path in algo.saved_paths)
     assert [entry["pass_index"] for entry in action_plot_logs] == [1, 2, 3, 4, 5]
+    assert all(entry["episode_index"] == 4 for entry in action_plot_logs)
     assert all(entry["plot_rows_by_agent"]["tls_1"][0]["step"] == 1.0 for entry in action_plot_logs)
     assert all("tls_1" in entry["action_timeline_by_agent"] for entry in action_plot_logs)
+    assert all("tls_1" in entry["phase_queue_rows_by_agent"] for entry in action_plot_logs)
     assert all(entry["decision_seconds"] == 5 for entry in action_plot_logs)
     validation_rows = [args[2] for args, kwargs in logged_rows if isinstance(args[2], dict) and "validation/env_step" in args[2]]
     assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert all(row["validation/episode_index"] == 4.0 for row in validation_rows)
     assert result["validation/resco_delay_mean"] == 7.0
     assert result["validation/env_step"] == 40.0
+    assert result["validation/episode_index"] == 4.0
     assert result["validation/pass_index"] == 5.0
 
 
@@ -1207,15 +1284,20 @@ def test_log_outputs_lets_wandb_custom_step_axes_control_train_and_validation_st
     wandb_run = DummyWandbRun()
 
     _log_outputs(wandb_run, None, {"train/env_step": 40320.0, "train/episode_index": 62.0}, step=62)
-    _log_outputs(wandb_run, None, {"validation/env_step": 45360.0, "validation/reward_mean": 1.0}, step=45360)
+    _log_outputs(
+        wandb_run,
+        None,
+        {"validation/env_step": 45360.0, "validation/episode_index": 70.0, "validation/reward_mean": 1.0},
+        step=45360,
+    )
 
     assert wandb_run.calls == [
         ({"train/env_step": 40320.0, "train/episode_index": 62.0}, None),
-        ({"validation/env_step": 45360.0, "validation/reward_mean": 1.0}, None),
+        ({"validation/env_step": 45360.0, "validation/episode_index": 70.0, "validation/reward_mean": 1.0}, None),
     ]
 
 
-def test_init_wandb_binds_debug_metrics_to_train_env_step(monkeypatch, tmp_path):
+def test_init_wandb_binds_debug_metrics_to_train_episode_index(monkeypatch, tmp_path):
     class DummyRun:
         def __init__(self):
             self.metric_calls = []
@@ -1250,8 +1332,8 @@ def test_init_wandb_binds_debug_metrics_to_train_env_step(monkeypatch, tmp_path)
     result = _init_wandb(cfg, tmp_path)
 
     assert result is run
-    assert (("train/*",), {"step_metric": "train/env_step"}) in run.metric_calls
-    assert (("debug/*",), {"step_metric": "train/env_step"}) in run.metric_calls
+    assert (("train/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
+    assert (("debug/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
 
 
 def test_init_wandb_can_skip_final_metric_definitions(monkeypatch, tmp_path):
@@ -1289,6 +1371,6 @@ def test_init_wandb_can_skip_final_metric_definitions(monkeypatch, tmp_path):
     result = _init_wandb(cfg, tmp_path, include_final_metrics=False)
 
     assert result is run
-    assert (("validation/*",), {"step_metric": "validation/env_step"}) in run.metric_calls
+    assert (("validation/*",), {"step_metric": "validation/episode_index"}) in run.metric_calls
     assert all(args != ("final/*",) for args, kwargs in run.metric_calls)
     assert all(args != ("eval/episode",) for args, kwargs in run.metric_calls)

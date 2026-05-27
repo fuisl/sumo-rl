@@ -544,10 +544,12 @@ def _init_wandb(
         reinit="finish_previous",
     )
     try:
-        run.define_metric("train/*", step_metric="train/env_step")
-        run.define_metric("debug/*", step_metric="train/env_step")
+        run.define_metric("train/*", step_metric="train/episode_index")
+        run.define_metric("debug/*", step_metric="train/episode_index")
+        run.define_metric("train/episode_index")
         run.define_metric("train/env_step")
-        run.define_metric("validation/*", step_metric="validation/env_step")
+        run.define_metric("validation/*", step_metric="validation/episode_index")
+        run.define_metric("validation/episode_index")
         run.define_metric("validation/env_step")
         if include_final_metrics:
             run.define_metric("eval/episode")
@@ -666,7 +668,14 @@ def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int
                 log_step = int(candidate_step)
     if wandb_run is not None:
         has_custom_step_axis = any(
-            axis_key in metrics for axis_key in ("train/env_step", "validation/env_step", "eval/episode")
+            axis_key in metrics
+            for axis_key in (
+                "train/episode_index",
+                "train/env_step",
+                "validation/episode_index",
+                "validation/env_step",
+                "eval/episode",
+            )
         )
         if has_custom_step_axis:
             wandb_run.log(metrics)
