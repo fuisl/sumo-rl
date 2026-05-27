@@ -7,62 +7,12 @@ from typing import Any, Dict, Iterable, Sequence
 
 import torch
 from torch import nn
-import torch.nn.functional as F
+
+from sumo_rl.agents.graph_attention import CoLightGATLayer
 
 
 def _as_int_list(values: Iterable[int] | None, default: Sequence[int]) -> list[int]:
     return [int(value) for value in (values if values is not None else default)]
-
-
-class CoLightGATLayer(nn.Module):
-    """Index-free multi-head graph attention layer from CoLight."""
-
-    def __init__(self, input_dim: int, head_dim: int = 16, output_dim: int = 128, num_heads: int = 5) -> None:
-        super().__init__()
-        self.input_dim = int(input_dim)
-        self.head_dim = int(head_dim)
-        self.output_dim = int(output_dim)
-        self.num_heads = int(num_heads)
-        if self.num_heads < 1:
-            raise ValueError("CoLight requires at least one attention head.")
-
-        projected_dim = self.head_dim * self.num_heads
-        self.target_projection = nn.Linear(self.input_dim, projected_dim)
-        self.source_projection = nn.Linear(self.input_dim, projected_dim)
-        self.message_projection = nn.Linear(self.input_dim, projected_dim)
-        self.output_projection = nn.Linear(self.head_dim, self.output_dim)
-
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        num_nodes = int(x.shape[0])
-        self_loop_nodes = torch.arange(num_nodes, dtype=torch.long, device=x.device)
-        self_loops = torch.stack((self_loop_nodes, self_loop_nodes), dim=0)
-        edge_index = torch.cat((edge_index.to(device=x.device), self_loops), dim=1)
-        source_index = edge_index[0]
-        target_index = edge_index[1]
-
-        target = F.relu(self.target_projection(x[target_index])).view(-1, self.num_heads, self.head_dim)
-        source = F.relu(self.source_projection(x[source_index])).view(-1, self.num_heads, self.head_dim)
-        scores = torch.sum(target * source, dim=-1)
-
-        scatter_index = target_index.unsqueeze(-1).expand(-1, self.num_heads)
-        max_per_target = torch.full(
-            (num_nodes, self.num_heads),
-            -torch.inf,
-            dtype=scores.dtype,
-            device=scores.device,
-        )
-        max_per_target.scatter_reduce_(0, scatter_index, scores, reduce="amax", include_self=True)
-        centered = scores - max_per_target.index_select(0, target_index)
-        exp_scores = torch.exp(centered)
-        normalizer = torch.zeros((num_nodes, self.num_heads), dtype=scores.dtype, device=scores.device)
-        normalizer.scatter_add_(0, scatter_index, exp_scores)
-        alpha = (exp_scores / normalizer.index_select(0, target_index).clamp_min(1e-12)).unsqueeze(-1)
-
-        messages = F.relu(self.message_projection(x[source_index])).view(-1, self.num_heads, self.head_dim)
-        messages = torch.mean(messages * alpha, dim=1)
-        aggregated = torch.zeros((num_nodes, self.head_dim), dtype=messages.dtype, device=messages.device)
-        aggregated.scatter_add_(0, target_index.unsqueeze(-1).expand(-1, self.head_dim), messages)
-        return F.relu(self.output_projection(aggregated))
 
 
 class CoLightQNetwork(nn.Module):

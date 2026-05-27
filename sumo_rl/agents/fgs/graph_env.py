@@ -62,15 +62,26 @@ class FGSGraphParallelEnv:
 
     def _refresh_spaces(self) -> None:
         self._num_nodes = max(1, len(self.possible_agents))
-        local_dims = [int(self.env.observation_space(agent_id).shape[0]) for agent_id in self.possible_agents]
-        action_sizes = [int(self.env.action_space(agent_id).n) for agent_id in self.possible_agents]
-        if len(set(local_dims)) > 1:
-            raise ValueError("FGS v1 requires homogeneous observation dimensions across traffic signals.")
-        if len(set(action_sizes)) > 1:
-            raise ValueError("FGS v1 requires homogeneous discrete action spaces across traffic signals.")
-        self._node_feature_dim = local_dims[0] if local_dims else 1
-        self._num_actions = action_sizes[0] if action_sizes else 1
-        self._action_sizes = {agent_id: self._num_actions for agent_id in self.possible_agents}
+        self._raw_obs_dims = {
+            agent_id: int(self.env.observation_space(agent_id).shape[0])
+            for agent_id in self.possible_agents
+        }
+        self._action_sizes = {
+            agent_id: int(self.env.action_space(agent_id).n)
+            for agent_id in self.possible_agents
+        }
+        self._num_actions = max(self._action_sizes.values() or [1])
+        self._demand_widths = {}
+        for agent_id in self.possible_agents:
+            demand_width = self._raw_obs_dims[agent_id] - self._action_sizes[agent_id] - 1
+            if demand_width <= 0:
+                raise ValueError(
+                    "FGS expects default SUMO-RL observations shaped as "
+                    "[phase_one_hot, min_green, density, queue]."
+                )
+            self._demand_widths[agent_id] = demand_width
+        self._max_demand_width = max(self._demand_widths.values() or [1])
+        self._node_feature_dim = self._num_actions + 1 + self._max_demand_width
         self._edges, self._edge_weights = self._build_edges()
         self._max_edges = max(1, len(self._edges))
 
@@ -105,6 +116,20 @@ class FGSGraphParallelEnv:
         }
         shared_action_space = spaces.Discrete(self._num_actions)
         self.action_spaces = {agent_id: shared_action_space for agent_id in self.possible_agents}
+
+    def _canonical_local_obs(self, agent_id: str, obs: np.ndarray) -> np.ndarray:
+        action_size = self._action_sizes[agent_id]
+        raw = np.asarray(obs, dtype=np.float32).reshape(-1)
+        canonical = np.zeros(self._node_feature_dim, dtype=np.float32)
+        phase_width = min(action_size, raw.shape[0], self._num_actions)
+        canonical[:phase_width] = raw[:phase_width]
+        min_green_index = action_size
+        if raw.shape[0] > min_green_index:
+            canonical[self._num_actions] = raw[min_green_index]
+        demand = raw[action_size + 1 :]
+        demand_width = min(demand.shape[0], self._max_demand_width)
+        canonical[self._num_actions + 1 : self._num_actions + 1 + demand_width] = demand[:demand_width]
+        return canonical
 
     def _build_edges(self) -> tuple[list[tuple[int, int]], list[float]]:
         if self._topology is not None:
@@ -143,7 +168,7 @@ class FGSGraphParallelEnv:
         node_features = np.zeros((self._num_nodes, self._node_feature_dim), dtype=np.float32)
         for node_id, node_index in self._agent_to_index.items():
             if node_id in self._latest_local_obs:
-                node_features[node_index] = np.asarray(self._latest_local_obs[node_id], dtype=np.float32)
+                node_features[node_index] = self._canonical_local_obs(node_id, self._latest_local_obs[node_id])
 
         edge_index = np.zeros((2, self._max_edges), dtype=np.int64)
         edge_mask = np.zeros(self._max_edges, dtype=np.float32)
@@ -153,8 +178,11 @@ class FGSGraphParallelEnv:
             edge_mask[edge_offset] = 1.0
             edge_weight[edge_offset] = self._edge_weights[edge_offset]
 
-        action_mask = np.ones(self._num_actions, dtype=np.float32)
-        node_action_mask = np.ones((self._num_nodes, self._num_actions), dtype=np.float32)
+        action_mask = np.zeros(self._num_actions, dtype=np.float32)
+        action_mask[: self._action_sizes[agent_id]] = 1.0
+        node_action_mask = np.zeros((self._num_nodes, self._num_actions), dtype=np.float32)
+        for node_id, node_index in self._agent_to_index.items():
+            node_action_mask[node_index, : self._action_sizes[node_id]] = 1.0
         return {
             "node_features": node_features,
             "edge_index": edge_index,
@@ -178,7 +206,7 @@ class FGSGraphParallelEnv:
 
     def step(self, actions):
         clipped_actions = {
-            str(agent_id): int(np.clip(int(action), 0, self._num_actions - 1))
+            str(agent_id): int(np.clip(int(action), 0, self._action_sizes[str(agent_id)] - 1))
             for agent_id, action in dict(actions or {}).items()
         }
         local_obs, rewards, terminations, truncations, infos = self.env.step(clipped_actions)
@@ -205,4 +233,3 @@ class FGSGraphParallelEnv:
         if callable(save):
             return save(out_csv_name, episode)
         return None
-

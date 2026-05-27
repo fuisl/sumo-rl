@@ -9,8 +9,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from sumo_rl.agents.colight.model import CoLightGATLayer
 from sumo_rl.agents.frap.model import build_competition_mask, normalize_phase_pairs
+from sumo_rl.agents.graph_attention import CoLightGATLayer
 
 
 def _mlp(input_dim: int, hidden_dims: Iterable[int], output_dim: int, activation: str = "relu") -> nn.Sequential:
@@ -253,4 +253,3 @@ class CentralGraphPolicyCritic(nn.Module):
             dim=-1,
         )
         return self.net(features)
-

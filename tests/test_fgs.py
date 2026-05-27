@@ -141,28 +141,39 @@ class _DummyParallelEnv:
 
     def observation_space(self, agent_id):
         if self.heterogeneous and agent_id == "tls_1":
-            return Box(0.0, 1.0, shape=(12,), dtype=np.float32)
+            return Box(0.0, 1.0, shape=(7,), dtype=np.float32)
         return Box(0.0, 1.0, shape=(13,), dtype=np.float32)
 
     def action_space(self, agent_id):
-        del agent_id
+        if self.heterogeneous and agent_id == "tls_1":
+            return Discrete(2)
         return Discrete(4)
 
     def reset(self, seed=None, options=None):
         del seed, options
         obs = np.zeros(13, dtype=np.float32)
         obs[0] = 1.0
+        if self.heterogeneous:
+            small_obs = np.array([0.0, 1.0, 1.0, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)
+            return {"tls_0": obs, "tls_1": small_obs}, {"tls_0": {}, "tls_1": {}}
         return {"tls_0": obs, "tls_1": obs + 0.25}, {"tls_0": {}, "tls_1": {}}
 
     def step(self, actions):
         self.last_actions = actions
         obs = np.zeros(13, dtype=np.float32)
         obs[0] = 1.0
+        if self.heterogeneous:
+            local_obs = {
+                "tls_0": obs,
+                "tls_1": np.array([1.0, 0.0, 1.0, 0.4, 0.3, 0.2, 0.1], dtype=np.float32),
+            }
+        else:
+            local_obs = {"tls_0": obs, "tls_1": obs + 0.5}
         rewards = {"tls_0": 1.0, "tls_1": 2.0}
         terminations = {"tls_0": False, "tls_1": False, "__all__": False}
         truncations = {"tls_0": False, "tls_1": False, "__all__": False}
         infos = {"tls_0": {}, "tls_1": {}}
-        return {"tls_0": obs, "tls_1": obs + 0.5}, rewards, terminations, truncations, infos
+        return local_obs, rewards, terminations, truncations, infos
 
     def close(self):
         pass
@@ -179,9 +190,25 @@ def test_fgs_graph_wrapper_builds_stable_graph_observations():
     assert obs["tls_1"]["ego_index"].item() == 1
 
 
-def test_fgs_graph_wrapper_rejects_heterogeneous_observations():
-    with pytest.raises(ValueError, match="homogeneous observation"):
-        FGSGraphParallelEnv(_DummyParallelEnv(heterogeneous=True), topology_source="direct_lane")
+def test_fgs_graph_wrapper_canonicalizes_heterogeneous_default_observations():
+    env = FGSGraphParallelEnv(_DummyParallelEnv(heterogeneous=True), topology_source="direct_lane")
+
+    obs, _ = env.reset(seed=7)
+
+    assert obs["tls_0"]["node_features"].shape == (2, 13)
+    assert obs["tls_1"]["action_mask"].tolist() == [1.0, 1.0, 0.0, 0.0]
+    assert obs["tls_1"]["node_action_mask"].tolist() == [
+        [1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 0.0, 0.0],
+    ]
+    assert obs["tls_1"]["node_features"][1].tolist() == pytest.approx(
+        [0.0, 1.0, 0.0, 0.0, 1.0, 0.2, 0.3, 0.4, 0.5, 0.0, 0.0, 0.0, 0.0]
+    )
+
+    env.step({"tls_0": 3, "tls_1": 3})
+
+    assert env.env.last_actions["tls_0"] == 3
+    assert env.env.last_actions["tls_1"] == 1
 
 
 def test_fgs_module_inference_and_train_outputs_discrete_sac_tensors():
@@ -259,4 +286,3 @@ def test_fgs_rejects_independent_policy_mode(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError, match="policy_mode=shared"):
         fgs.build_config(cfg, tmp_path)
-

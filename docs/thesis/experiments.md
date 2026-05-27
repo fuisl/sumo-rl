@@ -71,6 +71,10 @@ CoLight is available as `algorithm=colight`. It uses a shared graph-attention
 Q-network over the whole traffic-signal graph and forces
 `algorithm.params.policy_mode=shared`, because independent policies would remove
 the network-level cooperation that defines CoLight.
+The attention layer is implemented with PyTorch Geometric's `MessagePassing`
+API in the LibSignal CoLight style: RLlib observations remain plain dict
+tensors, while PyG handles self-loops and target-node-wise attention inside the
+model.
 CoLight also writes a SUMO map overlay of its directed topology to
 `topology/colight_topology.svg` plus a machine-readable edge list at
 `topology/colight_topology_edges.json` inside the run directory.
@@ -107,6 +111,9 @@ through the wrapper and selects one discrete phase. During training, the twin
 critics receive the full graph embedding plus all nodes' current policy
 distributions, avoiding exponential joint-action enumeration while keeping the
 critic centralized.
+FGS reuses the same PyTorch Geometric `MessagePassing` attention layer as
+CoLight, so the graph API is shared while the FRAP encoder and SAC heads remain
+FGS-specific.
 
 FGS defaults to the existing `diff-waiting-time` reward. Its graph construction
 defaults to the TLS super-edge parser inspired by HMARL-TSC: it reads the SUMO

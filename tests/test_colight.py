@@ -23,6 +23,7 @@ from sumo_rl.agents.colight.graph_env import CoLightGraphParallelEnv, make_colig
 from sumo_rl.agents.colight.model import CoLightGATLayer, CoLightQNetwork
 from sumo_rl.agents.colight.rllib_module import build_colight_dqn_module_spec
 from sumo_rl.agents.colight.topology import render_colight_topology
+from sumo_rl.agents.graph_attention import CoLightPyGAttentionLayer
 from sumo_rl.experiments import rllib_runner
 
 
@@ -73,8 +74,37 @@ def test_colight_gat_layer_supports_self_loops_without_edges():
 
     output = layer(x, edge_index)
 
+    assert isinstance(layer, CoLightPyGAttentionLayer)
     assert output.shape == (3, 6)
     assert torch.isfinite(output).all()
+
+
+def test_colight_batched_edge_flattening_keeps_samples_disconnected():
+    model = CoLightQNetwork(
+        node_feature_dim=4,
+        num_nodes=2,
+        num_actions=4,
+        node_embedding_dims=[8],
+        num_heads=1,
+        head_dim=4,
+        gat_output_dim=8,
+    )
+    obs = _graph_obs(batch_size=2)
+
+    edge_index = model._flatten_edges(obs)
+
+    assert edge_index.tolist() == [[0, 1, 2, 3], [1, 0, 3, 2]]
+
+
+def test_repo_gat_code_does_not_import_torch_scatter_directly():
+    agent_dir = ROOT / "sumo_rl" / "agents"
+    offenders = []
+    for path in agent_dir.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if "torch_scatter" in text:
+            offenders.append(path.relative_to(ROOT).as_posix())
+
+    assert offenders == []
 
 
 def test_colight_action_mask_makes_invalid_q_values_very_negative():
