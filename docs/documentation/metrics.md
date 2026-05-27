@@ -38,8 +38,9 @@ The repo logs metrics at four different stages.
 The runner uses these namespaces:
 
 - `train/*`: training-trace namespace for shared episode-level metrics such as `train/resco_*`, selected throughput totals, and `train/safety_*`
+- `validation/*`: periodic eval namespace for train-comparable episode metrics averaged across the eval seeds in that validation pass
 - `debug/*`: per-agent reward traces, end-of-episode snapshot diagnostics, and debug-only trainer diagnostics
-- `eval/*`: periodic evaluation traces
+- `final/*`: final explicit evaluation summary metrics
 - `summary/*`: run-level aggregate rows, mostly seed averages
 
 The underscore aliases such as `resco_avg_delay` are still logged for compatibility.
@@ -99,6 +100,41 @@ The shared training metrics are:
 - `train/safety_*`
 - `debug/reward/<agent_id>`
 
+The shared validation metrics are:
+
+- `validation/env_step`
+- `validation/pass_index`
+- `validation/reward_mean`
+- `validation/reward_max`
+- `validation/reward_std`
+- `validation/resco_delay_mean`
+- `validation/resco_delay_max`
+- `validation/resco_delay_std`
+- `validation/resco_wait_mean`
+- `validation/resco_wait_max`
+- `validation/resco_wait_std`
+- `validation/resco_trip_time_mean`
+- `validation/resco_queue_mean`
+- `validation/resco_queue_max`
+- `validation/resco_tripinfo_count`
+- `validation/efficiency_total_arrived`
+- `validation/efficiency_total_departed`
+- `validation/safety_total_teleported`
+- `validation/safety_total_emergency_brake`
+- `validation/safety_total_collisions`
+- `validation/eval/episode`
+- `validation/episode/sim_time_abs`
+- `validation/episode/elapsed_seconds`
+- `validation/warnings/*`
+
+Validation-only W&B media can also be logged under:
+
+- `validation/actions_share/<agent_id>`
+- `validation/actions_timeline/<agent_id>`
+
+These are history-backed per-agent validation plot images for the validation passes.
+They are not scalar metrics, so they are intended for W&B panels rather than CSV analysis.
+
 The debug-only training metrics are:
 
 - `debug/efficiency_total_running`
@@ -147,12 +183,142 @@ Removed from the always-on RLlib training trace:
 | `debug/episode_return_*` | RLlib runners | trainer-return summary for the training iteration | debug trace mode only |
 | `debug/ppo/entropy_mean` | PPO runner | trainer-level learner entropy diagnostic when available | debug trace mode only |
 | `debug/sac/entropy_mean` | SAC runner | trainer-level learner entropy diagnostic when available | debug trace mode only |
-| `eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
-| `eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
+| `final/eval/mean_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
+| `final/eval/std_reward` | algorithm runner or final evaluation pass | evaluation rollout output | final evaluation summary only |
 
 For SAC, RLlib now consumes the same multi-agent discrete action setup as PPO and DQN.
 That means the logged SAC training rewards come from RLlib's multi-agent training result,
 not from a project-side joint-action reward reduction wrapper.
+
+### Validation traces
+
+Periodic RLlib validation logs train-comparable metrics under `validation/*`.
+For metrics that also exist in training, the formulas match the training trace:
+
+- `validation/reward_mean|max|std` come from the completed eval episode summary's per-agent reward totals
+- `validation/resco_*` come from the same completed eval episode summary fields used for `train/resco_*`
+- `validation/efficiency_total_arrived|departed` and `validation/safety_*` come from the eval episode's cached `system_*` summary fields
+
+When validation uses multiple eval seeds, the runner builds one per-seed summary row and then logs one validation point whose scalar values are the arithmetic mean across those seeds.
+Redundant `validation/eval/*`, `validation/resco/*`, `validation/efficiency/*`, `validation/safety/*`, and `validation/tripinfo/*` aliases are intentionally omitted from the periodic validation surface.
+The legacy `eval/*` alias namespace is also intentionally omitted; final evaluation metrics live under `final/*` and periodic comparisons live under `validation/*`.
+
+#### Validation action-distribution plots
+
+RLlib validation can also log two action-usage payloads per traffic-signal agent:
+
+- `validation/actions_share/<agent_id>`
+- `validation/actions_timeline/<agent_id>`
+
+`validation/actions_share/<agent_id>` is a stacked area chart image built from the validation rollout's chosen discrete actions:
+
+- x-axis: environment time over the validation rollout
+- y-axis: sliding-window action proportion
+- one colored band per discrete action / green phase
+- the stacked values sum to `1.0` at each plotted step
+
+The rolling window represents one minute of environment time:
+
+- `logging.log_validation_action_plots`
+- `logging.validation_action_plot_max_agents`
+
+The runner derives the share window from the decision interval:
+
+- `window_steps = round(60 / decision_interval_seconds)`
+
+So with `delta_time=5`, the plotted share window spans `12` decisions.
+
+`validation/actions_timeline/<agent_id>` is a whole-episode phase timeline image:
+
+- x-axis: environment time over the validation rollout
+- y-axis: discrete phase index
+- each colored block shows which phase was active between adjacent decision steps
+- exactly one phase is active for each interval
+
+For multi-seed validation, the runner:
+
+1. builds one action trace per seed
+2. converts each trace into sliding-window proportions for the share plot
+3. averages the per-step proportions across seeds for the share plot
+4. uses a per-step majority vote across seeds for the timeline plot
+
+The public step key for browsing validation plot versions is:
+
+- `validation/pass_index`
+
+This is a dense monotonic counter for validation passes.
+It is separate from `validation/env_step`, which stays as the comparable training-progress axis.
+
+#### How to view the W&B slider under the action plots
+
+The runner logs one image per validation pass under the same media key for each plot type.
+W&B keeps the history of those images, so you can browse the validation passes with the slider under the media panel.
+
+Recommended setup:
+
+1. Open the run in W&B.
+2. Add a panel.
+3. Select one logged media key such as:
+   - `validation/actions_share/<agent_id>`
+   - `validation/actions_timeline/<agent_id>`
+4. Open that panel as an image/media panel.
+5. Use the slider under the panel to move across validation passes.
+
+In both cases:
+
+- the slider moves between validation passes
+- the chart x-axis inside each image still shows within-rollout environment time for the selected pass
+- one panel corresponds to one traffic-light agent
+
+### Best validation checkpoints
+
+RLlib runs can also retain the top validation checkpoints under:
+
+- `outputs/<run>/checkpoints/<algorithm_kind>/best_validation/`
+
+The retention settings are controlled by:
+
+- `logging.save_best_validation_checkpoints`
+- `logging.best_validation_checkpoint_count`
+- `logging.best_validation_metric`
+
+The current runner ranks retained checkpoints by lower `validation/resco_delay_mean`.
+Each retained entry is listed in `best_validation/metadata.json` together with:
+
+- checkpoint path
+- validation pass index
+- `validation/env_step`
+- metric value used for ranking
+- the aggregated validation summary for that checkpoint, without any `final/*` aliases
+- the per-seed eval rows used to compute the aggregate, also without `final/*` aliases
+
+The runner keeps only the best `N` validation checkpoints on disk and rewrites the metadata file after every retained update.
+
+### Loading saved weights correctly
+
+To reload one of the retained best-validation checkpoints:
+
+1. Read `best_validation/metadata.json` and pick the retained checkpoint entry you want.
+2. Rebuild the same RLlib algorithm kind with a compatible config for the same scenario and reward setup.
+3. Restore the checkpoint with the RLlib checkpoint API, not by manually loading partial module weights.
+4. Evaluate using the same eval seed schedule if you want comparable `validation/resco_delay_mean` values.
+
+The intended restore pattern is:
+
+```python
+algo = config.build()
+algo.restore_from_path(checkpoint_path)
+```
+
+If the algorithm only exposes `restore(...)`, use that fallback instead.
+For reproducible comparison, keep the same:
+
+- algorithm kind
+- scenario/env wiring
+- reward definition
+- eval seed schedule
+
+Restored evaluation results may not be bit-identical across machines or library versions, but they should stay close to the stored validation result within a documented tolerance.
 
 ## Shared Episode Summary Metrics
 
@@ -277,10 +443,12 @@ These runners use:
 - PettingZoo parallel env
 - SuperSuit padding when the RESCO scenario has heterogeneous agent spaces
 - RLlib shared-policy multi-agent training
-- a final explicit evaluation pass after training
+- one forced last validation pass at the end of training
 
-For multi-seed evaluation, the runner builds one cached summary per eval seed and then averages the numeric `final/*`, `tripinfo/*`, and episode-time fields into one final row.
+For multi-seed evaluation, the runner builds one cached summary per eval seed and then averages the validation-facing scalar metrics into one validation row.
 Warnings are kept if any eval seed shows the problem.
+The last forced validation pass is the canonical end-of-run RLlib result; the RLlib path no longer publishes a separate final benchmark namespace.
+If validation action plots are enabled, that forced last validation pass also logs the final `validation/actions_share/<agent_id>` and `validation/actions_timeline/<agent_id>` payloads and advances `validation/pass_index` once more.
 
 ### SAC through RLlib
 
@@ -290,7 +458,7 @@ as PPO and DQN:
 - PettingZoo parallel env
 - SuperSuit padding when shared-policy mode needs aligned spaces
 - RLlib multi-agent discrete policies
-- a final explicit evaluation pass after training
+- one forced last validation pass at the end of training
 
 ## Problems Found And Corrected
 

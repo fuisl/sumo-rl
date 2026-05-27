@@ -105,4 +105,4 @@ pip install -e ".[rllib-custom]"
 - The existing environment and algorithm examples still run through the same underlying SUMO-RL code paths.
 - The RESCO summary log is the canonical run artifact for comparing against the benchmark formulas.
 - Run names now put the scenario first, for example `resco_grid4x4__fixed_time` or `resco_cologne1__static_max_pressure`.
-- Short smoke runs should watch the `train/` and `eval/` traces in addition to the episode-end summary rows.
+- Short smoke runs should watch the `train/` and `validation/` traces in addition to the episode-end summary rows.

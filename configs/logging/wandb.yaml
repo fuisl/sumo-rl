@@ -11,10 +11,14 @@ eval_freq: 5000
 trace_mode: training
 train_log_freq_steps: 1
 train_log_freq_episodes: 1
-validation_log_freq_episodes: 1
 checkpoint_freq: 5000
 log_every_seconds: 200
 save_checkpoints: true
+save_best_validation_checkpoints: true
+best_validation_checkpoint_count: 3
+best_validation_metric: validation/resco_delay_mean
+log_validation_action_plots: true
+validation_action_plot_max_agents: null
 save_final_model: true
 save_tripinfo_output: false
 log_traffic_metrics_during_training: false

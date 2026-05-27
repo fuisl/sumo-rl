@@ -503,7 +503,13 @@ def _get_run_dir() -> Path:
     return Path("outputs") / f"run_{timestamp}"
 
 
-def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = None):
+def _init_wandb(
+    cfg: DictConfig,
+    run_dir: Path,
+    *,
+    run_name: Optional[str] = None,
+    include_final_metrics: bool = True,
+):
     logging_cfg = cfg.logging
     if not logging_cfg.enabled:
         return None
@@ -543,11 +549,12 @@ def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = Non
         run.define_metric("train/env_step")
         run.define_metric("validation/*", step_metric="validation/env_step")
         run.define_metric("validation/env_step")
-        run.define_metric("eval/*", step_metric="eval/episode")
-        run.define_metric("final/*", step_metric="eval/episode")
-        run.define_metric("tripinfo/*", step_metric="eval/episode")
-        run.define_metric("episode/*", step_metric="eval/episode")
-        run.define_metric("warnings/*", step_metric="eval/episode")
+        if include_final_metrics:
+            run.define_metric("eval/episode")
+            run.define_metric("final/*", step_metric="eval/episode")
+            run.define_metric("tripinfo/*", step_metric="eval/episode")
+            run.define_metric("episode/*", step_metric="eval/episode")
+            run.define_metric("warnings/*", step_metric="eval/episode")
     except Exception:
         pass
     return run
@@ -952,8 +959,6 @@ def _build_final_eval_summary_row(
         "algorithm/kind": algorithm_kind,
         "final/eval/mean_reward": float(eval_mean_reward),
         "final/eval/std_reward": float(eval_std_reward),
-        "eval/mean_reward": float(eval_mean_reward),
-        "eval/std_reward": float(eval_std_reward),
         "episode/sim_time_abs": float(summary.get("episode/sim_time_abs", summary.get("episode/steps", 0.0))),
         "episode/elapsed_seconds": float(summary.get("episode/elapsed_seconds", 0.0)),
     }
@@ -962,24 +967,6 @@ def _build_final_eval_summary_row(
 
     if _logging_flag(logging_cfg, "log_final_traffic_metrics", True):
         eval_traffic_row = {
-            "eval/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
-            "eval/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
-            "eval/resco/wait": float(summary.get("resco_wait", float("nan"))),
-            "eval/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
-            "eval/resco/queue": float(summary.get("resco_queue", float("nan"))),
-            "eval/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
-            "eval/tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
-            "eval/tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
-            "eval/tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
-            "eval/tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
-            "eval/tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
-            "eval/tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
-            "eval/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
-            "eval/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
-            "eval/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
-            "eval/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
-            "eval/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
-            "eval/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
             "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
             "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
             "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
