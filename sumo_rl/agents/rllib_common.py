@@ -661,6 +661,12 @@ def extract_rllib_result_metrics(result: Dict[str, Any], *, algorithm_kind: str,
     return metrics
 
 
+def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
+    """Backward-compatible alias for algorithm modules using the old helper name."""
+
+    return extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
+
+
 def extract_entropy_mean(value: Any) -> Optional[float]:
     candidates: list[tuple[int, float]] = []
 
@@ -794,6 +800,8 @@ def _append_debug_metrics(row: Dict[str, Any], metrics: Dict[str, Any]) -> None:
         "train/ppo/learners/": "debug/ppo/learners/",
         "train/dqn/learners/": "debug/dqn/learners/",
         "train/dqn/replay/": "debug/dqn/replay/",
+        "train/dcrnn/learners/": "debug/dcrnn/learners/",
+        "train/dcrnn/replay/": "debug/dcrnn/replay/",
         "train/sac/learners/": "debug/sac/learners/",
         "train/sac/replay/": "debug/sac/replay/",
     }
