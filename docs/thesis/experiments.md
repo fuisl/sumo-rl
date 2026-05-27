@@ -11,7 +11,7 @@ If you are onboarding to the codebase, read [docs/thesis/engineering_guide.md](e
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
 If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
 
-The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, and SAC.
+The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, FRAP, SAC, and DCRNN.
 
 ## Hydra
 Hydra is used as the experiment composition layer.
@@ -52,6 +52,7 @@ python experiments/static_max_pressure.py scenario=resco_cologne1
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dcrnn scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
@@ -64,6 +65,13 @@ custom RLModule replaces the Q-network with the paper's phase-competition
 architecture. The default model config consumes SUMO-RL's default observation as
 `[phase_one_hot, min_green, density, queue]` and treats `[density, queue]` as the
 per-movement demand vector by using the split density/queue layout.
+
+DCRNN is available as `algorithm=dcrnn`. It is a DQN-family RLlib method that
+wraps the PettingZoo parallel environment with graph observations shaped as
+`[history_len, num_nodes, density_queue_features]`, then replaces the Q-network
+with a diffusion-convolutional recurrent encoder. The first version supports
+independent policies only; shared graph communication with existing models is a
+future extension.
 
 SAC now uses RLlib's native discrete-action support. The repo hands each traffic
 signal its own discrete action space through the multi-agent RLlib wrapper, and

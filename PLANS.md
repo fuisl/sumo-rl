@@ -28,6 +28,13 @@ This project will be organized in phases so the thesis work stays incremental an
 - Add a short benchmark comparison note or table that states which fields are canonical for thesis reporting and how they map to the raw RESCO tripinfo values.
 - Verify the max-pressure and greedy presets still produce the intended five-seed summary behavior on the RESCO scenarios.
 
+### Phase 5: Runner-Native Graph Models
+- Status: initial DCRNN path implemented; runtime smoke tests still depend on SUMO, Ray/RLlib, and PyTorch.
+- Add reusable traffic-signal graph topology and density/queue graph observation utilities.
+- Add a graph-observation wrapper for RLlib runners without changing existing PPO, DQN, FRAP, SAC, or static paths.
+- Add the first graph algorithm as `algorithm=dcrnn`, using a DCRNN Q-network through the current runner, W&B, CSV, evaluation, and checkpoint flow.
+- Keep v1 restricted to independent policies; shared graph data passing into current models is a future extension.
+
 ## Assumptions
 - `SUMO_HOME` remains required for all simulation runs.
 - W&B should support disabled or offline mode for local development.

@@ -31,6 +31,7 @@ from sumo_rl.experiments.runner import (
 )
 from sumo_rl.experiments.metric_utils import map_system_metrics_to_namespaces
 from sumo_rl.agents.dqn import dqn as dqn_agent
+from sumo_rl.agents.dcrnn import dcrnn as dcrnn_agent
 from sumo_rl.agents.frap import frap as frap_agent
 from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.rllib_common import (
@@ -46,7 +47,7 @@ from sumo_rl.agents.rllib_common import (
 from sumo_rl.agents.sac import sac as sac_agent
 
 
-SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, frap_agent.KIND, *sac_agent.KINDS}
+SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, dcrnn_agent.KIND, frap_agent.KIND, *sac_agent.KINDS}
 
 
 def _eval_seeds(cfg: DictConfig) -> list[int]:
@@ -73,6 +74,8 @@ def _algorithm_module(algorithm_kind: str):
         return ppo_agent
     if algorithm_kind == dqn_agent.KIND:
         return dqn_agent
+    if algorithm_kind == dcrnn_agent.KIND:
+        return dcrnn_agent
     if algorithm_kind == frap_agent.KIND:
         return frap_agent
     if algorithm_kind in sac_agent.KINDS:
@@ -93,6 +96,19 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
         module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
     else:
         module.train(algo, cfg, emit_metrics=emit_metrics, validate=validate)
+
+
+def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, algorithm_kind: str, policy_mode: str):
+    module = _algorithm_module(algorithm_kind)
+    build_graph_eval_env = getattr(module, "build_graph_eval_env", None)
+    if callable(build_graph_eval_env):
+        return build_graph_eval_env(cfg, run_dir, seed=seed)
+    return build_rllib_parallel_env(
+        cfg,
+        run_dir,
+        seed=seed,
+        pad_spaces=(policy_mode == "shared"),
+    )
 
 
 def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
@@ -1107,12 +1123,7 @@ def _evaluate_with_details(
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
         eval_episode = seed_index + 1
-        eval_env = build_rllib_parallel_env(
-            cfg,
-            run_dir,
-            seed=seed,
-            pad_spaces=(policy_mode == "shared"),
-        )
+        eval_env = _build_eval_env(cfg, run_dir, seed, algorithm_kind, policy_mode)
         try:
             episode_reward, action_traces, action_space_sizes, phase_queue_traces = _run_multi_agent_episode_trace(
                 algo,

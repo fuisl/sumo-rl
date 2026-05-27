@@ -210,11 +210,12 @@ python experiments/fixed_time.py scenario=resco_grid4x4
 python experiments/static_max_pressure.py scenario=resco_cologne1
 ```
 
-### RLlib PPO, DQN, FRAP, and SAC:
+### RLlib PPO, DQN, FRAP, DCRNN, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dcrnn scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
 ```
@@ -225,6 +226,11 @@ uses the SUMO-RL observation tail as per-movement demand features
 `[density_i, queue_i]` from the default split observation layout; override
 `algorithm.params.model_config.phase_pairs` when a network needs custom
 movement-pair ordering.
+
+DCRNN is implemented as a DQN-family RLlib module with a graph-observation
+wrapper. It builds a traffic-signal graph from incoming/outgoing lanes and feeds
+rolling density/queue histories to a diffusion-convolutional recurrent
+Q-network. The first version supports independent policies.
 
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
