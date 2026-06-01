@@ -645,6 +645,12 @@ def _prepare_row_for_wandb(row: Dict[str, Any], logging_cfg, *, include_debug: b
     return prepared
 
 
+def _rllib_validation_helpers():
+    from sumo_rl.experiments import rllib_runner
+
+    return rllib_runner
+
+
 def _reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:
     return _metric_reward_formula_text(reward_fn, reward_weights)
 
@@ -913,23 +919,6 @@ def _validation_seed_metrics(episode_summary: Dict[str, Any]) -> Dict[str, Any]:
     return row
 
 
-def _validation_summary_row(summary: Dict[str, Any], *, step: int, episode_index: int) -> Dict[str, Any]:
-    row: Dict[str, Any] = {
-        "validation/env_step": float(step),
-        "validation/episode_index": float(episode_index),
-    }
-    for key, value in summary.items():
-        if key == "algorithm/kind":
-            row[key] = value
-        elif key.startswith("validation/"):
-            row[key] = value
-        elif key.startswith("warnings/"):
-            row[f"validation/{key}"] = value
-        elif key in {"episode/sim_time_abs", "episode/elapsed_seconds", "eval/episode"}:
-            row[f"validation/{key}"] = value
-    return row
-
-
 def _episode_index_from_summary(summary: Any) -> Optional[float]:
     if not isinstance(summary, dict):
         return None
@@ -1155,10 +1144,7 @@ def _baseline_line_episode_stride(cfg: DictConfig) -> int:
     explicit = getattr(logging_cfg, "baseline_line_episode_stride", None) if logging_cfg is not None else None
     if explicit not in (None, "", 0, "0", False):
         return max(1, int(explicit))
-    validation_interval = getattr(cfg.experiment, "validation_interval_episodes", None)
-    if validation_interval not in (None, "", 0, "0", False):
-        return max(1, int(validation_interval))
-    return 1
+    return 5
 
 
 def _emit_baseline_reference_validation_rows(
@@ -1180,6 +1166,29 @@ def _emit_baseline_reference_validation_rows(
         row["validation/env_step"] = float(episode_index * steps_per_episode)
         row["validation/reference_line"] = True
         _log_outputs(wandb_run, csv_run, row, step=episode_index * steps_per_episode)
+
+
+def _static_validation_summary_row(
+    summary: Dict[str, Any],
+    *,
+    step: int,
+    episode_index: int,
+    policy_name: str,
+    pass_index: int,
+) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        "algorithm/kind": summary.get("algorithm/kind"),
+        "static/policy": policy_name,
+        "validation/env_step": float(step),
+        "validation/episode_index": float(episode_index),
+        "validation/pass_index": float(pass_index),
+    }
+    for key, value in summary.items():
+        if key.startswith("validation/"):
+            row[key] = value
+        elif key.startswith("warnings/"):
+            row[f"validation/{key}"] = value
+    return row
 
 
 def _update_wandb_summary(wandb_run, metrics: Dict[str, Any]) -> None:
@@ -1281,42 +1290,105 @@ def _episode_reward_total(base_env: Any) -> float:
     return float(np.sum(values)) if values else 0.0
 
 
-def _run_static_validation_episode(env, *, policy=None) -> tuple[Any, float]:
+def _action_space_size_for_static_signal(base_env: Any, agent_id: str) -> int:
+    action_space_fn = getattr(base_env, "action_spaces", None)
+    if callable(action_space_fn):
+        try:
+            space = action_space_fn(agent_id)
+        except TypeError:
+            space = action_space_fn()
+        if hasattr(space, "n"):
+            return max(0, int(space.n))
+    traffic_signal = getattr(base_env, "traffic_signals", {}).get(agent_id)
+    green_phases = getattr(traffic_signal, "green_phases", None) if traffic_signal is not None else None
+    if isinstance(green_phases, list):
+        return max(0, len(green_phases))
+    return 0
+
+
+def _fixed_time_step_action(env, base_env: Any, agent_ids: list[str]) -> Any:
+    candidates = [env, getattr(env, "unwrapped", None), base_env]
+    expects_mapping = any(
+        candidate is not None and (hasattr(candidate, "possible_agents") or hasattr(candidate, "agents"))
+        for candidate in candidates
+    )
+    if not expects_mapping:
+        return None
+    return {
+        agent_id: int(getattr(base_env.traffic_signals[agent_id], "green_phase", 0) or 0) for agent_id in agent_ids
+    }
+
+
+def _run_static_validation_episode_trace(env, *, policy=None):
     base_env = _get_base_env(env)
-    if policy is None:
+    validation_helpers = _rllib_validation_helpers()
+    agent_ids = [str(agent_id) for agent_id in getattr(base_env, "ts_ids", [])]
+    action_traces = {agent_id: [] for agent_id in agent_ids}
+    action_space_sizes = {
+        agent_id: _action_space_size_for_static_signal(base_env, agent_id) for agent_id in agent_ids
+    }
+    phase_queue_traces = {agent_id: [] for agent_id in agent_ids}
+    tripinfo_path = validation_helpers._validation_tripinfo_output_path(env)
+    has_keep_tripinfo_output = hasattr(base_env, "keep_tripinfo_output")
+    original_keep_tripinfo_output = getattr(base_env, "keep_tripinfo_output", None)
+    if has_keep_tripinfo_output:
+        base_env.keep_tripinfo_output = True
+
+    try:
         reset_result = env.reset()
         if isinstance(reset_result, tuple):
-            _obs, _info = reset_result
+            _obs = reset_result[0]
         done = False
         while not done:
-            next_step = env.step(None)
+            if policy is None:
+                next_step = env.step(_fixed_time_step_action(env, base_env, agent_ids))
+                actions = {
+                    agent_id: int(getattr(base_env.traffic_signals[agent_id], "green_phase", 0) or 0)
+                    for agent_id in agent_ids
+                }
+            else:
+                actions = {agent_id: policy.select_action(base_env.traffic_signals[agent_id]) for agent_id in agent_ids}
+                next_step = env.step(actions)
+
+            for agent_id, action in actions.items():
+                action_traces[agent_id].append(int(action))
+
             if len(next_step) == 5:
                 _obs, _reward, terminated, truncated, _info = next_step
-                done = bool(terminated or truncated)
+                if isinstance(terminated, dict):
+                    done = bool(terminated.get("__all__", False) or truncated.get("__all__", False))
+                else:
+                    done = bool(terminated or truncated)
             else:
                 _obs, _reward, dones, _info = next_step
                 done = bool(dones["__all__"])
-        return base_env, _episode_reward_total(base_env)
 
-    reset_result = env.reset()
-    if isinstance(reset_result, tuple):
-        _obs = reset_result[0]
-    done = False
-    while not done:
-        actions = {ts_id: policy.select_action(base_env.traffic_signals[ts_id]) for ts_id in base_env.ts_ids}
-        next_step = env.step(actions)
-        if len(next_step) == 5:
-            _obs, _reward, terminated, truncated, _info = next_step
-            if isinstance(terminated, dict):
-                terminated_all = bool(terminated.get("__all__", False))
-                truncated_all = bool(truncated.get("__all__", False))
-                done = terminated_all or truncated_all
-            else:
-                done = bool(terminated or truncated)
-        else:
-            _obs, _reward, dones, _info = next_step
-            done = bool(dones["__all__"])
-    return base_env, _episode_reward_total(base_env)
+            phase_queue_snapshot = validation_helpers._collect_phase_queue_snapshot(env, agent_ids)
+            for agent_id, agent_snapshot in phase_queue_snapshot.items():
+                phase_queue_traces[agent_id].append(
+                    {
+                        "step": float(len(phase_queue_traces[agent_id]) + 1),
+                        "active_phase": int(agent_snapshot["active_phase"]),
+                        "phase_queues": [int(value) for value in agent_snapshot["phase_queues"]],
+                    }
+                )
+    finally:
+        try:
+            env.close()
+        finally:
+            if has_keep_tripinfo_output:
+                base_env.keep_tripinfo_output = original_keep_tripinfo_output
+
+    episode_summary = _get_completed_episode_summary(env)
+    return (
+        base_env,
+        _episode_reward_total(base_env),
+        episode_summary,
+        action_traces,
+        action_space_sizes,
+        phase_queue_traces,
+        tripinfo_path,
+    )
 
 
 def _run_validation_only_static_baseline(
@@ -1329,45 +1401,53 @@ def _run_validation_only_static_baseline(
     policy_name: str,
     policy=None,
 ) -> None:
+    validation_helpers = _rllib_validation_helpers()
     seeds = _get_validation_run_seeds(cfg)
     csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
     seed_rows: list[Dict[str, Any]] = []
+    seed_action_traces = []
+    seed_action_space_sizes = []
+    seed_phase_queue_traces = []
+    seed_artifacts = []
 
     for seed_index, seed in enumerate(seeds):
         env = _build_env(cfg, run_dir, seed=seed)
-        try:
-            base_env, episode_reward = _run_static_validation_episode(env, policy=policy)
-            save_env = base_env if hasattr(base_env, "save_csv") else env
-            save_env.save_csv(str(csv_prefix), seed_index + 1)
-            save_env.close()
+        (
+            base_env,
+            episode_reward,
+            episode_summary,
+            action_traces,
+            action_space_sizes,
+            phase_queue_traces,
+            tripinfo_path,
+        ) = _run_static_validation_episode_trace(env, policy=policy)
+        save_env = base_env if hasattr(base_env, "save_csv") else env
+        save_env.save_csv(str(csv_prefix), seed_index + 1)
 
-            episode_summary = _get_completed_episode_summary(base_env)
-            seed_row = _build_final_eval_summary_row(
-                base_env,
-                algorithm_kind=algorithm_kind,
-                eval_mean_reward=episode_reward,
-                eval_std_reward=0.0,
-                eval_episodes=1,
-                logging_cfg=cfg.logging,
-                extra={
-                    "eval/seed": float(seed),
-                    "eval/seed_index": float(seed_index),
-                    "eval/episode": float(seed_index + 1),
-                    "run_seed": float(seed),
-                    "static/policy": policy_name,
-                },
+        seed_row = _build_final_eval_summary_row(
+            base_env,
+            algorithm_kind=algorithm_kind,
+            eval_mean_reward=episode_reward,
+            eval_std_reward=0.0,
+            eval_episodes=1,
+            logging_cfg=cfg.logging,
+        )
+        seed_row.update(_validation_seed_metrics(episode_summary))
+        seed_rows.append(seed_row)
+        seed_action_traces.append(action_traces)
+        seed_action_space_sizes.append(action_space_sizes)
+        seed_phase_queue_traces.append(phase_queue_traces)
+        seed_artifacts.append(
+            validation_helpers._extract_validation_seed_artifacts(
+                seed=seed,
+                tripinfo_path=tripinfo_path,
+                episode_summary=episode_summary,
+                action_traces=action_traces,
+                action_space_sizes=action_space_sizes,
+                phase_queue_traces=phase_queue_traces,
+                remove_tripinfo_after_parse=not bool(getattr(cfg.logging, "save_tripinfo_output", False)),
             )
-            seed_row.update(_validation_seed_metrics(episode_summary))
-            _log_episode_summary(
-                wandb_run,
-                csv_run,
-                seed_row,
-                step=seed_index + 1,
-                logging_cfg=cfg.logging,
-            )
-            seed_rows.append(seed_row)
-        finally:
-            env.close()
+        )
 
     eval_mean_reward = float(np.mean([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
     eval_std_reward = float(np.std([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
@@ -1378,27 +1458,51 @@ def _run_validation_only_static_baseline(
         eval_std_reward=eval_std_reward,
         eval_episodes=len(seeds),
     )
-    summary["eval/episode"] = float(len(seeds))
-    summary["static/policy"] = policy_name
-    _log_episode_summary(
-        wandb_run,
-        csv_run,
-        summary,
-        step=len(seeds),
-        logging_cfg=cfg.logging,
+    action_plot_rows_by_agent = validation_helpers._build_validation_action_plot_rows(
+        seed_action_traces,
+        seed_action_space_sizes,
+        window_size=validation_helpers._validation_action_window_steps(cfg),
+        max_agents=validation_helpers._validation_action_plot_max_agents(cfg.logging),
     )
+    action_timeline_by_agent = validation_helpers._build_validation_action_timeline_rows(
+        seed_action_traces,
+        seed_action_space_sizes,
+        max_agents=validation_helpers._validation_action_plot_max_agents(cfg.logging),
+    )
+    phase_queue_rows_by_agent = validation_helpers._build_validation_phase_queue_rows(
+        seed_phase_queue_traces,
+        max_agents=validation_helpers._validation_action_plot_max_agents(cfg.logging),
+    )
+    tripinfo_distributions = validation_helpers._aggregate_validation_tripinfo_distributions(seed_artifacts)
 
-    validation_row = _validation_summary_row(
+    stride = _baseline_line_episode_stride(cfg)
+    template_validation_row = _static_validation_summary_row(
         summary,
-        step=len(seeds) * _episode_steps_from_cfg(cfg),
-        episode_index=len(seeds),
+        step=stride * _episode_steps_from_cfg(cfg),
+        episode_index=stride,
+        policy_name=policy_name,
+        pass_index=1,
     )
-    validation_row["validation/pass_index"] = 1.0
-    _log_outputs(wandb_run, csv_run, validation_row, step=int(validation_row["validation/env_step"]))
-    _emit_baseline_reference_validation_rows(cfg, wandb_run, csv_run, validation_row)
+    _emit_baseline_reference_validation_rows(cfg, wandb_run, csv_run, template_validation_row)
+    validation_helpers._log_validation_action_plot_images(
+        wandb_run,
+        action_plot_rows_by_agent,
+        action_timeline_by_agent,
+        phase_queue_rows_by_agent,
+        pass_index=1,
+        env_step=int(template_validation_row["validation/env_step"]),
+        episode_index=int(template_validation_row["validation/episode_index"]),
+        decision_seconds=validation_helpers.decision_interval_seconds(cfg),
+    )
+    validation_helpers._log_validation_tripinfo_distribution_images(
+        wandb_run,
+        tripinfo_distributions,
+        pass_index=1,
+        env_step=int(template_validation_row["validation/env_step"]),
+        episode_index=int(template_validation_row["validation/episode_index"]),
+    )
     if wandb_run is not None:
-        _update_wandb_summary(wandb_run, summary)
-        _update_wandb_summary(wandb_run, validation_row)
+        _update_wandb_summary(wandb_run, template_validation_row)
 
 
 def _build_ql_agents_direct(env, cfg: DictConfig, initial_states: Dict[str, Any]):
@@ -1677,7 +1781,8 @@ def run(cfg: DictConfig) -> None:
 
     algorithm_kind = cfg.algorithm.kind
 
-    wandb_run = _init_wandb(cfg, run_dir)
+    include_final_metrics = algorithm_kind not in {"fixed_time", "static_max_pressure"}
+    wandb_run = _init_wandb(cfg, run_dir, include_final_metrics=include_final_metrics)
     csv_run = _LocalMetricsCsvLogger(run_dir / "logs" / "metrics.csv")
     try:
         if algorithm_kind == "fixed_time":

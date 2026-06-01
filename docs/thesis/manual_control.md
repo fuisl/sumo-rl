@@ -7,15 +7,13 @@ firstpage:
 
 This guide explains how to run SUMO-RL in fixed-time mode with Hydra and inspect the results in Weights & Biases.
 
-The fixed-time presets in this thesis use five seeds, one episode per seed, and the runner writes a final average summary.
+The fixed-time presets in this thesis use five seeds, one episode per seed, and the runner averages those validation passes into one RLlib-style baseline trace.
 The summary is computed with RESCO-style formulas:
 
 - `resco_avg_delay` from tripinfo `timeLoss`
 - `resco_trip_time` from tripinfo `duration`
 - `resco_wait` from tripinfo `waitingTime`
 - `resco_queue` and `resco_max_queue` from the live queue counts in the simulator
-
-The per-run identifier in the logs is `run_seed`, not the base config seed.
 
 ## How to Read These Docs
 

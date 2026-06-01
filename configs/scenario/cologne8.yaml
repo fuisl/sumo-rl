@@ -1,6 +1,6 @@
 # @package _global_
 scenario:
-  name: cologne8
+  name: resco_cologne8
 
 env:
   factory: cologne8

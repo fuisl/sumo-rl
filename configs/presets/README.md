@@ -34,7 +34,7 @@ The static baseline presets now follow the RLlib validation seed layout:
 
 - `experiment.eval_seeds` is used when present
 - the thesis presets pin `eval_seeds: [1, 2, 3, 4, 5]`
-- the final summary remains the mean across those seed rows
+- the baseline logs only the averaged `validation/*` result, replayed every 5 episodes through episode 500 by default
 
 RLlib methods are named in `configs/algorithm/` instead:
 

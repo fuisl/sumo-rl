@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 from sumo_rl.experiments.runner import run
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="presets/resco_grid4x4/static_max_pressure")
+@hydra.main(version_base=None, config_path="../configs", config_name="static_max_pressure")
 def main(cfg: DictConfig) -> None:
     run(cfg)
 

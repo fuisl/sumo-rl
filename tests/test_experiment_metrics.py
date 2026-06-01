@@ -29,7 +29,8 @@ _build_episode_benchmark_summary_row = _RUNNER_MODULE._build_episode_benchmark_s
 _build_final_eval_summary_row = _RUNNER_MODULE._build_final_eval_summary_row
 _get_validation_run_seeds = _RUNNER_MODULE._get_validation_run_seeds
 _emit_baseline_reference_validation_rows = _RUNNER_MODULE._emit_baseline_reference_validation_rows
-_run_static_validation_episode = _RUNNER_MODULE._run_static_validation_episode
+_static_validation_summary_row = _RUNNER_MODULE._static_validation_summary_row
+_run_static_validation_episode_trace = _RUNNER_MODULE._run_static_validation_episode_trace
 
 
 def _summary_env(tmp_path, tripinfo_xml: str):
@@ -334,11 +335,53 @@ def test_emit_baseline_reference_validation_rows_replays_constant_validation_poi
     assert all(metrics["validation/reference_line"] is True for metrics, _step in calls)
 
 
-def test_run_static_validation_episode_uses_none_actions_for_fixed_time() -> None:
+def test_static_validation_summary_row_keeps_only_validation_and_warning_metrics() -> None:
+    row = _static_validation_summary_row(
+        {
+            "algorithm/kind": "fixed_time",
+            "validation/resco_delay_mean": 7.5,
+            "warnings/no_finished_trips": False,
+            "eval/episode": 5.0,
+            "final/eval/mean_reward": 9.0,
+            "final/resco/avg_delay": 7.5,
+        },
+        step=3600,
+        episode_index=5,
+        policy_name="fixed_time",
+        pass_index=1,
+    )
+
+    assert row["algorithm/kind"] == "fixed_time"
+    assert row["static/policy"] == "fixed_time"
+    assert row["validation/env_step"] == 3600.0
+    assert row["validation/episode_index"] == 5.0
+    assert row["validation/pass_index"] == 1.0
+    assert row["validation/resco_delay_mean"] == 7.5
+    assert row["validation/warnings/no_finished_trips"] is False
+    assert "eval/episode" not in row
+    assert "validation/eval/episode" not in row
+    assert all(not key.startswith("final/") for key in row)
+
+
+def test_run_static_validation_episode_trace_uses_none_actions_for_fixed_time() -> None:
+    class DummySignal:
+        def __init__(self, green_phase: int) -> None:
+            self.green_phase = green_phase
+
     class DummyBaseEnv:
         def __init__(self) -> None:
             self.metrics = []
+            self.ts_ids = ["tls_1", "tls_2"]
+            self.keep_tripinfo_output = False
             self.episode_agent_reward_totals = {"tls_1": 2.0, "tls_2": 3.0}
+            self.traffic_signals = {
+                "tls_1": DummySignal(1),
+                "tls_2": DummySignal(0),
+            }
+
+        def action_spaces(self, agent_id):
+            del agent_id
+            return SimpleNamespace(n=2)
 
     class DummyEnv:
         def __init__(self) -> None:
@@ -353,12 +396,342 @@ def test_run_static_validation_episode_uses_none_actions_for_fixed_time() -> Non
             self.actions.append(action)
             self.steps += 1
             done = self.steps >= 2
+            self.base_env.traffic_signals["tls_1"].green_phase = self.steps % 2
+            self.base_env.traffic_signals["tls_2"].green_phase = 0
             return {}, {}, False, done, {}
 
-    env = DummyEnv()
+        def close(self):
+            return None
 
-    base_env, reward_total = _run_static_validation_episode(env, policy=None)
+    helper = SimpleNamespace(
+        _validation_tripinfo_output_path=lambda env: Path("dummy-tripinfo.xml"),
+        _collect_phase_queue_snapshot=lambda env, agent_ids: {
+            agent_id: {"active_phase": 0, "phase_queues": [1, 2]} for agent_id in agent_ids
+        },
+    )
+
+    env = DummyEnv()
+    original_helpers = _RUNNER_MODULE._rllib_validation_helpers
+    original_summary = _RUNNER_MODULE._get_completed_episode_summary
+    try:
+        _RUNNER_MODULE._rllib_validation_helpers = lambda: helper
+        _RUNNER_MODULE._get_completed_episode_summary = lambda env: {"reward/mean": 2.5}
+        (
+            base_env,
+            reward_total,
+            episode_summary,
+            action_traces,
+            action_space_sizes,
+            phase_queue_traces,
+            tripinfo_path,
+        ) = _run_static_validation_episode_trace(env, policy=None)
+    finally:
+        _RUNNER_MODULE._rllib_validation_helpers = original_helpers
+        _RUNNER_MODULE._get_completed_episode_summary = original_summary
 
     assert base_env is env.base_env
     assert reward_total == 5.0
+    assert episode_summary["reward/mean"] == 2.5
     assert env.actions == [None, None]
+    assert action_traces["tls_1"] == [1, 0]
+    assert action_space_sizes["tls_1"] == 2
+    assert len(phase_queue_traces["tls_1"]) == 2
+    assert tripinfo_path == Path("dummy-tripinfo.xml")
+
+
+def test_run_static_validation_episode_trace_uses_mapping_actions_for_parallel_fixed_time_envs() -> None:
+    class DummySignal:
+        def __init__(self, green_phase: int) -> None:
+            self.green_phase = green_phase
+
+    class DummyBaseEnv:
+        def __init__(self) -> None:
+            self.metrics = []
+            self.ts_ids = ["tls_1"]
+            self.keep_tripinfo_output = False
+            self.episode_agent_reward_totals = {"tls_1": 4.0}
+            self.traffic_signals = {"tls_1": DummySignal(0)}
+
+        def action_spaces(self, agent_id):
+            del agent_id
+            return SimpleNamespace(n=2)
+
+    class DummyParallelEnv:
+        def __init__(self) -> None:
+            self.base_env = DummyBaseEnv()
+            self.possible_agents = ["tls_1"]
+            self.agents = ["tls_1"]
+            self.actions = []
+            self.steps = 0
+
+        def reset(self):
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(action)
+            self.steps += 1
+            done = self.steps >= 2
+            self.base_env.traffic_signals["tls_1"].green_phase = self.steps % 2
+            return {}, {}, False, done, {}
+
+        def close(self):
+            return None
+
+    helper = SimpleNamespace(
+        _validation_tripinfo_output_path=lambda env: Path("dummy-tripinfo.xml"),
+        _collect_phase_queue_snapshot=lambda env, agent_ids: {
+            agent_id: {"active_phase": 0, "phase_queues": [1, 2]} for agent_id in agent_ids
+        },
+    )
+
+    env = DummyParallelEnv()
+    original_helpers = _RUNNER_MODULE._rllib_validation_helpers
+    original_summary = _RUNNER_MODULE._get_completed_episode_summary
+    try:
+        _RUNNER_MODULE._rllib_validation_helpers = lambda: helper
+        _RUNNER_MODULE._get_completed_episode_summary = lambda env: {"reward/mean": 4.0}
+        _run_static_validation_episode_trace(env, policy=None)
+    finally:
+        _RUNNER_MODULE._rllib_validation_helpers = original_helpers
+        _RUNNER_MODULE._get_completed_episode_summary = original_summary
+
+    assert env.actions == [{"tls_1": 0}, {"tls_1": 1}]
+
+
+def test_max_pressure_policy_skips_malformed_controlled_links() -> None:
+    from sumo_rl.agents.static.policies import MaxPressurePolicy
+
+    class DummyLaneAPI:
+        def getLastStepHaltingNumber(self, lane_id):
+            return {"in_ok": 4, "out_ok": 1}.get(lane_id, 0)
+
+    class DummyTrafficLightAPI:
+        def getControlledLinks(self, traffic_light_id):
+            del traffic_light_id
+            return [
+                (),
+                ((None,),),
+                (("in_ok", "out_ok", None),),
+            ]
+
+    traffic_signal = SimpleNamespace(
+        id="tls_1",
+        green_phases=[SimpleNamespace(state="GGG")],
+        sumo=SimpleNamespace(
+            trafficlight=DummyTrafficLightAPI(),
+            lane=DummyLaneAPI(),
+        ),
+    )
+
+    assert MaxPressurePolicy().select_action(traffic_signal) == 0
+
+
+def test_max_pressure_policy_scores_all_unique_lanes_in_phase() -> None:
+    from sumo_rl.agents.static.policies import MaxPressurePolicy
+
+    class DummyLaneAPI:
+        def getLastStepHaltingNumber(self, lane_id):
+            values = {
+                "in_a": 5,
+                "in_b": 4,
+                "out_a": 1,
+                "out_b": 2,
+                "out_c": 6,
+            }
+            return values.get(lane_id, 0)
+
+    class DummyTrafficLightAPI:
+        def getControlledLinks(self, traffic_light_id):
+            del traffic_light_id
+            return [
+                (("in_a", "out_a", None), ("in_a", "out_b", None)),
+                (("in_b", "out_c", None),),
+            ]
+
+    traffic_signal = SimpleNamespace(
+        id="tls_1",
+        green_phases=[
+            SimpleNamespace(state="Gr"),
+            SimpleNamespace(state="rG"),
+        ],
+        sumo=SimpleNamespace(
+            trafficlight=DummyTrafficLightAPI(),
+            lane=DummyLaneAPI(),
+        ),
+    )
+
+    assert MaxPressurePolicy().select_action(traffic_signal) == 0
+
+
+def test_run_validation_only_static_baseline_logs_only_repeated_validation_rows_and_graphs_once() -> None:
+    logged_rows = []
+    action_plot_calls = []
+    tripinfo_calls = []
+    run_calls = {"count": 0}
+
+    class DummyEnv:
+        pass
+
+    helper = SimpleNamespace(
+        _extract_validation_seed_artifacts=lambda **kwargs: {"seed": kwargs["seed"]},
+        _aggregate_validation_tripinfo_distributions=lambda artifacts: {
+            "waiting_time": [],
+            "delay": [],
+            "pooled_waiting_time": [],
+            "pooled_delay": [],
+            "total_seeds": len(artifacts),
+            "seeds_with_completed_trips": 0,
+            "seeds_without_completed_trips": len(artifacts),
+            "total_completed_trips": 0,
+            "total_unfinished_trips": 0,
+            "total_trips": 0,
+        },
+        _build_validation_action_plot_rows=lambda *args, **kwargs: {"tls_1": [{"step": 1.0, "action_0": 1.0}]},
+        _build_validation_action_timeline_rows=lambda *args, **kwargs: {"tls_1": [0]},
+        _build_validation_phase_queue_rows=lambda *args, **kwargs: {
+            "tls_1": [{"step": 1.0, "active_phase": 0.0, "phase_0": 1.0}]
+        },
+        _validation_action_window_steps=lambda cfg: 12,
+        _validation_action_plot_max_agents=lambda logging_cfg: None,
+        _log_validation_action_plot_images=lambda *args, **kwargs: action_plot_calls.append((args, kwargs)),
+        _log_validation_tripinfo_distribution_images=lambda *args, **kwargs: tripinfo_calls.append((args, kwargs)),
+        decision_interval_seconds=lambda cfg: 5,
+    )
+
+    def fake_run_static_trace(env, *, policy=None):
+        del env, policy
+        run_calls["count"] += 1
+        index = run_calls["count"]
+        base_env = SimpleNamespace(
+            ts_ids=["tls_1"],
+            traffic_signals={"tls_1": object()},
+            save_csv=lambda prefix, idx: None,
+        )
+        episode_summary = {
+            "reward/mean": float(2 * index),
+            "reward/max": float(2 * index + 1),
+            "reward/std": 1.0,
+            "resco_delay_mean": float(10 + index),
+            "resco_delay_max": float(12 + index),
+            "resco_delay_std": 0.5,
+            "resco_wait_mean": float(5 + index),
+            "resco_wait_max": float(6 + index),
+            "resco_wait_std": 0.25,
+            "resco_queue_mean": float(index),
+            "resco_queue_max": float(index + 2),
+            "resco_trip_time_mean": float(20 + index),
+            "resco_tripinfo_count": float(7 + index),
+            "system_total_arrived": float(10 + index),
+            "system_total_departed": float(11 + index),
+            "system_total_teleported": float(index - 1),
+            "system_total_emergency_brake": float(index),
+            "system_total_collisions": 0.0,
+        }
+        return (
+            base_env,
+            float(100 + index),
+            episode_summary,
+            {"tls_1": [0, 1]},
+            {"tls_1": 2},
+            {"tls_1": [{"step": 1.0, "active_phase": 0, "phase_queues": [1, 2]}]},
+            Path(f"tripinfo_{index}.xml"),
+        )
+
+    def fake_build_final_eval_summary_row(env, **kwargs):
+        del env
+        return {
+            "algorithm/kind": kwargs["algorithm_kind"],
+            "final/eval/mean_reward": kwargs["eval_mean_reward"],
+            "final/eval/std_reward": kwargs["eval_std_reward"],
+            "warnings/no_finished_trips": False,
+            "warnings/no_departed_vehicles": False,
+            "warnings/no_arrived_vehicles": False,
+            "warnings/no_final_summary_metrics": False,
+            "warnings/eval_episodes_too_low": False,
+            "warnings/all_zero_traffic_metrics": False,
+        }
+
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(episode_seconds=100),
+        env=SimpleNamespace(kwargs=SimpleNamespace(delta_time=5)),
+        logging=SimpleNamespace(
+            baseline_line_max_episode_index=15,
+            baseline_line_episode_stride=5,
+            save_tripinfo_output=False,
+        ),
+    )
+
+    original_helpers = _RUNNER_MODULE._rllib_validation_helpers
+    original_build_env = _RUNNER_MODULE._build_env
+    original_run_trace = _RUNNER_MODULE._run_static_validation_episode_trace
+    original_build_final = _RUNNER_MODULE._build_final_eval_summary_row
+    original_get_seeds = _RUNNER_MODULE._get_validation_run_seeds
+    original_log_outputs = _RUNNER_MODULE._log_outputs
+    original_prepare_env_kwargs = _RUNNER_MODULE._prepare_env_kwargs
+    try:
+        _RUNNER_MODULE._rllib_validation_helpers = lambda: helper
+        _RUNNER_MODULE._build_env = lambda cfg, run_dir, seed=None: DummyEnv()
+        _RUNNER_MODULE._run_static_validation_episode_trace = fake_run_static_trace
+        _RUNNER_MODULE._build_final_eval_summary_row = fake_build_final_eval_summary_row
+        _RUNNER_MODULE._get_validation_run_seeds = lambda cfg: [1, 2]
+        _RUNNER_MODULE._log_outputs = lambda wandb_run, csv_run, metrics, step=None: logged_rows.append((metrics, step))
+        _RUNNER_MODULE._prepare_env_kwargs = lambda cfg, run_dir: {"out_csv_name": str(Path("dummy"))}
+        _RUNNER_MODULE._run_validation_only_static_baseline(
+            cfg,
+            Path("."),
+            wandb_run=None,
+            csv_run=None,
+            algorithm_kind="fixed_time",
+            policy_name="fixed_time",
+            policy=None,
+        )
+    finally:
+        _RUNNER_MODULE._rllib_validation_helpers = original_helpers
+        _RUNNER_MODULE._build_env = original_build_env
+        _RUNNER_MODULE._run_static_validation_episode_trace = original_run_trace
+        _RUNNER_MODULE._build_final_eval_summary_row = original_build_final
+        _RUNNER_MODULE._get_validation_run_seeds = original_get_seeds
+        _RUNNER_MODULE._log_outputs = original_log_outputs
+        _RUNNER_MODULE._prepare_env_kwargs = original_prepare_env_kwargs
+
+    assert [row["validation/episode_index"] for row, _step in logged_rows] == [5.0, 10.0, 15.0]
+    assert [row["validation/env_step"] for row, _step in logged_rows] == [100.0, 200.0, 300.0]
+    assert all(row["validation/pass_index"] == 1.0 for row, _step in logged_rows)
+    assert all(row["static/policy"] == "fixed_time" for row, _step in logged_rows)
+    assert all("validation/resco_delay_mean" in row for row, _step in logged_rows)
+    assert all("validation/warnings/no_finished_trips" in row for row, _step in logged_rows)
+    assert all("final/eval/mean_reward" not in row for row, _step in logged_rows)
+    assert all("eval/episode" not in row for row, _step in logged_rows)
+    assert all("validation/eval/episode" not in row for row, _step in logged_rows)
+    assert len(action_plot_calls) == 1
+    assert len(tripinfo_calls) == 1
+
+
+def test_static_launchers_use_neutral_top_level_configs() -> None:
+    fixed_time_launcher = (ROOT / "experiments" / "fixed_time.py").read_text(encoding="utf-8")
+    static_launcher = (ROOT / "experiments" / "static_max_pressure.py").read_text(encoding="utf-8")
+
+    assert 'config_name="fixed_time"' in fixed_time_launcher
+    assert 'config_name="static_max_pressure"' in static_launcher
+    assert 'config_name="presets/resco_grid4x4/fixed_time"' not in fixed_time_launcher
+    assert 'config_name="presets/resco_grid4x4/static_max_pressure"' not in static_launcher
+
+
+def test_static_max_pressure_presets_derive_run_name_from_selected_scenario() -> None:
+    preset_paths = [
+        ROOT / "configs" / "presets" / "resco_grid4x4" / "static_max_pressure.yaml",
+        ROOT / "configs" / "presets" / "resco_cologne1" / "static_max_pressure.yaml",
+        ROOT / "configs" / "presets" / "resco_ingolstadt1" / "static_max_pressure.yaml",
+    ]
+
+    for preset_path in preset_paths:
+        preset_text = preset_path.read_text(encoding="utf-8")
+        assert "name: ${scenario.name}__static_max_pressure" in preset_text
+
+
+def test_cologne8_and_ingolstadt21_scenarios_use_resco_prefixed_names() -> None:
+    cologne8_text = (ROOT / "configs" / "scenario" / "cologne8.yaml").read_text(encoding="utf-8")
+    ingolstadt21_text = (ROOT / "configs" / "scenario" / "ingolstadt21.yaml").read_text(encoding="utf-8")
+
+    assert "name: resco_cologne8" in cologne8_text
+    assert "name: resco_ingolstadt21" in ingolstadt21_text

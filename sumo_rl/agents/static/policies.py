@@ -13,22 +13,31 @@ class StaticPolicy(Protocol):
 
 @dataclass
 class _PhaseScorer:
-    def score(self, traffic_signal, phase_state: str) -> float:
+    def _phase_lane_sets(self, traffic_signal, phase_state: str) -> tuple[set[str], set[str]]:
         links = traffic_signal.sumo.trafficlight.getControlledLinks(traffic_signal.id)
-        score = 0.0
+        incoming_lanes: set[str] = set()
+        outgoing_lanes: set[str] = set()
         for link_index, link in enumerate(links):
             if link_index >= len(phase_state):
                 break
             if phase_state[link_index].lower() not in {"g", "s"}:
                 continue
+            for signal_link in link or ():
+                if not isinstance(signal_link, (tuple, list)) or len(signal_link) < 2:
+                    continue
+                incoming_lane = signal_link[0]
+                outgoing_lane = signal_link[1]
+                if isinstance(incoming_lane, str) and incoming_lane:
+                    incoming_lanes.add(incoming_lane)
+                if isinstance(outgoing_lane, str) and outgoing_lane:
+                    outgoing_lanes.add(outgoing_lane)
+        return incoming_lanes, outgoing_lanes
 
-            incoming_lane = link[0][0]
-            outgoing_lane = link[0][1]
-            incoming_queued = traffic_signal.sumo.lane.getLastStepHaltingNumber(incoming_lane)
-            outgoing_queued = traffic_signal.sumo.lane.getLastStepHaltingNumber(outgoing_lane)
-            score += float(incoming_queued - outgoing_queued)
-
-        return score
+    def score(self, traffic_signal, phase_state: str) -> float:
+        incoming_lanes, outgoing_lanes = self._phase_lane_sets(traffic_signal, phase_state)
+        incoming_queued = sum(float(traffic_signal.sumo.lane.getLastStepHaltingNumber(lane)) for lane in incoming_lanes)
+        outgoing_queued = sum(float(traffic_signal.sumo.lane.getLastStepHaltingNumber(lane)) for lane in outgoing_lanes)
+        return incoming_queued - outgoing_queued
 
 
 class MaxPressurePolicy:

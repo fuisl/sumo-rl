@@ -457,6 +457,9 @@ class SumoEnvironment(gym.Env):
 
     def _sumo_step(self):
         self.sumo.simulationStep()
+        if self.fixed_ts:
+            for traffic_signal in self.traffic_signals.values():
+                traffic_signal.sync_fixed_time_state()
         self.num_arrived_vehicles += self.sumo.simulation.getArrivedNumber()
         self.num_departed_vehicles += self.sumo.simulation.getDepartedNumber()
         self.num_teleported_vehicles += self.sumo.simulation.getEndingTeleportNumber()

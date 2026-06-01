@@ -351,7 +351,7 @@ Use this recipe if the model should stay in its original repository.
 3. Export one normalized summary artifact from the external run.
 4. Convert that artifact into the shared thesis row shape.
 5. Copy the raw upstream logs into the Hydra run directory for auditability.
-6. Log one per-seed row and one final aggregate row if the run is seed-based.
+6. Log one per-seed row and one final aggregate row if the run is seed-based, unless the method intentionally exposes only a validation-style aggregate trace like the static baselines.
 7. Document clearly which metrics are native upstream fields and which are thesis-side proxies.
 
 Good fit for this path:
@@ -374,7 +374,7 @@ Confirm all of the following:
 2. `efficiency_*` and `safety_*` are present when the env logged system info.
 3. the final W&B summary matches the final CSV summary row
 4. the reward curves and the benchmark metrics tell a consistent story
-5. multi-seed methods keep one per-seed row plus one final aggregate row
+5. multi-seed methods either keep one per-seed row plus one final aggregate row, or clearly document a validation-only aggregate surface
 
 If the final summary row is zero again, debug in this order:
 

@@ -1,6 +1,6 @@
 # @package _global_
 scenario:
-  name: ingolstadt21
+  name: resco_ingolstadt21
 
 env:
   factory: ingolstadt21

@@ -19,7 +19,7 @@ best_validation_checkpoint_count: 3
 best_validation_metric: validation/resco_delay_mean
 validation_action_plot_max_agents: null
 baseline_line_max_episode_index: 500
-baseline_line_episode_stride: null
+baseline_line_episode_stride: 5
 save_final_model: true
 save_tripinfo_output: false
 log_traffic_metrics_during_training: false
