@@ -118,6 +118,7 @@ def test_rllib_runner_supports_dcrnn_algorithm_kind():
     pytest.importorskip("ray")
     from sumo_rl.experiments import rllib_runner
 
+    assert "dqn_dcrnn" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
     assert "dcrnn" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
 
 
@@ -150,4 +151,4 @@ def test_dcrnn_build_config_registers_graph_rl_modules(monkeypatch, tmp_path):
     assert set(multi_spec.rl_module_specs.keys()) == {"tls_0", "tls_1"}
     assert multi_spec.rl_module_specs["tls_0"].model_config["agent_index"] == 0
     assert multi_spec.rl_module_specs["tls_1"].model_config["agent_index"] == 1
-    assert multi_spec.rl_module_specs["tls_0"].model_config["architecture_tag"] == "dcrnn_dqn"
+    assert multi_spec.rl_module_specs["tls_0"].model_config["architecture_tag"] == "dqn_dcrnn"

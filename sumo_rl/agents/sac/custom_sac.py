@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 
 DEFAULT_CUSTOM_SAC_MODEL_CONFIG: Dict[str, Any] = {
-    "architecture_tag": "custom_sac_mlp",
+    "architecture_tag": "sac_mlp",
     "actor": {
         "encoder": {
             "type": "mlp",
@@ -104,7 +104,7 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
 
     merged: Dict[str, Any] = asdict(DefaultModelConfig())
     merged.update(incoming)
-    merged["architecture_tag"] = str(custom_config.get("architecture_tag", "custom_sac_mlp"))
+    merged["architecture_tag"] = str(custom_config.get("architecture_tag", "sac_mlp"))
     merged["custom_sac"] = custom_config
     merged["fcnet_hiddens"] = _int_list(actor_encoder.get("hidden_dims"), field_name="actor.encoder.hidden_dims")
     merged["fcnet_activation"] = str(actor_encoder.get("activation", "relu") or "relu")
@@ -202,7 +202,7 @@ def build_custom_sac_module_class():
             super().setup()
             custom_config = self.model_config.get("custom_sac", {})
             communication = dict(custom_config.get("communication", {}) or {})
-            self._architecture_tag = str(self.model_config.get("architecture_tag", "custom_sac_mlp"))
+            self._architecture_tag = str(self.model_config.get("architecture_tag", "sac_mlp"))
             self._actor_config = dict(custom_config.get("actor", {}) or {})
             self._critic_config = dict(custom_config.get("critic", {}) or {})
             self._communication_config = communication

@@ -42,9 +42,13 @@ RLlib methods are named in `configs/algorithm/` instead:
 configs/algorithm/
   ppo.yaml
   dqn.yaml
+  dqn_dcrnn.yaml
   sac_builtin.yaml
-  sac_custom.yaml
+  sac_mlp.yaml
 ```
+
+The older `dcrnn.yaml` and `sac_custom.yaml` files are kept as compatibility
+aliases, but the canonical public names are `dqn_dcrnn` and `sac_mlp`.
 
 How to read one preset:
 

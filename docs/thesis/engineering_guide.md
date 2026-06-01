@@ -250,7 +250,7 @@ DQN, and the SAC module owns SAC-specific config and training metrics.
 
 ### Custom SAC module
 
-`sac_builtin` is the reference RLlib SAC baseline. `sac_custom` keeps the same
+`sac_builtin` is the reference RLlib SAC baseline. `sac_mlp` keeps the same
 native discrete multi-agent SAC setup, but swaps in project-owned single-agent
 and multi-agent RLModule boundaries.
 
@@ -262,7 +262,7 @@ This is the right place to change:
 - future GAT or message-passing blocks among agents
 
 The custom path is configured through `algorithm.params.model_config` in
-`configs/algorithm/sac_custom.yaml`. Actor and critic MLP sizes, head sizes,
+`configs/algorithm/sac_mlp.yaml`. Actor and critic MLP sizes, head sizes,
 the `twin_q` setting, and the communication hook metadata are exposed there.
 Training still uses RLlib's SAC learner, replay buffer, target updates, and
 optimizer ownership; the repo only owns the module architecture boundary.

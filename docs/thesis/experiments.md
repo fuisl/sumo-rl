@@ -52,9 +52,9 @@ python experiments/static_max_pressure.py scenario=resco_cologne1
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
-python experiments/rllib.py algorithm=dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
-python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 ```
 
 PPO and DQN default to independent policies. To switch to a shared policy, override
@@ -66,12 +66,13 @@ architecture. The default model config consumes SUMO-RL's default observation as
 `[phase_one_hot, min_green, density, queue]` and treats `[density, queue]` as the
 per-movement demand vector by using the split density/queue layout.
 
-DCRNN is available as `algorithm=dcrnn`. It is a DQN-family RLlib method that
-wraps the PettingZoo parallel environment with graph observations shaped as
-`[history_len, num_nodes, density_queue_features]`, then replaces the Q-network
-with a diffusion-convolutional recurrent encoder. The first version supports
-independent policies only; shared graph communication with existing models is a
-future extension.
+DQN+DCRNN is available as `algorithm=dqn_dcrnn`. It is a DQN-family RLlib
+method that wraps the PettingZoo parallel environment with graph observations
+shaped as `[history_len, num_nodes, density_queue_features]`, then replaces the
+Q-network with a diffusion-convolutional recurrent encoder. `algorithm=dcrnn`
+remains as a backward-compatible alias. The first version supports independent
+policies only; shared graph communication with existing models is a future
+extension.
 
 SAC now uses RLlib's native discrete-action support. The repo hands each traffic
 signal its own discrete action space through the multi-agent RLlib wrapper, and
@@ -82,11 +83,12 @@ path. If SAC fails, the issue is in the RLlib discrete SAC path or the env/polic
 setup, not in a custom continuous-action wrapper.
 
 `sac_builtin` should be treated as the reference RLlib SAC baseline.
-`sac_custom` uses the same trainer and replay setup, but replaces the RLModule
+`sac_mlp` uses the same trainer and replay setup, but replaces the RLModule
 boundary with project-owned actor, twin-critic, and communication hook points.
-Use `configs/algorithm/sac_custom.yaml` or command-line overrides under
+Use `configs/algorithm/sac_mlp.yaml` or command-line overrides under
 `algorithm.params.model_config` to change actor/critic MLP sizes or enable
-placeholder message-passing metadata for later GAT experiments.
+placeholder message-passing metadata for later GAT experiments. The older
+`sac_custom` name remains as an alias.
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.

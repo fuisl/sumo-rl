@@ -49,7 +49,22 @@ from sumo_rl.agents.rllib_common import (
 from sumo_rl.agents.sac import sac as sac_agent
 
 
-SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, dcrnn_agent.KIND, frap_agent.KIND, *sac_agent.KINDS}
+SUPPORTED_RLLIB_ALGORITHMS = {
+    ppo_agent.KIND,
+    dqn_agent.KIND,
+    frap_agent.KIND,
+    *dcrnn_agent.ALL_KINDS,
+    *sac_agent.ALL_KINDS,
+}
+
+
+def normalize_algorithm_kind(algorithm_kind: str) -> str:
+    kind = str(algorithm_kind or "").strip()
+    if kind in dcrnn_agent.ALL_KINDS:
+        return dcrnn_agent.KIND
+    if kind in sac_agent.ALL_KINDS:
+        return sac_agent.normalize_kind(kind)
+    return kind
 
 
 @dataclass
@@ -91,6 +106,7 @@ def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
 
 
 def _algorithm_module(algorithm_kind: str):
+    algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     if algorithm_kind == ppo_agent.KIND:
         return ppo_agent
     if algorithm_kind == dqn_agent.KIND:
@@ -105,6 +121,7 @@ def _algorithm_module(algorithm_kind: str):
 
 
 def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str):
+    algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
     if module is sac_agent:
         return module.build_config(cfg, run_dir, algorithm_kind=algorithm_kind)
@@ -112,6 +129,7 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
 
 
 def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, validate=None) -> None:
+    algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
     if module is sac_agent:
         module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
@@ -120,6 +138,7 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
 
 
 def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, algorithm_kind: str, policy_mode: str):
+    algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
     build_graph_eval_env = getattr(module, "build_graph_eval_env", None)
     if callable(build_graph_eval_env):
@@ -1573,7 +1592,10 @@ def _summary_episode_index_from_metrics(metrics: Dict[str, Any]) -> int:
 
 
 def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
-    algorithm_kind = str(getattr(cfg.algorithm, "kind", "") or "").strip()
+    requested_algorithm_kind = str(getattr(cfg.algorithm, "kind", "") or "").strip()
+    if requested_algorithm_kind not in SUPPORTED_RLLIB_ALGORITHMS:
+        raise ValueError(f"Unsupported RLlib algorithm kind: {requested_algorithm_kind}")
+    algorithm_kind = normalize_algorithm_kind(requested_algorithm_kind)
     if algorithm_kind not in SUPPORTED_RLLIB_ALGORITHMS:
         raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
 

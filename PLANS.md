@@ -32,7 +32,7 @@ This project will be organized in phases so the thesis work stays incremental an
 - Status: initial DCRNN path implemented; runtime smoke tests still depend on SUMO, Ray/RLlib, and PyTorch.
 - Add reusable traffic-signal graph topology and density/queue graph observation utilities.
 - Add a graph-observation wrapper for RLlib runners without changing existing PPO, DQN, FRAP, SAC, or static paths.
-- Add the first graph algorithm as `algorithm=dcrnn`, using a DCRNN Q-network through the current runner, W&B, CSV, evaluation, and checkpoint flow.
+- Add the first graph algorithm as `algorithm=dqn_dcrnn`, using a DCRNN Q-network through the current runner, W&B, CSV, evaluation, and checkpoint flow.
 - Keep v1 restricted to independent policies; shared graph data passing into current models is a future extension.
 
 ## Assumptions

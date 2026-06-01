@@ -28,7 +28,9 @@ from sumo_rl.agents.rllib_common import (
 )
 
 
-KIND = "dcrnn"
+KIND = "dqn_dcrnn"
+ALIASES = {"dcrnn"}
+ALL_KINDS = {KIND, *ALIASES}
 
 
 def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -42,7 +44,7 @@ def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
 
 def _dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
-    model_config.setdefault("architecture_tag", "dcrnn_dqn")
+    model_config.setdefault("architecture_tag", "dqn_dcrnn")
     model_config.setdefault("hid_dim", 128)
     model_config.setdefault("max_diffusion_step", 2)
     model_config.setdefault("num_rnn_layers", 1)
@@ -88,7 +90,7 @@ def _build_graph_context(cfg: Any, run_dir: Path) -> tuple[RllibAlgorithmContext
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     mode = policy_mode(params)
     if mode != "independent":
-        raise ValueError("dcrnn currently supports algorithm.params.policy_mode=independent only.")
+        raise ValueError("dqn_dcrnn currently supports algorithm.params.policy_mode=independent only.")
 
     experiment = getattr(cfg, "experiment", None)
     sample_env = build_graph_parallel_env(
@@ -189,10 +191,10 @@ def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str
     metrics = extract_rllib_result_metrics(result, algorithm_kind=KIND, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
-        flatten_numeric_metrics(learner_metrics, prefix="train/dcrnn/learners", out=metrics)
+        flatten_numeric_metrics(learner_metrics, prefix="train/dqn_dcrnn/learners", out=metrics)
     replay_metrics = result.get("replay_buffer") or result.get("replay_buffers")
     if isinstance(replay_metrics, dict):
-        flatten_numeric_metrics(replay_metrics, prefix="train/dcrnn/replay", out=metrics)
+        flatten_numeric_metrics(replay_metrics, prefix="train/dqn_dcrnn/replay", out=metrics)
     return metrics
 
 

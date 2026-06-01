@@ -1,6 +1,6 @@
 """DCRNN RLlib integration."""
 
-from sumo_rl.agents.dcrnn.dcrnn import KIND
+from sumo_rl.agents.dcrnn.dcrnn import ALIASES, ALL_KINDS, KIND
 
-__all__ = ["KIND"]
+__all__ = ["ALIASES", "ALL_KINDS", "KIND"]
 

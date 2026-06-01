@@ -64,7 +64,7 @@ def test_custom_sac_module_spec_keeps_discrete_action_space():
 
     assert spec.observation_space == obs_space
     assert spec.action_space == action_space
-    assert spec.model_config["architecture_tag"] == "custom_sac_mlp"
+    assert spec.model_config["architecture_tag"] == "sac_mlp"
     assert spec.model_config["twin_q"] is True
     assert spec.model_config["custom_sac"]["critic"]["twin_q"] is True
 
@@ -119,7 +119,7 @@ def test_custom_sac_module_spec_builds_and_exposes_actor_critic_hooks():
 def test_custom_sac_model_config_accepts_message_passing_placeholder():
     model_config = normalize_custom_sac_model_config(
         {
-            "architecture_tag": "custom_sac_gat_actor",
+            "architecture_tag": "sac_dcrnn_actor",
             "actor": {"encoder": {"hidden_dims": [128]}},
             "communication": {
                 "enabled": True,
@@ -130,7 +130,7 @@ def test_custom_sac_model_config_accepts_message_passing_placeholder():
         }
     )
 
-    assert model_config["architecture_tag"] == "custom_sac_gat_actor"
+    assert model_config["architecture_tag"] == "sac_dcrnn_actor"
     assert model_config["custom_sac"]["communication"]["enabled"] is True
     assert model_config["custom_sac"]["communication"]["type"] == "gat"
     assert model_config["custom_sac"]["communication"]["apply_to"] == ["actor"]
@@ -210,7 +210,7 @@ def test_custom_sac_build_config_installs_project_owned_multi_module(monkeypatch
 
     cfg = SimpleNamespace(
         scenario=SimpleNamespace(name="single_intersection"),
-        experiment=SimpleNamespace(name="sac_custom_test", seed=7, episode_seconds=60),
+        experiment=SimpleNamespace(name="sac_mlp_test", seed=7, episode_seconds=60),
         env=SimpleNamespace(factory="parallel_env", kwargs={}),
         algorithm=SimpleNamespace(
             params={
@@ -225,7 +225,7 @@ def test_custom_sac_build_config_installs_project_owned_multi_module(monkeypatch
         ),
     )
 
-    config = build_config(cfg, tmp_path, algorithm_kind="sac_custom")
+    config = build_config(cfg, tmp_path, algorithm_kind="sac_mlp")
 
     assert config.rl_module_spec.multi_rl_module_class.__name__ == "CustomSACMultiRLModule"
     assert set(config.rl_module_spec.rl_module_specs.keys()) == {"tls_0", "tls_1"}
@@ -253,3 +253,24 @@ def test_builtin_sac_build_config_uses_default_module_spec(monkeypatch, tmp_path
     config = build_config(cfg, tmp_path, algorithm_kind="sac_builtin")
 
     assert config.rl_module_spec.module_class.__name__ == "DefaultSACTorchRLModule"
+
+
+def test_sac_custom_alias_normalizes_to_sac_mlp(monkeypatch, tmp_path):
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyDiscreteParallelEnv(**kwargs))
+
+    cfg = SimpleNamespace(
+        scenario=SimpleNamespace(name="single_intersection"),
+        experiment=SimpleNamespace(name="sac_custom_alias_test", seed=7, episode_seconds=60),
+        env=SimpleNamespace(factory="parallel_env", kwargs={}),
+        algorithm=SimpleNamespace(
+            params={
+                "policy_mode": "independent",
+                "num_env_runners": 0,
+                "num_envs_per_env_runner": 1,
+            }
+        ),
+    )
+
+    config = build_config(cfg, tmp_path, algorithm_kind="sac_custom")
+
+    assert config.rl_module_spec.multi_rl_module_class.__name__ == "CustomSACMultiRLModule"

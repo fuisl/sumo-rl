@@ -214,14 +214,14 @@ python experiments/static_max_pressure.py scenario=resco_ingolstadt7
 python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,cologne8,resco_ingolstadt1,resco_ingolstadt7,ingolstadt21
 ```
 
-### RLlib PPO, DQN, FRAP, DCRNN, and SAC:
+### RLlib PPO, DQN, FRAP, DQN+DCRNN, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
-python experiments/rllib.py algorithm=dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
-python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 ```
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
@@ -231,18 +231,21 @@ uses the SUMO-RL observation tail as per-movement demand features
 `algorithm.params.model_config.phase_pairs` when a network needs custom
 movement-pair ordering.
 
-DCRNN is implemented as a DQN-family RLlib module with a graph-observation
+DQN+DCRNN is implemented as a DQN-family RLlib module with a graph-observation
 wrapper. It builds a traffic-signal graph from incoming/outgoing lanes and feeds
 rolling density/queue histories to a diffusion-convolutional recurrent
-Q-network. The first version supports independent policies.
+Q-network. Use `algorithm=dqn_dcrnn` as the canonical name; `algorithm=dcrnn`
+is kept as a backward-compatible alias. The first version supports independent
+policies.
 
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
 adapter anymore.
 Use `algorithm=sac_builtin` as the reference RLlib baseline. Use
-`algorithm=sac_custom` when you want to expose and modify the SAC RLModule
+`algorithm=sac_mlp` when you want to expose and modify the SAC RLModule
 architecture through `algorithm.params.model_config`, including actor, twin
-critic, and future message-passing/GAT hook settings.
+critic, and future message-passing/GAT hook settings. `algorithm=sac_custom`
+is kept as a backward-compatible alias so older launch commands still work.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash

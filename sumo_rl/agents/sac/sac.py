@@ -34,8 +34,17 @@ from sumo_rl.agents.sac.custom_sac import (
 
 
 BUILTIN_KIND = "sac_builtin"
-CUSTOM_KIND = "sac_custom"
+CUSTOM_KIND = "sac_mlp"
+CUSTOM_ALIASES = {"sac_custom"}
 KINDS = {BUILTIN_KIND, CUSTOM_KIND}
+ALL_KINDS = {BUILTIN_KIND, CUSTOM_KIND, *CUSTOM_ALIASES}
+
+
+def normalize_kind(algorithm_kind: str) -> str:
+    kind = str(algorithm_kind or "").strip()
+    if kind in CUSTOM_ALIASES:
+        return CUSTOM_KIND
+    return kind
 
 
 def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,6 +66,7 @@ def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
 def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     from ray.rllib.algorithms.sac import SACConfig
 
+    algorithm_kind = normalize_kind(algorithm_kind)
     context = build_algorithm_context(cfg, run_dir, algorithm_kind)
     callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
@@ -119,6 +129,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
 
 
 def extract_training_metrics(result: Dict[str, Any], iteration: int, *, algorithm_kind: str) -> Dict[str, Any]:
+    algorithm_kind = normalize_kind(algorithm_kind)
     metrics = extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
@@ -140,6 +151,7 @@ def train(
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
     validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
+    algorithm_kind = normalize_kind(algorithm_kind)
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params
     callbacks_class = training_episode_summary_callbacks_class()
