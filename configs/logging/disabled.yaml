@@ -17,7 +17,6 @@ save_checkpoints: true
 save_best_validation_checkpoints: true
 best_validation_checkpoint_count: 3
 best_validation_metric: validation/resco_delay_mean
-log_validation_action_plots: true
 validation_action_plot_max_agents: null
 save_final_model: true
 save_tripinfo_output: false

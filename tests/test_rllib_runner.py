@@ -129,6 +129,24 @@ def test_evaluate_closes_env_before_building_final_summary(monkeypatch, tmp_path
     assert summary["final/resco/wait_std"] == 0.4
 
 
+def test_build_eval_env_does_not_mutate_tripinfo_retention(monkeypatch, tmp_path):
+    class DummyEvalEnv:
+        def __init__(self):
+            self.keep_tripinfo_output = False
+            self.traffic_signals = {}
+            self.sim_step = 0
+
+    eval_env = DummyEvalEnv()
+
+    monkeypatch.setattr(rllib_runner, "build_rllib_parallel_env", lambda *args, **kwargs: eval_env)
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(cfg, tmp_path, seed=7, algorithm_kind="ppo", policy_mode="independent")
+
+    assert built_env is eval_env
+    assert eval_env.keep_tripinfo_output is False
+
+
 def test_evaluate_validation_metrics_use_episode_summary_and_average_across_eval_seeds(monkeypatch, tmp_path):
     class DummyEvalEnv:
         possible_agents = ["tls_1"]
@@ -463,6 +481,191 @@ def test_log_validation_action_plot_images_emits_one_image_per_agent(monkeypatch
     assert isinstance(run.calls[1]["validation/phase_queue/tls_2"], DummyImage)
 
 
+def test_extract_validation_seed_artifacts_parses_tripinfo_and_removes_temp_file(tmp_path):
+    tripinfo_path = tmp_path / "tripinfo.xml"
+    tripinfo_path.write_text(
+        """
+<routes>
+  <tripinfo id="veh_1" duration="20" waitingTime="4" timeLoss="3" departDelay="1" />
+  <tripinfo id="veh_2" unfinished="true" duration="0" waitingTime="0" timeLoss="0" departDelay="0" />
+</routes>
+""".strip(),
+        encoding="utf-8",
+    )
+
+    artifact = rllib_runner._extract_validation_seed_artifacts(
+        seed=7,
+        tripinfo_path=tripinfo_path,
+        episode_summary={"reward/mean": 1.0},
+        action_traces={"tls_1": [0, 1]},
+        action_space_sizes={"tls_1": 2},
+        phase_queue_traces={"tls_1": [{"step": 1.0, "active_phase": 0, "phase_queues": [2, 1]}]},
+        remove_tripinfo_after_parse=True,
+    )
+
+    assert artifact.tripinfo.wait_values == [4.0]
+    assert artifact.tripinfo.delay_values == [4.0]
+    assert artifact.tripinfo.finished_count == 1
+    assert artifact.tripinfo.unfinished_count == 1
+    assert artifact.tripinfo.total_count == 2
+    assert tripinfo_path.exists() is False
+
+
+def test_extract_validation_seed_artifacts_keeps_tripinfo_when_requested(tmp_path):
+    tripinfo_path = tmp_path / "tripinfo.xml"
+    tripinfo_path.write_text(
+        """
+<routes>
+  <tripinfo id="veh_1" duration="20" waitingTime="4" timeLoss="3" departDelay="1" />
+</routes>
+""".strip(),
+        encoding="utf-8",
+    )
+
+    artifact = rllib_runner._extract_validation_seed_artifacts(
+        seed=7,
+        tripinfo_path=tripinfo_path,
+        episode_summary={"reward/mean": 1.0},
+        action_traces={},
+        action_space_sizes={},
+        phase_queue_traces={},
+        remove_tripinfo_after_parse=False,
+    )
+
+    assert artifact.tripinfo.finished_count == 1
+    assert tripinfo_path.exists() is True
+
+
+def test_aggregate_validation_tripinfo_distributions_keeps_empty_seeds_and_pools_completed_values():
+    aggregated = rllib_runner._aggregate_validation_tripinfo_distributions(
+        [
+            rllib_runner.ValidationSeedArtifacts(
+                seed=1,
+                episode_summary={},
+                action_traces={},
+                action_space_sizes={},
+                phase_queue_traces={},
+                tripinfo=rllib_runner.TripinfoDistributionArtifact(
+                    wait_values=[2.0, 6.0],
+                    delay_values=[4.0, 8.0],
+                    finished_count=2,
+                    unfinished_count=1,
+                    total_count=3,
+                ),
+            ),
+            rllib_runner.ValidationSeedArtifacts(
+                seed=2,
+                episode_summary={},
+                action_traces={},
+                action_space_sizes={},
+                phase_queue_traces={},
+                tripinfo=rllib_runner.TripinfoDistributionArtifact(
+                    wait_values=[],
+                    delay_values=[],
+                    finished_count=0,
+                    unfinished_count=2,
+                    total_count=2,
+                ),
+            ),
+        ]
+    )
+
+    assert aggregated["waiting_time"] == [[2.0, 6.0], []]
+    assert aggregated["delay"] == [[4.0, 8.0], []]
+    assert aggregated["pooled_waiting_time"] == [2.0, 6.0]
+    assert aggregated["pooled_delay"] == [4.0, 8.0]
+    assert aggregated["total_seeds"] == 2
+    assert aggregated["seeds_with_completed_trips"] == 1
+    assert aggregated["seeds_without_completed_trips"] == 1
+    assert aggregated["total_completed_trips"] == 2
+    assert aggregated["total_unfinished_trips"] == 3
+    assert aggregated["total_trips"] == 5
+
+
+def test_log_validation_tripinfo_distribution_images_emits_network_level_media(monkeypatch):
+    class DummyImage:
+        def __init__(self, image, caption=None):
+            self.image = image
+            self.caption = caption
+
+    class DummyWandb:
+        Image = DummyImage
+
+    class DummyRun:
+        def __init__(self):
+            self.calls = []
+
+        def log(self, payload):
+            self.calls.append(payload)
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+    run = DummyRun()
+
+    rllib_runner._log_validation_tripinfo_distribution_images(
+        run,
+        {
+            "waiting_time": [[1.0, 2.0, 4.0], []],
+            "delay": [[3.0, 6.0], []],
+            "pooled_waiting_time": [1.0, 2.0, 4.0],
+            "pooled_delay": [3.0, 6.0],
+            "total_seeds": 2,
+            "seeds_with_completed_trips": 1,
+            "seeds_without_completed_trips": 1,
+            "total_completed_trips": 3,
+            "total_unfinished_trips": 2,
+            "total_trips": 5,
+        },
+        pass_index=4,
+        env_step=240,
+        episode_index=21,
+    )
+
+    assert len(run.calls) == 1
+    assert run.calls[0]["validation/episode_index"] == 21.0
+    assert run.calls[0]["validation/pass_index"] == 4.0
+    assert run.calls[0]["validation/env_step"] == 240.0
+    assert isinstance(run.calls[0]["validation/tripinfo_wait_distribution"], DummyImage)
+    assert run.calls[0]["validation/tripinfo_wait_distribution"].image.size == (1040, 460)
+    assert isinstance(run.calls[0]["validation/tripinfo_delay_distribution"], DummyImage)
+    assert "1/2 seeds with completed trips" in run.calls[0]["validation/tripinfo_wait_distribution"].caption
+
+
+def test_log_validation_tripinfo_distribution_images_skips_when_no_completed_trips(monkeypatch):
+    class DummyWandb:
+        Image = object
+
+    class DummyRun:
+        def __init__(self):
+            self.calls = []
+
+        def log(self, payload):
+            self.calls.append(payload)
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+    run = DummyRun()
+
+    rllib_runner._log_validation_tripinfo_distribution_images(
+        run,
+        {
+            "waiting_time": [[], []],
+            "delay": [[], []],
+            "pooled_waiting_time": [],
+            "pooled_delay": [],
+            "total_seeds": 2,
+            "seeds_with_completed_trips": 0,
+            "seeds_without_completed_trips": 2,
+            "total_completed_trips": 0,
+            "total_unfinished_trips": 4,
+            "total_trips": 4,
+        },
+        pass_index=4,
+        env_step=240,
+        episode_index=21,
+    )
+
+    assert run.calls == []
+
+
 def test_evaluate_with_details_returns_validation_action_plot_rows(monkeypatch, tmp_path):
     class DummyEvalEnv:
         possible_agents = ["tls_1"]
@@ -522,11 +725,10 @@ def test_evaluate_with_details_returns_validation_action_plot_rows(monkeypatch, 
     )
     logging_cfg = SimpleNamespace(
         log_final_traffic_metrics=True,
-        log_validation_action_plots=True,
         validation_action_plot_max_agents=None,
     )
 
-    summary, seed_rows, plot_rows, timeline_rows, phase_queue_rows = rllib_runner._evaluate_with_details(
+    summary, seed_rows, plot_rows, timeline_rows, phase_queue_rows, tripinfo_distributions = rllib_runner._evaluate_with_details(
         cfg,
         tmp_path,
         algo=object(),
@@ -542,6 +744,18 @@ def test_evaluate_with_details_returns_validation_action_plot_rows(monkeypatch, 
     assert all(abs((row["action_0"] + row["action_1"]) - 1.0) <= 1e-9 for row in plot_rows["tls_1"])
     assert timeline_rows == {"tls_1": [0, 1, 0]}
     assert phase_queue_rows == {"tls_1": [{"step": 1.0, "active_phase": 0.0, "phase_0": 4.0, "phase_1": 1.5}]}
+    assert tripinfo_distributions == {
+        "waiting_time": [[], []],
+        "delay": [[], []],
+        "pooled_waiting_time": [],
+        "pooled_delay": [],
+        "total_seeds": 2,
+        "seeds_with_completed_trips": 0,
+        "seeds_without_completed_trips": 2,
+        "total_completed_trips": 0,
+        "total_unfinished_trips": 0,
+        "total_trips": 0,
+    }
 
 
 def test_best_validation_checkpoint_retention_writes_full_metadata_and_keeps_top_three(tmp_path):
@@ -1179,8 +1393,30 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
         del cfg, run_dir, algo_obj, algorithm_kind, logging_cfg
         if include_validation_metrics:
             summary, seed_rows, plot_rows, timeline_rows, phase_queue_rows = validation_summaries.pop(0)
-            return dict(summary), list(seed_rows), dict(plot_rows), dict(timeline_rows), dict(phase_queue_rows)
-        return {"algorithm/kind": "ppo", "final/resco/avg_delay": 7.0, "eval/episode": 1.0}, [], {}, {}, {}
+            return dict(summary), list(seed_rows), dict(plot_rows), dict(timeline_rows), dict(phase_queue_rows), {
+                "waiting_time": [],
+                "delay": [],
+                "pooled_waiting_time": [],
+                "pooled_delay": [],
+                "total_seeds": 0,
+                "seeds_with_completed_trips": 0,
+                "seeds_without_completed_trips": 0,
+                "total_completed_trips": 0,
+                "total_unfinished_trips": 0,
+                "total_trips": 0,
+            }
+        return {"algorithm/kind": "ppo", "final/resco/avg_delay": 7.0, "eval/episode": 1.0}, [], {}, {}, {}, {
+            "waiting_time": [],
+            "delay": [],
+            "pooled_waiting_time": [],
+            "pooled_delay": [],
+            "total_seeds": 0,
+            "seeds_with_completed_trips": 0,
+            "seeds_without_completed_trips": 0,
+            "total_completed_trips": 0,
+            "total_unfinished_trips": 0,
+            "total_trips": 0,
+        }
 
     monkeypatch.setitem(sys.modules, "ray", DummyRay)
     monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
@@ -1204,6 +1440,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             }
         ),
     )
+    monkeypatch.setattr(rllib_runner, "_log_validation_tripinfo_distribution_images", lambda *args, **kwargs: None)
     monkeypatch.setattr(rllib_runner, "_update_wandb_summary", lambda *args, **kwargs: None)
 
     cfg = SimpleNamespace(
@@ -1212,7 +1449,6 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             save_best_validation_checkpoints=True,
             best_validation_checkpoint_count=3,
             best_validation_metric="validation/resco_delay_mean",
-            log_validation_action_plots=True,
             save_final_model=True,
         ),
         experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),

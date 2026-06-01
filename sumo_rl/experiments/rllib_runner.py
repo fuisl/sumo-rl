@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import deque
 import colorsys
+from dataclasses import dataclass
 import json
 import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from omegaconf import DictConfig
@@ -48,6 +50,25 @@ from sumo_rl.agents.sac import sac as sac_agent
 
 
 SUPPORTED_RLLIB_ALGORITHMS = {ppo_agent.KIND, dqn_agent.KIND, dcrnn_agent.KIND, frap_agent.KIND, *sac_agent.KINDS}
+
+
+@dataclass
+class TripinfoDistributionArtifact:
+    wait_values: list[float]
+    delay_values: list[float]
+    finished_count: int
+    unfinished_count: int
+    total_count: int
+
+
+@dataclass
+class ValidationSeedArtifacts:
+    seed: int
+    episode_summary: Dict[str, Any]
+    action_traces: Dict[str, list[int]]
+    action_space_sizes: Dict[str, int]
+    phase_queue_traces: Dict[str, list[Dict[str, Any]]]
+    tripinfo: TripinfoDistributionArtifact
 
 
 def _eval_seeds(cfg: DictConfig) -> list[int]:
@@ -227,6 +248,93 @@ def _collect_phase_queue_snapshot(env: Any, agent_ids: list[str]) -> Dict[str, D
     return snapshot
 
 
+def _validation_tripinfo_output_path(env: Any) -> Optional[Path]:
+    base_env = _resolve_sumo_base_env(env)
+    build_path = getattr(base_env, "_build_tripinfo_output_path", None)
+    if callable(build_path):
+        try:
+            path = build_path()
+        except Exception:
+            path = None
+        if path is not None:
+            return Path(path)
+    tripinfo_output_name = getattr(base_env, "tripinfo_output_name", None)
+    label = getattr(base_env, "label", None)
+    episode = getattr(base_env, "episode", None)
+    if tripinfo_output_name and label is not None and episode is not None:
+        return Path(f"{tripinfo_output_name}_conn{label}_ep{episode}.xml")
+    return None
+
+
+def _parse_tripinfo_distribution_file(tripinfo_path: Path) -> TripinfoDistributionArtifact:
+    wait_values: list[float] = []
+    delay_values: list[float] = []
+    finished_count = 0
+    unfinished_count = 0
+    if not tripinfo_path.exists():
+        return TripinfoDistributionArtifact(wait_values=[], delay_values=[], finished_count=0, unfinished_count=0, total_count=0)
+    try:
+        tree = ET.parse(tripinfo_path)
+    except (ET.ParseError, OSError):
+        return TripinfoDistributionArtifact(wait_values=[], delay_values=[], finished_count=0, unfinished_count=0, total_count=0)
+
+    def _is_truthy_xml_value(value: Optional[str]) -> bool:
+        return str(value).strip().lower() in {"1", "true", "yes"}
+
+    for vehicle in tree.getroot().findall(".//tripinfo"):
+        vehicle_id = str(vehicle.attrib.get("id", "") or "")
+        if vehicle_id.startswith("ghost"):
+            continue
+        is_unfinished = _is_truthy_xml_value(vehicle.attrib.get("vaporized")) or _is_truthy_xml_value(
+            vehicle.attrib.get("unfinished")
+        )
+        if is_unfinished:
+            unfinished_count += 1
+            continue
+        finished_count += 1
+        time_loss = float(vehicle.attrib.get("timeLoss", 0.0))
+        depart_delay = float(vehicle.attrib.get("departDelay", 0.0))
+        delay_values.append(time_loss + depart_delay)
+        wait_values.append(float(vehicle.attrib.get("waitingTime", 0.0)))
+    return TripinfoDistributionArtifact(
+        wait_values=wait_values,
+        delay_values=delay_values,
+        finished_count=finished_count,
+        unfinished_count=unfinished_count,
+        total_count=finished_count + unfinished_count,
+    )
+
+
+def _extract_validation_seed_artifacts(
+    *,
+    seed: int,
+    tripinfo_path: Optional[Path],
+    episode_summary: Dict[str, Any],
+    action_traces: Dict[str, list[int]],
+    action_space_sizes: Dict[str, int],
+    phase_queue_traces: Dict[str, list[Dict[str, Any]]],
+    remove_tripinfo_after_parse: bool,
+) -> ValidationSeedArtifacts:
+    tripinfo = (
+        _parse_tripinfo_distribution_file(tripinfo_path)
+        if tripinfo_path is not None
+        else TripinfoDistributionArtifact(wait_values=[], delay_values=[], finished_count=0, unfinished_count=0, total_count=0)
+    )
+    if remove_tripinfo_after_parse and tripinfo_path is not None:
+        try:
+            tripinfo_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return ValidationSeedArtifacts(
+        seed=seed,
+        episode_summary=dict(episode_summary),
+        action_traces={str(agent_id): list(trace) for agent_id, trace in action_traces.items()},
+        action_space_sizes={str(agent_id): int(size) for agent_id, size in action_space_sizes.items()},
+        phase_queue_traces={str(agent_id): list(rows) for agent_id, rows in phase_queue_traces.items()},
+        tripinfo=tripinfo,
+    )
+
+
 def _run_multi_agent_episode_trace(
     algo,
     env,
@@ -344,10 +452,6 @@ def _validation_action_plot_max_agents(logging_cfg: Any) -> Optional[int]:
     return max(1, int(value))
 
 
-def _should_log_validation_action_plots(logging_cfg: Any) -> bool:
-    return bool(getattr(logging_cfg, "log_validation_action_plots", False))
-
-
 def _action_distribution_rows(actions: list[int], *, num_actions: int, window_size: int) -> list[Dict[str, float]]:
     if num_actions <= 0:
         return []
@@ -385,6 +489,32 @@ def _average_action_distribution_rows(seed_rows: list[list[Dict[str, float]]], *
             row[key] = float(np.mean([float(item.get(key, 0.0)) for item in active_rows]))
         aggregated.append(row)
     return aggregated
+
+
+def _aggregate_validation_tripinfo_distributions(
+    seed_artifacts: list[ValidationSeedArtifacts],
+) -> Dict[str, Any]:
+    total_seeds = len(seed_artifacts)
+    seeds_with_completed = sum(1 for artifact in seed_artifacts if artifact.tripinfo.finished_count > 0)
+    total_completed = sum(int(artifact.tripinfo.finished_count) for artifact in seed_artifacts)
+    total_unfinished = sum(int(artifact.tripinfo.unfinished_count) for artifact in seed_artifacts)
+    total_trips = sum(int(artifact.tripinfo.total_count) for artifact in seed_artifacts)
+    wait_series = [list(artifact.tripinfo.wait_values) for artifact in seed_artifacts]
+    delay_series = [list(artifact.tripinfo.delay_values) for artifact in seed_artifacts]
+    pooled_wait_values = [float(value) for artifact in seed_artifacts for value in artifact.tripinfo.wait_values]
+    pooled_delay_values = [float(value) for artifact in seed_artifacts for value in artifact.tripinfo.delay_values]
+    return {
+        "waiting_time": wait_series,
+        "delay": delay_series,
+        "pooled_waiting_time": pooled_wait_values,
+        "pooled_delay": pooled_delay_values,
+        "total_seeds": int(total_seeds),
+        "seeds_with_completed_trips": int(seeds_with_completed),
+        "seeds_without_completed_trips": int(max(0, total_seeds - seeds_with_completed)),
+        "total_completed_trips": int(total_completed),
+        "total_unfinished_trips": int(total_unfinished),
+        "total_trips": int(total_trips),
+    }
 
 
 def _build_validation_action_plot_rows(
@@ -884,6 +1014,116 @@ def _render_validation_phase_queue_image(
     return image
 
 
+def _render_validation_tripinfo_distribution_image(
+    metric_name: str,
+    seed_series: list[list[float]],
+    pooled_values: list[float],
+    *,
+    total_seeds: int,
+    seeds_with_completed_trips: int,
+    total_completed_trips: int,
+    total_unfinished_trips: int,
+    width: int = 1040,
+    height: int = 460,
+) -> Image.Image:
+    image = Image.new("RGB", (width, height), color=(248, 250, 252))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    card_left = 18
+    card_top = 18
+    card_right = width - 18
+    card_bottom = height - 18
+    draw.rounded_rectangle(
+        (card_left, card_top, card_right, card_bottom),
+        radius=18,
+        fill=(255, 255, 255),
+        outline=(225, 232, 240),
+        width=2,
+    )
+
+    left = card_left + 86
+    right = card_right - 28
+    top = card_top + 78
+    bottom = card_bottom - 70
+    plot_width = max(1, right - left)
+    plot_height = max(1, bottom - top)
+
+    title = f"validation {metric_name} distribution"
+    subtitle = (
+        f"pooled completed-trip distribution; {seeds_with_completed_trips}/{total_seeds} seeds with completed trips; "
+        f"{total_completed_trips} completed, {total_unfinished_trips} unfinished"
+    )
+    draw.text((card_left + 22, card_top + 18), title, fill=(28, 37, 54), font=font)
+    draw.text((card_left + 22, card_top + 38), subtitle, fill=(96, 109, 128), font=font)
+
+    finite_series = []
+    for values in seed_series:
+        array = np.asarray(values, dtype=float).reshape(-1)
+        array = array[np.isfinite(array)]
+        if array.size > 0:
+            finite_series.append(array)
+    pooled_array = np.asarray(pooled_values, dtype=float).reshape(-1)
+    pooled_array = pooled_array[np.isfinite(pooled_array)]
+    if pooled_array.size <= 0:
+        draw.text((card_left + 22, card_top + 68), "no completed vehicle tripinfo values available", fill=(148, 163, 184), font=font)
+        return image
+
+    percentiles = np.linspace(0.0, 1.0, 21)
+    percentile_labels = percentiles * 100.0
+    seed_curves = [np.quantile(values, percentiles) for values in finite_series]
+    pooled_curve = np.quantile(pooled_array, percentiles)
+    curve_values = list(seed_curves)
+    curve_values.append(np.asarray(pooled_curve, dtype=float))
+    y_max = max(1.0, float(np.max(np.asarray(curve_values, dtype=float))))
+
+    accent = (49, 130, 206) if metric_name == "waiting time" else (255, 140, 66)
+    light_accent = tuple(int(0.72 * 255 + 0.28 * channel) for channel in accent)
+
+    y_tick_values = np.linspace(0.0, y_max, 5)
+    for tick_value in y_tick_values:
+        y = top + (1.0 - (float(tick_value) / y_max)) * plot_height
+        is_baseline = abs(float(tick_value)) <= 1e-9
+        draw.line((left, y, right, y), fill=(214, 223, 233) if is_baseline else (234, 239, 244), width=1)
+        draw.text((card_left + 18, y - 6), f"{int(round(float(tick_value)))}", fill=(94, 105, 122), font=font)
+
+    x_tick_values = [0.0, 25.0, 50.0, 75.0, 100.0]
+    for tick_value in x_tick_values:
+        x = left + (float(tick_value) / 100.0) * plot_width
+        draw.line((x, top, x, bottom), fill=(244, 247, 250), width=1)
+        label = f"{int(round(float(tick_value)))}"
+        label_x = int(x - (len(label) * 3))
+        draw.text((label_x, bottom + 10), label, fill=(94, 105, 122), font=font)
+
+    draw.line((left, top, left, bottom), fill=(122, 134, 153), width=1)
+    draw.line((left, bottom, right, bottom), fill=(122, 134, 153), width=1)
+    draw.text((width // 2 - 28, card_bottom - 28), "vehicle percentile", fill=(94, 105, 122), font=font)
+    draw.text((card_left + 18, top - 20), "seconds", fill=(94, 105, 122), font=font)
+
+    x_coords = [left + (float(label) / 100.0) * plot_width for label in percentile_labels]
+    for curve in seed_curves:
+        points = [
+            (x_coords[index], top + (1.0 - (float(curve[index]) / y_max)) * plot_height)
+            for index in range(len(curve))
+        ]
+        draw.line(points, fill=light_accent, width=2)
+
+    pooled_points = [
+        (x_coords[index], top + (1.0 - (float(pooled_curve[index]) / y_max)) * plot_height)
+        for index in range(len(pooled_curve))
+    ]
+    draw.line(pooled_points, fill=accent, width=4)
+
+    legend_x = left + 12
+    legend_y = top + 12
+    draw.rounded_rectangle((legend_x, legend_y, legend_x + 12, legend_y + 12), radius=3, fill=light_accent, outline=light_accent)
+    draw.text((legend_x + 18, legend_y), "per-seed curve", fill=(70, 79, 94), font=font)
+    draw.rounded_rectangle((legend_x + 140, legend_y, legend_x + 152, legend_y + 12), radius=3, fill=accent, outline=accent)
+    draw.text((legend_x + 158, legend_y), "pooled curve", fill=(70, 79, 94), font=font)
+
+    return image
+
+
 def _log_validation_action_plot_images(
     wandb_run,
     plot_rows_by_agent: Dict[str, list[Dict[str, float]]],
@@ -936,6 +1176,71 @@ def _log_validation_action_plot_images(
             )
         if len(payload) > 3:
             wandb_run.log(payload)
+
+
+def _log_validation_tripinfo_distribution_images(
+    wandb_run,
+    tripinfo_distributions: Dict[str, Any],
+    *,
+    pass_index: int,
+    env_step: int,
+    episode_index: int,
+) -> None:
+    if wandb_run is None:
+        return
+    wait_series = list(tripinfo_distributions.get("waiting_time", []))
+    delay_series = list(tripinfo_distributions.get("delay", []))
+    pooled_wait_values = list(tripinfo_distributions.get("pooled_waiting_time", []))
+    pooled_delay_values = list(tripinfo_distributions.get("pooled_delay", []))
+    total_seeds = int(tripinfo_distributions.get("total_seeds", 0) or 0)
+    seeds_with_completed_trips = int(tripinfo_distributions.get("seeds_with_completed_trips", 0) or 0)
+    total_completed_trips = int(tripinfo_distributions.get("total_completed_trips", 0) or 0)
+    total_unfinished_trips = int(tripinfo_distributions.get("total_unfinished_trips", 0) or 0)
+    if total_completed_trips <= 0:
+        return
+    import wandb
+
+    payload = {
+        "validation/episode_index": float(episode_index),
+        "validation/pass_index": float(pass_index),
+        "validation/env_step": float(env_step),
+    }
+    if pooled_wait_values:
+        payload["validation/tripinfo_wait_distribution"] = wandb.Image(
+            _render_validation_tripinfo_distribution_image(
+                "waiting time",
+                wait_series,
+                pooled_wait_values,
+                total_seeds=total_seeds,
+                seeds_with_completed_trips=seeds_with_completed_trips,
+                total_completed_trips=total_completed_trips,
+                total_unfinished_trips=total_unfinished_trips,
+            ),
+            caption=(
+                f"validation pass {pass_index} at env step {env_step} | "
+                f"{seeds_with_completed_trips}/{total_seeds} seeds with completed trips | "
+                f"{total_completed_trips} completed | {total_unfinished_trips} unfinished"
+            ),
+        )
+    if pooled_delay_values:
+        payload["validation/tripinfo_delay_distribution"] = wandb.Image(
+            _render_validation_tripinfo_distribution_image(
+                "delay",
+                delay_series,
+                pooled_delay_values,
+                total_seeds=total_seeds,
+                seeds_with_completed_trips=seeds_with_completed_trips,
+                total_completed_trips=total_completed_trips,
+                total_unfinished_trips=total_unfinished_trips,
+            ),
+            caption=(
+                f"validation pass {pass_index} at env step {env_step} | "
+                f"{seeds_with_completed_trips}/{total_seeds} seeds with completed trips | "
+                f"{total_completed_trips} completed | {total_unfinished_trips} unfinished"
+            ),
+        )
+    if len(payload) > 3:
+        wandb_run.log(payload)
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -1114,16 +1419,24 @@ def _evaluate_with_details(
     Dict[str, list[Dict[str, float]]],
     Dict[str, list[int]],
     Dict[str, list[Dict[str, float]]],
+    Dict[str, Any],
 ]:
     seed_rows = []
     seed_action_traces = []
     seed_action_space_sizes = []
     seed_phase_queue_traces = []
+    seed_artifacts: list[ValidationSeedArtifacts] = []
     eval_seeds = _eval_seeds(cfg)
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
         eval_episode = seed_index + 1
         eval_env = _build_eval_env(cfg, run_dir, seed, algorithm_kind, policy_mode)
+        tripinfo_path = _validation_tripinfo_output_path(eval_env)
+        base_env = _resolve_sumo_base_env(eval_env)
+        has_keep_tripinfo_output = hasattr(base_env, "keep_tripinfo_output")
+        original_keep_tripinfo_output = getattr(base_env, "keep_tripinfo_output", None)
+        if has_keep_tripinfo_output:
+            base_env.keep_tripinfo_output = True
         try:
             episode_reward, action_traces, action_space_sizes, phase_queue_traces = _run_multi_agent_episode_trace(
                 algo,
@@ -1134,8 +1447,23 @@ def _evaluate_with_details(
         finally:
             # SUMO writes tripinfo XML on close; build summaries only after the
             # file has been flushed so RESCO trip metrics do not become NaN.
-            eval_env.close()
+            try:
+                eval_env.close()
+            finally:
+                if has_keep_tripinfo_output:
+                    base_env.keep_tripinfo_output = original_keep_tripinfo_output
         episode_summary = _get_completed_episode_summary(eval_env)
+        seed_artifacts.append(
+            _extract_validation_seed_artifacts(
+                seed=seed,
+                tripinfo_path=tripinfo_path,
+                episode_summary=episode_summary,
+                action_traces=action_traces,
+                action_space_sizes=action_space_sizes,
+                phase_queue_traces=phase_queue_traces,
+                remove_tripinfo_after_parse=not bool(getattr(logging_cfg, "save_tripinfo_output", False)),
+            )
+        )
 
         seed_row = _build_final_eval_summary_row(
             eval_env,
@@ -1170,7 +1498,8 @@ def _evaluate_with_details(
     action_plot_rows_by_agent: Dict[str, list[Dict[str, float]]] = {}
     action_timeline_by_agent: Dict[str, list[int]] = {}
     phase_queue_rows_by_agent: Dict[str, list[Dict[str, float]]] = {}
-    if include_validation_metrics and _should_log_validation_action_plots(logging_cfg):
+    tripinfo_distributions = _aggregate_validation_tripinfo_distributions(seed_artifacts)
+    if include_validation_metrics:
         action_plot_rows_by_agent = _build_validation_action_plot_rows(
             seed_action_traces,
             seed_action_space_sizes,
@@ -1186,7 +1515,7 @@ def _evaluate_with_details(
             seed_phase_queue_traces,
             max_agents=_validation_action_plot_max_agents(logging_cfg),
         )
-    return summary, seed_rows, action_plot_rows_by_agent, action_timeline_by_agent, phase_queue_rows_by_agent
+    return summary, seed_rows, action_plot_rows_by_agent, action_timeline_by_agent, phase_queue_rows_by_agent, tripinfo_distributions
 
 
 def _evaluate(
@@ -1198,7 +1527,7 @@ def _evaluate(
     *,
     include_validation_metrics: bool = False,
 ) -> Dict[str, Any]:
-    summary, _, _, _, _ = _evaluate_with_details(
+    summary, _, _, _, _, _ = _evaluate_with_details(
         cfg,
         run_dir,
         algo,
@@ -1290,6 +1619,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 action_plot_rows_by_agent,
                 action_timeline_by_agent,
                 phase_queue_rows_by_agent,
+                tripinfo_distributions,
             ) = _evaluate_with_details(
                 cfg,
                 run_dir,
@@ -1311,6 +1641,13 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 env_step=step,
                 episode_index=episode_index,
                 decision_seconds=decision_interval_seconds(cfg),
+            )
+            _log_validation_tripinfo_distribution_images(
+                wandb_run,
+                tripinfo_distributions,
+                pass_index=pass_index,
+                env_step=step,
+                episode_index=episode_index,
             )
             _consider_best_validation_checkpoint(
                 best_validation_state,

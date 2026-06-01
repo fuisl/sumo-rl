@@ -133,8 +133,11 @@ Validation-only W&B media can also be logged under:
 - `validation/actions_share/<agent_id>`
 - `validation/actions_timeline/<agent_id>`
 - `validation/phase_queue/<agent_id>`
+- `validation/tripinfo_wait_distribution`
+- `validation/tripinfo_delay_distribution`
 
-These are history-backed per-agent validation plot images for the validation passes.
+These are history-backed validation plot images for the validation passes.
+The action and phase plots are per-agent, while the tripinfo fairness plots are network-level.
 They are not scalar metrics, so they are intended for W&B panels rather than CSV analysis.
 
 The debug-only training metrics are:
@@ -212,6 +215,8 @@ RLlib validation can also log two action-usage payloads per traffic-signal agent
 - `validation/actions_share/<agent_id>`
 - `validation/actions_timeline/<agent_id>`
 - `validation/phase_queue/<agent_id>`
+- `validation/tripinfo_wait_distribution`
+- `validation/tripinfo_delay_distribution`
 
 `validation/actions_share/<agent_id>` is a stacked area chart image built from the validation rollout's chosen discrete actions:
 
@@ -222,7 +227,6 @@ RLlib validation can also log two action-usage payloads per traffic-signal agent
 
 The rolling window represents one minute of environment time:
 
-- `logging.log_validation_action_plots`
 - `logging.validation_action_plot_max_agents`
 
 The runner derives the share window from the decision interval:
@@ -244,6 +248,18 @@ So with `delta_time=5`, the plotted share window spans `12` decisions.
 - y-axis: queued halting vehicles
 - one line per green phase, using the incoming lanes served by that phase
 - the background tint marks which phase was active over each interval
+
+`validation/tripinfo_wait_distribution` and `validation/tripinfo_delay_distribution`
+are network-level fairness diagnostics built directly from the completed vehicles in
+each validation seed's tripinfo XML:
+
+- x-axis: vehicle percentile
+- y-axis: seconds
+- thin lines: one percentile curve per validation seed
+- thick line: pooled completed-vehicle percentile curve across all validation seeds
+- waiting time uses the tripinfo `waitingTime` field
+- delay uses `timeLoss + departDelay`
+- the panel caption reports total seeds, seeds with completed trips, completed trips used, and unfinished trips observed
 
 For multi-seed validation, the runner:
 
