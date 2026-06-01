@@ -13,8 +13,6 @@ class StaticPolicy(Protocol):
 
 @dataclass
 class _PhaseScorer:
-    mode: str
-
     def score(self, traffic_signal, phase_state: str) -> float:
         links = traffic_signal.sumo.trafficlight.getControlledLinks(traffic_signal.id)
         score = 0.0
@@ -27,21 +25,15 @@ class _PhaseScorer:
             incoming_lane = link[0][0]
             outgoing_lane = link[0][1]
             incoming_queued = traffic_signal.sumo.lane.getLastStepHaltingNumber(incoming_lane)
-
-            if self.mode == "max_pressure":
-                outgoing_queued = traffic_signal.sumo.lane.getLastStepHaltingNumber(outgoing_lane)
-                score += float(incoming_queued - outgoing_queued)
-            else:
-                score += float(incoming_queued)
+            outgoing_queued = traffic_signal.sumo.lane.getLastStepHaltingNumber(outgoing_lane)
+            score += float(incoming_queued - outgoing_queued)
 
         return score
 
 
-class _BaseStaticPolicy:
-    mode = "greedy"
-
+class MaxPressurePolicy:
     def __init__(self):
-        self._scorer = _PhaseScorer(self.mode)
+        self._scorer = _PhaseScorer()
 
     def select_action(self, traffic_signal) -> int:
         best_action = 0
@@ -52,11 +44,3 @@ class _BaseStaticPolicy:
                 best_score = score
                 best_action = phase_index
         return best_action
-
-
-class GreedyPolicy(_BaseStaticPolicy):
-    mode = "greedy"
-
-
-class MaxPressurePolicy(_BaseStaticPolicy):
-    mode = "max_pressure"

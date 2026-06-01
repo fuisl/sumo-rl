@@ -2,6 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 import types
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -26,6 +27,9 @@ _RUNNER_SPEC.loader.exec_module(_RUNNER_MODULE)
 _map_system_metrics_to_namespaces = _MODULE.map_system_metrics_to_namespaces
 _build_episode_benchmark_summary_row = _RUNNER_MODULE._build_episode_benchmark_summary_row
 _build_final_eval_summary_row = _RUNNER_MODULE._build_final_eval_summary_row
+_get_validation_run_seeds = _RUNNER_MODULE._get_validation_run_seeds
+_emit_baseline_reference_validation_rows = _RUNNER_MODULE._emit_baseline_reference_validation_rows
+_run_static_validation_episode = _RUNNER_MODULE._run_static_validation_episode
 
 
 def _summary_env(tmp_path, tripinfo_xml: str):
@@ -279,3 +283,82 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     assert row["warnings/no_final_summary_metrics"] is False
     assert row["debug/has_metrics"] is True
     assert row["debug/num_seconds"] == 3600.0
+
+
+def test_validation_run_seeds_prefers_eval_seeds_and_respects_eval_episode_count() -> None:
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(
+            seed=42,
+            runs=5,
+            seeds=[10, 11, 12, 13, 14],
+            eval_seeds=[1, 2, 3, 4, 5],
+            eval_episodes=3,
+        )
+    )
+
+    assert _get_validation_run_seeds(cfg) == [1, 2, 3]
+
+
+def test_emit_baseline_reference_validation_rows_replays_constant_validation_points() -> None:
+    calls = []
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(episode_seconds=3600, validation_interval_episodes=5),
+        env=SimpleNamespace(kwargs=SimpleNamespace(delta_time=5)),
+        logging=SimpleNamespace(
+            baseline_line_max_episode_index=15,
+            baseline_line_episode_stride=None,
+        ),
+    )
+
+    original_log_outputs = _RUNNER_MODULE._log_outputs
+    try:
+        _RUNNER_MODULE._log_outputs = lambda wandb_run, csv_run, metrics, step=None: calls.append((metrics, step))
+        _emit_baseline_reference_validation_rows(
+            cfg,
+            wandb_run=None,
+            csv_run=None,
+            validation_row={
+                "algorithm/kind": "fixed_time",
+                "validation/resco_delay_mean": 12.0,
+                "validation/pass_index": 1.0,
+                "validation/episode_index": 5.0,
+                "validation/env_step": 3600.0,
+            },
+        )
+    finally:
+        _RUNNER_MODULE._log_outputs = original_log_outputs
+
+    assert [metrics["validation/episode_index"] for metrics, _step in calls] == [5.0, 10.0, 15.0]
+    assert [metrics["validation/env_step"] for metrics, _step in calls] == [3600.0, 7200.0, 10800.0]
+    assert all(metrics["validation/resco_delay_mean"] == 12.0 for metrics, _step in calls)
+    assert all(metrics["validation/reference_line"] is True for metrics, _step in calls)
+
+
+def test_run_static_validation_episode_uses_none_actions_for_fixed_time() -> None:
+    class DummyBaseEnv:
+        def __init__(self) -> None:
+            self.metrics = []
+            self.episode_agent_reward_totals = {"tls_1": 2.0, "tls_2": 3.0}
+
+    class DummyEnv:
+        def __init__(self) -> None:
+            self.base_env = DummyBaseEnv()
+            self.actions = []
+            self.steps = 0
+
+        def reset(self):
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(action)
+            self.steps += 1
+            done = self.steps >= 2
+            return {}, {}, False, done, {}
+
+    env = DummyEnv()
+
+    base_env, reward_total = _run_static_validation_episode(env, policy=None)
+
+    assert base_env is env.base_env
+    assert reward_total == 5.0
+    assert env.actions == [None, None]

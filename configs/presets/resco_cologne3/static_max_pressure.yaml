@@ -1,12 +1,12 @@
 # @package _global_
 defaults:
   - /base
-  - /scenario: resco_grid4x4
+  - /scenario: resco_cologne3
   - /algorithm: static_max_pressure
   - _self_
 
 experiment:
-  name: resco_grid4x4__static_max_pressure
+  name: ${scenario.name}__static_max_pressure
   seeds: [1, 2, 3, 4, 5]
   runs: 5
   episodes: 1
@@ -17,5 +17,4 @@ experiment:
 env:
   factory: sumo_env
   kwargs:
-    single_agent: false
     num_seconds: 3600

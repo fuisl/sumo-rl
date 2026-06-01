@@ -22,11 +22,11 @@ This project will be organized in phases so the thesis work stays incremental an
 
 ### Phase 4: Benchmark Comparison Cleanup
 - Status: in progress; the logging path is in place, but the benchmark audit and comparison write-up still need to be finished.
-- Compare the handwritten max-pressure and greedy baselines against RESCO's benchmark definitions.
+- Compare the handwritten max-pressure baseline against RESCO's benchmark definitions.
 - Keep the RESCO comparison fields documented and easy to verify against the raw tripinfo XML.
 - Keep W&B and CSV schemas narrow for benchmark runs, while preserving enough system metrics for debugging.
 - Add a short benchmark comparison note or table that states which fields are canonical for thesis reporting and how they map to the raw RESCO tripinfo values.
-- Verify the max-pressure and greedy presets still produce the intended five-seed summary behavior on the RESCO scenarios.
+- Verify the max-pressure presets still produce the intended five-seed summary behavior on the RESCO scenarios.
 
 ### Phase 5: Runner-Native Graph Models
 - Status: initial DCRNN path implemented; runtime smoke tests still depend on SUMO, Ray/RLlib, and PyTorch.

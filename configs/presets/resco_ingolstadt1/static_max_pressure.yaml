@@ -10,8 +10,9 @@ experiment:
   seeds: [1, 2, 3, 4, 5]
   runs: 5
   episodes: 1
+  eval_episodes: 5
+  eval_seeds: ${experiment.seeds}
   fixed_ts: false
-  eval_episodes: 0
 
 env:
   factory: sumo_env

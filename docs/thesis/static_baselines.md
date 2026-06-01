@@ -5,7 +5,7 @@ firstpage:
 
 # Static Baselines
 
-This page covers the non-learning static baselines for the RESCO `grid4x4` scenario.
+This page covers the non-learning static baselines for the thesis RESCO scenarios.
 It also matches the fixed-time benchmark style used in the thesis, which follows the same five-seed averaging pattern.
 The logged summary values follow the RESCO formulas:
 
@@ -20,12 +20,18 @@ The per-run identifier in the logs is `run_seed`, not the base config seed.
 
 The static baselines in this thesis use:
 
-- RESCO `grid4x4`
+- `resco_cologne1`
+- `resco_cologne3`
+- `cologne8`
+- `resco_ingolstadt1`
+- `resco_ingolstadt7`
+- `ingolstadt21`
 - `num_seconds: 3600`
 - `episodes: 1`
 - `seeds: [1, 2, 3, 4, 5]`
+- `eval_seeds: [1, 2, 3, 4, 5]`
 
-The runner executes one episode per seed and then writes a summary average across the five runs.
+The runner executes one validation-style episode per seed, logs RLlib-style `validation/*` metrics, and then writes a summary average across the five runs.
 
 ## Max Pressure
 
@@ -33,6 +39,8 @@ Run:
 
 ```bash
 python experiments/static_max_pressure.py
+python experiments/static_max_pressure.py scenario=resco_ingolstadt7
+python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,cologne8,resco_ingolstadt1,resco_ingolstadt7,ingolstadt21
 ```
 
 What it uses:
@@ -50,7 +58,17 @@ Each run writes:
 - a final summary row with the average across the five seeds
 - optional W&B logs if enabled
 - the RESCO summary fields are logged directly, so the CSV and W&B logs match the benchmark formulas
+- RLlib-style `validation/*` rows so the static baselines can share W&B panels with RLlib runs
 - agent-level metrics stay local in the CSV when you enable them, and are not sent to W&B
+
+## Horizontal Baselines In W&B
+
+To draw fixed-time or max-pressure as horizontal baselines in the same validation panels as RLlib runs:
+
+- set `logging.baseline_line_max_episode_index=<training_episode_budget>`
+- optionally set `logging.baseline_line_episode_stride=<validation_cadence>`
+
+This re-logs the same aggregated `validation/*` values at repeated `validation/episode_index` anchors, so W&B renders a flat comparison line instead of a single point.
 
 ## Suggested Reading Order
 

@@ -203,11 +203,15 @@ WANDB_ENTITY=your-entity
 ### Fixed-time control in a RESCO scenario:
 ```bash
 python experiments/fixed_time.py scenario=resco_grid4x4
+python experiments/fixed_time.py scenario=resco_cologne1
+python experiments/fixed_time.py -m scenario=resco_cologne1,resco_cologne3,cologne8,resco_ingolstadt1,resco_ingolstadt7,ingolstadt21
 ```
 
 ### Max-pressure control in a RESCO scenario:
 ```bash
 python experiments/static_max_pressure.py scenario=resco_cologne1
+python experiments/static_max_pressure.py scenario=resco_ingolstadt7
+python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,cologne8,resco_ingolstadt1,resco_ingolstadt7,ingolstadt21
 ```
 
 ### RLlib PPO, DQN, FRAP, DCRNN, and SAC:

@@ -17,8 +17,10 @@ The target RESCO scenarios are:
 
 - `resco_cologne1`
 - `resco_cologne3`
+- `cologne8`
 - `resco_ingolstadt1`
 - `resco_ingolstadt7`
+- `ingolstadt21`
 
 Each target scenario folder is meant to contain the same method names, so the layout is easy to scan:
 
@@ -27,6 +29,12 @@ configs/presets/<scenario>/
   fixed_time.yaml
   static_max_pressure.yaml
 ```
+
+The static baseline presets now follow the RLlib validation seed layout:
+
+- `experiment.eval_seeds` is used when present
+- the thesis presets pin `eval_seeds: [1, 2, 3, 4, 5]`
+- the final summary remains the mean across those seed rows
 
 RLlib methods are named in `configs/algorithm/` instead:
 

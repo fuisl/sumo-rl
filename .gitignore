@@ -115,5 +115,6 @@ settings.json
 /wandb
 
 outputs/
+multirun/
 
 .netrc
