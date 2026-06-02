@@ -73,9 +73,17 @@ def test_graph_feature_packing_and_history_repeat_padding():
 
 def test_dcrnn_q_network_outputs_one_q_value_per_action():
     torch = pytest.importorskip("torch")
-    from sumo_rl.models.dcrnn import DCRNNQNetwork
+    from sumo_rl.models.dcrnn import DCRNNBackbone, DCRNNQNetwork
 
     graph = build_traffic_signal_graph(_fake_signals(), include_virtual_nodes=True)
+    backbone = DCRNNBackbone(
+        input_dim=graph.feature_dim,
+        adjacency=graph.adjacency,
+        num_nodes=graph.num_nodes,
+        agent_index=graph.ts_index["tls_1"],
+        hidden_dim=16,
+        max_diffusion_step=1,
+    )
     model = DCRNNQNetwork(
         input_dim=graph.feature_dim,
         adjacency=graph.adjacency,
@@ -87,8 +95,10 @@ def test_dcrnn_q_network_outputs_one_q_value_per_action():
     )
 
     obs = torch.zeros((2, 5, graph.num_nodes, graph.feature_dim), dtype=torch.float32)
+    backbone_latent = backbone(obs)
     q_values = model(obs)
 
+    assert backbone_latent.shape == (2, 20)
     assert q_values.shape == (2, 3)
     assert torch.isfinite(q_values).all()
 

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import functools
+import math
 from copy import deepcopy
 from dataclasses import asdict
 from typing import Any, Dict, Optional
+
+from sumo_rl.models.dcrnn import DCRNNBackbone
 
 
 DEFAULT_CUSTOM_SAC_MODEL_CONFIG: Dict[str, Any] = {
@@ -84,10 +88,14 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
     critic_head = custom_config["critic"]["head"]
     communication = custom_config["communication"]
 
-    if str(actor_encoder.get("type", "mlp")).lower() != "mlp":
-        raise ValueError("custom SAC currently supports actor.encoder.type=mlp.")
-    if str(critic_encoder.get("type", "mlp")).lower() != "mlp":
+    actor_encoder_type = str(actor_encoder.get("type", "mlp")).lower()
+    critic_encoder_type = str(critic_encoder.get("type", "mlp")).lower()
+    if actor_encoder_type not in {"mlp", "dcrnn"}:
+        raise ValueError("custom SAC currently supports actor.encoder.type in {mlp, dcrnn}.")
+    if critic_encoder_type != "mlp":
         raise ValueError("custom SAC currently supports critic.encoder.type=mlp.")
+    actor_encoder["type"] = actor_encoder_type
+    critic_encoder["type"] = critic_encoder_type
 
     communication_type = str(communication.get("type", "none") or "none").lower()
     if communication_type not in {"none", "identity", "message_passing", "gat"}:
@@ -106,8 +114,12 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
     merged.update(incoming)
     merged["architecture_tag"] = str(custom_config.get("architecture_tag", "sac_mlp"))
     merged["custom_sac"] = custom_config
-    merged["fcnet_hiddens"] = _int_list(actor_encoder.get("hidden_dims"), field_name="actor.encoder.hidden_dims")
-    merged["fcnet_activation"] = str(actor_encoder.get("activation", "relu") or "relu")
+    if actor_encoder_type == "mlp":
+        merged["fcnet_hiddens"] = _int_list(actor_encoder.get("hidden_dims"), field_name="actor.encoder.hidden_dims")
+        merged["fcnet_activation"] = str(actor_encoder.get("activation", "relu") or "relu")
+    else:
+        merged["fcnet_hiddens"] = []
+        merged["fcnet_activation"] = "relu"
     merged["head_fcnet_hiddens"] = _int_list(actor_head.get("hidden_dims"), field_name="actor.head.hidden_dims")
     merged["head_fcnet_activation"] = str(actor_head.get("activation", "relu") or "relu")
     merged["critic_fcnet_hiddens"] = _int_list(
@@ -124,13 +136,70 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
     return merged
 
 
+def _flat_dim(shape: Any) -> int:
+    dims = tuple(int(dim) for dim in tuple(shape or ()))
+    if not dims:
+        raise ValueError("custom SAC requires observations with a concrete shape.")
+    return int(math.prod(dims))
+
+
 def build_custom_sac_catalog_class():
     import gymnasium as gym
     from ray.rllib.algorithms.sac.sac_catalog import SACCatalog
+    from ray.rllib.core.columns import Columns
+    from ray.rllib.core.models.base import ENCODER_OUT
     from ray.rllib.core.models.configs import MLPEncoderConfig, MLPHeadConfig
+    from ray.rllib.utils.framework import try_import_torch
+
+    torch, nn = try_import_torch()
+
+    class _TorchFlattenMLPEncoder(nn.Module):
+        def __init__(self, input_dim: int, hidden_dims: list[int], activation: str, output_dim: int):
+            super().__init__()
+            layers = []
+            previous_dim = int(input_dim)
+            activation_name = str(activation or "relu").lower()
+            for hidden_dim in hidden_dims:
+                layers.append(nn.Linear(previous_dim, int(hidden_dim)))
+                if activation_name == "tanh":
+                    layers.append(nn.Tanh())
+                elif activation_name == "sigmoid":
+                    layers.append(nn.Sigmoid())
+                elif activation_name in {"identity", "linear", "none"}:
+                    layers.append(nn.Identity())
+                else:
+                    layers.append(nn.ReLU())
+                previous_dim = int(hidden_dim)
+            layers.append(nn.Linear(previous_dim, int(output_dim)))
+            self.net = nn.Sequential(*layers)
+
+        def forward(self, batch):
+            obs = batch[Columns.OBS].float().reshape(batch[Columns.OBS].shape[0], -1)
+            return {ENCODER_OUT: self.net(obs)}
 
     class CustomSACCatalog(SACCatalog):
         """Catalog that lets actor and discrete twin-Q architectures diverge."""
+
+        def _actor_encoder_type(self) -> str:
+            custom_sac = dict(self._model_config_dict.get("custom_sac", {}) or {})
+            actor_config = dict(custom_sac.get("actor", {}) or {})
+            encoder_config = dict(actor_config.get("encoder", {}) or {})
+            return str(encoder_config.get("type", "mlp") or "mlp").lower()
+
+        def _determine_components_hook(self):
+            if self._actor_encoder_type() != "dcrnn":
+                return super()._determine_components_hook()
+
+            self._action_dist_class_fn = functools.partial(
+                self._get_dist_cls_from_action_space,
+                action_space=self.action_space,
+            )
+            critic_hidden = list(self._model_config_dict.get("critic_fcnet_hiddens") or [])
+            flat_obs_dim = _flat_dim(self.observation_space.shape)
+            latent_dim = int(critic_hidden[-1]) if critic_hidden else flat_obs_dim
+            self._flat_obs_dim = flat_obs_dim
+            self._encoder_config = None
+            self.latent_dims = (latent_dim,)
 
         def __init__(self, observation_space, action_space, model_config_dict, view_requirements=None):
             super().__init__(observation_space, action_space, model_config_dict, view_requirements)
@@ -146,7 +215,30 @@ def build_custom_sac_catalog_class():
                     output_layer_dim=required_qf_output_dim,
                 )
 
+        def build_encoder(self, framework: str):
+            if self._actor_encoder_type() != "dcrnn":
+                return super().build_encoder(framework=framework)
+            actor_hidden = list(self._model_config_dict.get("fcnet_hiddens") or [])
+            flat_obs_dim = getattr(self, "_flat_obs_dim", _flat_dim(self.observation_space.shape))
+            latent_dim = int(self.latent_dims[0])
+            return _TorchFlattenMLPEncoder(
+                flat_obs_dim,
+                actor_hidden[:-1],
+                self._model_config_dict.get("fcnet_activation") or "relu",
+                actor_hidden[-1] if actor_hidden else latent_dim,
+            )
+
         def _build_qf_encoder_discrete(self, framework: str):
+            if self._actor_encoder_type() == "dcrnn":
+                critic_hidden = list(self._model_config_dict.get("critic_fcnet_hiddens") or [])
+                flat_obs_dim = getattr(self, "_flat_obs_dim", _flat_dim(self.observation_space.shape))
+                latent_dim = int(critic_hidden[-1]) if critic_hidden else flat_obs_dim
+                return _TorchFlattenMLPEncoder(
+                    flat_obs_dim,
+                    critic_hidden[:-1],
+                    self._model_config_dict.get("critic_fcnet_activation") or "relu",
+                    latent_dim,
+                )
             critic_hidden = list(self._model_config_dict.get("critic_fcnet_hiddens") or [])
             if not critic_hidden:
                 return super()._build_qf_encoder_discrete(framework=framework)
@@ -180,6 +272,28 @@ def build_custom_sac_module_class():
 
     torch, nn = try_import_torch()
 
+    def _activation_layer(name: str):
+        activation = str(name or "relu").lower()
+        if activation == "relu":
+            return nn.ReLU()
+        if activation == "tanh":
+            return nn.Tanh()
+        if activation == "sigmoid":
+            return nn.Sigmoid()
+        if activation in {"identity", "linear", "none"}:
+            return nn.Identity()
+        raise ValueError(f"Unsupported SAC activation: {name!r}.")
+
+    def _build_mlp(input_dim: int, hidden_dims: list[int], activation: str, output_dim: int):
+        layers = []
+        previous_dim = int(input_dim)
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(previous_dim, int(hidden_dim)))
+            layers.append(_activation_layer(activation))
+            previous_dim = int(hidden_dim)
+        layers.append(nn.Linear(previous_dim, int(output_dim)))
+        return nn.Sequential(*layers)
+
     class CustomSACCommunicationBlock(nn.Module):
         """Swappable latent hook for future graph/message-passing operators."""
 
@@ -209,8 +323,27 @@ def build_custom_sac_module_class():
             self._communication_enabled = bool(communication.get("enabled", False))
             self._communication_type = str(communication.get("type", "none") or "none")
             self._communication_apply_to = set(communication.get("apply_to", ["actor", "critic"]) or [])
+            self._actor_encoder_type = str(self._actor_config.get("encoder", {}).get("type", "mlp") or "mlp").lower()
             self.actor_communication = CustomSACCommunicationBlock(self._communication_type)
             self.critic_communication = CustomSACCommunicationBlock(self._communication_type)
+            self.actor_dcrnn_backbone = None
+            self.actor_dcrnn_head = None
+            if self._actor_encoder_type == "dcrnn":
+                if not hasattr(self.action_space, "n"):
+                    raise ValueError("custom SAC DCRNN actor currently supports discrete action spaces only.")
+                head_config = dict(self._actor_config.get("head", {}) or {})
+                head_hidden_dims = _int_list(head_config.get("hidden_dims"), field_name="actor.head.hidden_dims")
+                head_activation = str(head_config.get("activation", "relu") or "relu")
+                self.actor_dcrnn_backbone = DCRNNBackbone.from_actor_model_config(
+                    self.observation_space,
+                    self.model_config,
+                )
+                self.actor_dcrnn_head = _build_mlp(
+                    self.actor_dcrnn_backbone.output_dim,
+                    head_hidden_dims,
+                    head_activation,
+                    int(self.action_space.n),
+                )
 
         def _apply_actor_communication(self, latent):
             if self._communication_enabled and "actor" in self._communication_apply_to:
@@ -222,10 +355,17 @@ def build_custom_sac_module_class():
                 return self.critic_communication(latent)
             return latent
 
-        def _forward_inference(self, batch):
+        def _actor_logits(self, batch):
+            if self._actor_encoder_type == "dcrnn":
+                actor_latent = self.actor_dcrnn_backbone(batch[Columns.OBS])
+                actor_latent = self._apply_actor_communication(actor_latent)
+                return self.actor_dcrnn_head(actor_latent)
             pi_encoder_outs = self.pi_encoder(batch)
             actor_latent = self._apply_actor_communication(pi_encoder_outs[ENCODER_OUT])
-            return {Columns.ACTION_DIST_INPUTS: self.pi(actor_latent)}
+            return self.pi(actor_latent)
+
+        def _forward_inference(self, batch):
+            return {Columns.ACTION_DIST_INPUTS: self._actor_logits(batch)}
 
         def _forward_exploration(self, batch, **kwargs):
             del kwargs
@@ -236,9 +376,7 @@ def build_custom_sac_module_class():
             batch_curr = {Columns.OBS: batch[Columns.OBS]}
             batch_next = {Columns.OBS: batch[Columns.NEXT_OBS]}
 
-            pi_encoder_next_outs = self.pi_encoder(batch_next)
-            actor_latent_next = self._apply_actor_communication(pi_encoder_next_outs[ENCODER_OUT])
-            action_logits_next = self.pi(actor_latent_next)
+            action_logits_next = self._actor_logits(batch_next)
             action_probs_next = torch.nn.functional.softmax(action_logits_next, dim=-1)
 
             output[ACTION_PROBS_NEXT] = action_probs_next
@@ -259,9 +397,7 @@ def build_custom_sac_module_class():
                     squeeze=False,
                 )
 
-            pi_encoder_outs = self.pi_encoder(batch_curr)
-            actor_latent = self._apply_actor_communication(pi_encoder_outs[ENCODER_OUT])
-            action_logits = self.pi(actor_latent)
+            action_logits = self._actor_logits(batch_curr)
             action_probs = torch.nn.functional.softmax(action_logits, dim=-1)
             output[ACTION_PROBS] = action_probs
             output[ACTION_LOG_PROBS] = action_probs.log()
@@ -288,8 +424,11 @@ def build_custom_sac_module_class():
                 "_communication_enabled",
                 "_communication_type",
                 "_communication_apply_to",
+                "_actor_encoder_type",
                 "actor_communication",
                 "critic_communication",
+                "actor_dcrnn_backbone",
+                "actor_dcrnn_head",
             ):
                 if attr not in non_inference_attributes:
                     non_inference_attributes.append(attr)

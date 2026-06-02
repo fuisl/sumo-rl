@@ -147,6 +147,28 @@ def test_build_eval_env_does_not_mutate_tripinfo_retention(monkeypatch, tmp_path
     assert eval_env.keep_tripinfo_output is False
 
 
+def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp_path):
+    graph_eval_env = object()
+
+    monkeypatch.setattr(rllib_runner.sac_agent, "build_graph_eval_env", lambda *args, **kwargs: graph_eval_env)
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="sac_dcrnn_actor",
+        policy_mode="independent",
+    )
+
+    assert built_env is graph_eval_env
+
+
 def test_evaluate_validation_metrics_use_episode_summary_and_average_across_eval_seeds(monkeypatch, tmp_path):
     class DummyEvalEnv:
         possible_agents = ["tls_1"]

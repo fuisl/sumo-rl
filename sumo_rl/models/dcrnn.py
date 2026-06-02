@@ -201,6 +201,88 @@ class DCRNNEncoder(nn.Module):
         return current_inputs[-1].reshape(batch_size, self.num_nodes, self.hidden_dim)
 
 
+class DCRNNBackbone(nn.Module):
+    """Shared DCRNN encoder plus per-agent feature fusion."""
+
+    def __init__(
+        self,
+        *,
+        input_dim: int,
+        adjacency: np.ndarray,
+        num_nodes: int,
+        agent_index: int,
+        hidden_dim: int = 128,
+        max_diffusion_step: int = 2,
+        num_rnn_layers: int = 1,
+        filter_type: str = "dual_random_walk",
+    ) -> None:
+        super().__init__()
+        self.input_dim = int(input_dim)
+        self.hidden_dim = int(hidden_dim)
+        self.num_nodes = int(num_nodes)
+        self.agent_index = int(agent_index)
+        self.encoder = DCRNNEncoder(
+            input_dim=input_dim,
+            adjacency=adjacency,
+            max_diffusion_step=max_diffusion_step,
+            hidden_dim=hidden_dim,
+            num_nodes=num_nodes,
+            num_rnn_layers=num_rnn_layers,
+            filter_type=filter_type,
+        )
+
+    @property
+    def output_dim(self) -> int:
+        return self.hidden_dim + self.input_dim
+
+    @classmethod
+    def from_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+        history_len, num_nodes, input_dim = observation_space.shape
+        del history_len
+        adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
+        return cls(
+            input_dim=int(model_config.get("input_dim", input_dim)),
+            adjacency=adjacency,
+            num_nodes=int(model_config.get("num_nodes", num_nodes)),
+            agent_index=int(model_config["agent_index"]),
+            hidden_dim=int(model_config.get("hid_dim", model_config.get("hidden_dim", 128))),
+            max_diffusion_step=int(model_config.get("max_diffusion_step", 2)),
+            num_rnn_layers=int(model_config.get("num_rnn_layers", 1)),
+            filter_type=str(model_config.get("filter_type", "dual_random_walk")),
+        )
+
+    @classmethod
+    def from_actor_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+        actor_encoder = (
+            dict(model_config.get("custom_sac", {}).get("actor", {}).get("encoder", {}) or {})
+            if isinstance(model_config.get("custom_sac"), dict)
+            else {}
+        )
+        history_len, num_nodes, input_dim = observation_space.shape
+        del history_len
+        adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
+        return cls(
+            input_dim=int(model_config.get("input_dim", input_dim)),
+            adjacency=adjacency,
+            num_nodes=int(model_config.get("num_nodes", num_nodes)),
+            agent_index=int(model_config["agent_index"]),
+            hidden_dim=int(actor_encoder.get("hidden_dim", actor_encoder.get("hid_dim", 128))),
+            max_diffusion_step=int(actor_encoder.get("max_diffusion_step", 2)),
+            num_rnn_layers=int(actor_encoder.get("num_rnn_layers", 1)),
+            filter_type=str(actor_encoder.get("filter_type", "dual_random_walk")),
+        )
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        obs = obs.float()
+        if obs.ndim != 4:
+            raise ValueError(f"DCRNN expects observations with shape [B, H, N, F], got {tuple(obs.shape)}.")
+        encoded = self.encoder(obs.transpose(0, 1))
+        latest_features = obs[:, -1]
+        agent_hidden = encoded[:, self.agent_index, :]
+        agent_features = latest_features[:, self.agent_index, :]
+        return torch.cat([agent_hidden, agent_features], dim=-1)
+
+
 class DCRNNQNetwork(nn.Module):
     """DCRNN encoder plus per-agent Q head for discrete traffic-light actions."""
 
@@ -219,35 +301,33 @@ class DCRNNQNetwork(nn.Module):
         head_hidden_dim: int | None = None,
     ) -> None:
         super().__init__()
-        self.agent_index = int(agent_index)
-        self.encoder = DCRNNEncoder(
+        self.backbone = DCRNNBackbone(
             input_dim=input_dim,
             adjacency=adjacency,
-            max_diffusion_step=max_diffusion_step,
-            hidden_dim=hidden_dim,
             num_nodes=num_nodes,
+            agent_index=agent_index,
+            hidden_dim=hidden_dim,
+            max_diffusion_step=max_diffusion_step,
             num_rnn_layers=num_rnn_layers,
             filter_type=filter_type,
         )
         head_hidden = int(head_hidden_dim or hidden_dim)
         self.head = nn.Sequential(
-            nn.Linear(int(hidden_dim) + int(input_dim), head_hidden),
+            nn.Linear(self.backbone.output_dim, head_hidden),
             nn.ReLU(),
             nn.Linear(head_hidden, int(num_actions)),
         )
 
     @classmethod
     def from_model_config(cls, observation_space: Any, action_space: Any, model_config: dict[str, Any]) -> "DCRNNQNetwork":
-        history_len, num_nodes, input_dim = observation_space.shape
-        del history_len
-        adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
+        backbone = DCRNNBackbone.from_model_config(observation_space, model_config)
         return cls(
-            input_dim=int(model_config.get("input_dim", input_dim)),
-            adjacency=adjacency,
-            num_nodes=int(model_config.get("num_nodes", num_nodes)),
-            agent_index=int(model_config["agent_index"]),
+            input_dim=backbone.input_dim,
+            adjacency=np.asarray(model_config["adjacency"], dtype=np.float32),
+            num_nodes=backbone.num_nodes,
+            agent_index=backbone.agent_index,
             num_actions=int(action_space.n),
-            hidden_dim=int(model_config.get("hid_dim", model_config.get("hidden_dim", 128))),
+            hidden_dim=backbone.hidden_dim,
             max_diffusion_step=int(model_config.get("max_diffusion_step", 2)),
             num_rnn_layers=int(model_config.get("num_rnn_layers", 1)),
             filter_type=str(model_config.get("filter_type", "dual_random_walk")),
@@ -255,11 +335,4 @@ class DCRNNQNetwork(nn.Module):
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        obs = obs.float()
-        if obs.ndim != 4:
-            raise ValueError(f"DCRNN expects observations with shape [B, H, N, F], got {tuple(obs.shape)}.")
-        encoded = self.encoder(obs.transpose(0, 1))
-        latest_features = obs[:, -1]
-        agent_hidden = encoded[:, self.agent_index, :]
-        agent_features = latest_features[:, self.agent_index, :]
-        return self.head(torch.cat([agent_hidden, agent_features], dim=-1))
+        return self.head(self.backbone(obs))

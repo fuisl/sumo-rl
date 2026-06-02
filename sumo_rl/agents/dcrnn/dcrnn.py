@@ -42,6 +42,10 @@ def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    return _graph_params(params)
+
+
 def _dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config.setdefault("architecture_tag", "dqn_dcrnn")
@@ -63,11 +67,11 @@ def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params))
 
 
-def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> str:
+def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algorithm_kind: str) -> str:
     from ray.tune.registry import register_env
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
-    env_name = f"sumo_rl_graph_{scenario_factory_name(cfg)}_{KIND}"
+    env_name = f"sumo_rl_graph_{scenario_factory_name(cfg)}_{algorithm_kind}"
     graph_params = _graph_params(params)
 
     def _creator(env_config):
@@ -83,14 +87,20 @@ def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> str:
     return env_name
 
 
-def _build_graph_context(cfg: Any, run_dir: Path) -> tuple[RllibAlgorithmContext, Dict[str, Dict[str, Any]]]:
+def build_graph_algorithm_context(
+    cfg: Any,
+    run_dir: Path,
+    *,
+    algorithm_kind: str,
+    model_config_builder: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
+) -> tuple[RllibAlgorithmContext, Dict[str, Dict[str, Any]]]:
     from ray.rllib.policy.policy import PolicySpec
     from sumo_rl.environment.graph_env import build_graph_parallel_env
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     mode = policy_mode(params)
     if mode != "independent":
-        raise ValueError("dqn_dcrnn currently supports algorithm.params.policy_mode=independent only.")
+        raise ValueError(f"{algorithm_kind} currently supports algorithm.params.policy_mode=independent only.")
 
     experiment = getattr(cfg, "experiment", None)
     sample_env = build_graph_parallel_env(
@@ -107,7 +117,7 @@ def _build_graph_context(cfg: Any, run_dir: Path) -> tuple[RllibAlgorithmContext
                 observation_space=sample_env.observation_space(agent_id),
                 action_space=sample_env.action_space(agent_id),
             )
-            model_configs[str(agent_id)] = _dcrnn_model_config(
+            model_configs[str(agent_id)] = model_config_builder(
                 params,
                 sample_env.graph.model_config(agent_id),
             )
@@ -117,10 +127,10 @@ def _build_graph_context(cfg: Any, run_dir: Path) -> tuple[RllibAlgorithmContext
     context = RllibAlgorithmContext(
         cfg=cfg,
         run_dir=run_dir,
-        algorithm_kind=KIND,
+        algorithm_kind=algorithm_kind,
         params=params,
         policy_mode=mode,
-        env_name=_register_graph_env(cfg, run_dir, params),
+        env_name=_register_graph_env(cfg, run_dir, params, algorithm_kind=algorithm_kind),
         policies=policies,
         active_policies=policies,
         episode_seconds=episode_seconds(cfg),
@@ -134,7 +144,12 @@ def build_config(cfg: Any, run_dir: Path):
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
     from sumo_rl.agents.dcrnn.rllib_module import build_dcrnn_dqn_module_spec
 
-    context, model_configs = _build_graph_context(cfg, run_dir)
+    context, model_configs = build_graph_algorithm_context(
+        cfg,
+        run_dir,
+        algorithm_kind=KIND,
+        model_config_builder=_dcrnn_model_config,
+    )
     callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
     params["replay_buffer_config"] = build_replay_buffer_config(params)

@@ -1,0 +1,44 @@
+# @package _global_
+algorithm:
+  kind: sac_dcrnn_actor
+  params:
+    policy_mode: independent
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    alpha_lr: 0.0003
+    tau: 0.005
+    train_batch_size_per_learner: 256
+    num_env_runners: 0
+    num_envs_per_env_runner: 1
+    num_gpus_per_learner: auto
+    ray_num_gpus: auto
+    num_steps_sampled_before_learning_starts: 1000
+    history_len: 5
+    include_virtual_nodes: true
+    add_self_loops: true
+    model_config:
+      architecture_tag: sac_dcrnn_actor
+      actor:
+        encoder:
+          type: dcrnn
+          hidden_dim: 128
+          max_diffusion_step: 2
+          num_rnn_layers: 1
+          filter_type: dual_random_walk
+        head:
+          hidden_dims: []
+          activation: relu
+      critic:
+        encoder:
+          type: mlp
+          hidden_dims: [256, 256]
+          activation: tanh
+        head:
+          hidden_dims: []
+          activation: relu
+        twin_q: true
+      communication:
+        enabled: false
+        type: none
+        apply_to: [actor, critic]
+        scope: module

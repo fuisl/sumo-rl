@@ -55,6 +55,7 @@ python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 PPO and DQN default to independent policies. To switch to a shared policy, override
@@ -89,6 +90,10 @@ Use `configs/algorithm/sac_mlp.yaml` or command-line overrides under
 `algorithm.params.model_config` to change actor/critic MLP sizes or enable
 placeholder message-passing metadata for later GAT experiments. The older
 `sac_custom` name remains as an alias.
+
+`sac_dcrnn_actor` reuses the graph-observation wrapper from `dqn_dcrnn`, but
+applies the DCRNN encoder only to the SAC actor. The critics stay on the
+current MLP SAC path in v1. This variant supports independent policies only.
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.
