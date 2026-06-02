@@ -17,10 +17,10 @@ The target RESCO scenarios are:
 
 - `resco_cologne1`
 - `resco_cologne3`
-- `cologne8`
+- `resco_cologne8`
 - `resco_ingolstadt1`
 - `resco_ingolstadt7`
-- `ingolstadt21`
+- `resco_ingolstadt21`
 
 Each target scenario folder is meant to contain the same method names, so the layout is easy to scan:
 

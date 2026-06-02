@@ -1,20 +1,4 @@
 # @package _global_
 defaults:
-  - /base
-  - /scenario: ingolstadt21
-  - /algorithm: static_max_pressure
+  - /presets/resco_ingolstadt21/static_max_pressure
   - _self_
-
-experiment:
-  name: ${scenario.name}__static_max_pressure
-  seeds: [1, 2, 3, 4, 5]
-  runs: 5
-  episodes: 1
-  eval_episodes: 5
-  eval_seeds: ${experiment.seeds}
-  fixed_ts: false
-
-env:
-  factory: sumo_env
-  kwargs:
-    num_seconds: 3600

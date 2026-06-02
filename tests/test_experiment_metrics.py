@@ -721,7 +721,9 @@ def test_static_max_pressure_presets_derive_run_name_from_selected_scenario() ->
     preset_paths = [
         ROOT / "configs" / "presets" / "resco_grid4x4" / "static_max_pressure.yaml",
         ROOT / "configs" / "presets" / "resco_cologne1" / "static_max_pressure.yaml",
+        ROOT / "configs" / "presets" / "resco_cologne8" / "static_max_pressure.yaml",
         ROOT / "configs" / "presets" / "resco_ingolstadt1" / "static_max_pressure.yaml",
+        ROOT / "configs" / "presets" / "resco_ingolstadt21" / "static_max_pressure.yaml",
     ]
 
     for preset_path in preset_paths:
@@ -729,9 +731,52 @@ def test_static_max_pressure_presets_derive_run_name_from_selected_scenario() ->
         assert "name: ${scenario.name}__static_max_pressure" in preset_text
 
 
-def test_cologne8_and_ingolstadt21_scenarios_use_resco_prefixed_names() -> None:
-    cologne8_text = (ROOT / "configs" / "scenario" / "cologne8.yaml").read_text(encoding="utf-8")
-    ingolstadt21_text = (ROOT / "configs" / "scenario" / "ingolstadt21.yaml").read_text(encoding="utf-8")
+def test_non_resco_scenario_aliases_point_to_canonical_resco_configs() -> None:
+    alias_map = {
+        "cologne1": "resco_cologne1",
+        "cologne3": "resco_cologne3",
+        "cologne8": "resco_cologne8",
+        "ingolstadt1": "resco_ingolstadt1",
+        "ingolstadt7": "resco_ingolstadt7",
+        "ingolstadt21": "resco_ingolstadt21",
+    }
 
-    assert "name: resco_cologne8" in cologne8_text
-    assert "name: resco_ingolstadt21" in ingolstadt21_text
+    for alias_name, canonical_name in alias_map.items():
+        alias_text = (ROOT / "configs" / "scenario" / f"{alias_name}.yaml").read_text(encoding="utf-8")
+        assert f"- {canonical_name}" in alias_text
+
+
+def test_resco_canonical_scenarios_use_raw_sumo_env() -> None:
+    canonical_paths = [
+        ROOT / "configs" / "scenario" / "resco_cologne1.yaml",
+        ROOT / "configs" / "scenario" / "resco_cologne3.yaml",
+        ROOT / "configs" / "scenario" / "resco_cologne8.yaml",
+        ROOT / "configs" / "scenario" / "resco_ingolstadt1.yaml",
+        ROOT / "configs" / "scenario" / "resco_ingolstadt7.yaml",
+        ROOT / "configs" / "scenario" / "resco_ingolstadt21.yaml",
+    ]
+
+    for scenario_path in canonical_paths:
+        scenario_text = scenario_path.read_text(encoding="utf-8")
+        assert "factory: sumo_env" in scenario_text
+
+
+def test_non_resco_preset_aliases_point_to_canonical_resco_presets() -> None:
+    alias_map = {
+        ROOT / "configs" / "presets" / "cologne8" / "fixed_time.yaml": "/presets/resco_cologne8/fixed_time",
+        ROOT
+        / "configs"
+        / "presets"
+        / "cologne8"
+        / "static_max_pressure.yaml": "/presets/resco_cologne8/static_max_pressure",
+        ROOT / "configs" / "presets" / "ingolstadt21" / "fixed_time.yaml": "/presets/resco_ingolstadt21/fixed_time",
+        ROOT
+        / "configs"
+        / "presets"
+        / "ingolstadt21"
+        / "static_max_pressure.yaml": "/presets/resco_ingolstadt21/static_max_pressure",
+    }
+
+    for preset_path, alias_target in alias_map.items():
+        preset_text = preset_path.read_text(encoding="utf-8")
+        assert alias_target in preset_text

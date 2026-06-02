@@ -20,10 +20,10 @@ The static baselines in this thesis use:
 
 - `resco_cologne1`
 - `resco_cologne3`
-- `cologne8`
+- `resco_cologne8`
 - `resco_ingolstadt1`
 - `resco_ingolstadt7`
-- `ingolstadt21`
+- `resco_ingolstadt21`
 - `num_seconds: 3600`
 - `episodes: 1`
 - `seeds: [1, 2, 3, 4, 5]`
@@ -38,7 +38,7 @@ Run:
 ```bash
 python experiments/static_max_pressure.py
 python experiments/static_max_pressure.py scenario=resco_ingolstadt7
-python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,cologne8,resco_ingolstadt1,resco_ingolstadt7,ingolstadt21
+python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,resco_cologne8,resco_ingolstadt1,resco_ingolstadt7,resco_ingolstadt21
 ```
 
 What it uses:
