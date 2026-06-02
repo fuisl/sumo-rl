@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 import os
 import shutil
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -161,6 +162,29 @@ def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, algorithm_kind: s
 
 
 def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
+    compute_single_action = getattr(algo, "compute_single_action", None)
+    if callable(compute_single_action):
+        try:
+            if policy_id is None:
+                action = compute_single_action(obs, explore=False)
+            else:
+                action = compute_single_action(obs, policy_id=policy_id, explore=False)
+            return action[0] if isinstance(action, tuple) else action
+        except AttributeError:
+            # Some RLlib API-stack combinations route through env runners that
+            # do not expose `get_policy` for `compute_single_action()`.
+            pass
+
+    get_policy = getattr(algo, "get_policy", None)
+    if callable(get_policy):
+        try:
+            policy = get_policy(policy_id) if policy_id else get_policy()
+        except Exception:
+            policy = None
+        if policy is not None and hasattr(policy, "compute_single_action"):
+            action = policy.compute_single_action(obs, explore=False)
+            return action[0] if isinstance(action, tuple) else action
+
     get_module = getattr(algo, "get_module", None)
     if callable(get_module):
         module = get_module(policy_id) if policy_id is not None else get_module()
@@ -180,18 +204,7 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             if hasattr(action, "detach"):
                 action = action.detach().cpu().numpy()
             return np.asarray(action).reshape(-1)[0].item()
-
-    compute_single_action = getattr(algo, "compute_single_action", None)
-    if callable(compute_single_action):
-        if policy_id is None:
-            action = compute_single_action(obs, explore=False)
-        else:
-            action = compute_single_action(obs, policy_id=policy_id, explore=False)
-        return action[0] if isinstance(action, tuple) else action
-
-    policy = algo.get_policy(policy_id) if policy_id else algo.get_policy()
-    action = policy.compute_single_action(obs, explore=False)
-    return action[0] if isinstance(action, tuple) else action
+    raise AttributeError("Algorithm does not expose a usable validation inference interface.")
 
 
 def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float:
@@ -1324,6 +1337,29 @@ def _restore_checkpoint(algo, checkpoint_path: Path | str) -> Any:
     raise AttributeError("Algorithm does not support checkpoint restore.")
 
 
+def _sync_env_runner_weights_for_evaluation(algo) -> bool:
+    env_runner = getattr(algo, "env_runner", None)
+    learner_group = getattr(algo, "learner_group", None)
+    if env_runner is None or learner_group is None:
+        return False
+
+    get_weights = getattr(learner_group, "get_weights", None)
+    set_weights = getattr(env_runner, "set_weights", None)
+    if not callable(get_weights) or not callable(set_weights):
+        return False
+
+    # RLlib's inference-only state sync can leave custom SAC+DCRNN env-runner
+    # weights stale relative to the learner. Refresh the local env-runner from
+    # learner weights right before manual/validation rollouts.
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            set_weights(get_weights())
+    except Exception:
+        return False
+    return True
+
+
 def _remove_checkpoint_path(path_value: Any, *, root_dir: Path) -> None:
     path = Path(str(path_value)).resolve()
     root = root_dir.resolve()
@@ -1449,6 +1485,7 @@ def _evaluate_with_details(
     Dict[str, list[Dict[str, float]]],
     Dict[str, Any],
 ]:
+    _sync_env_runner_weights_for_evaluation(algo)
     seed_rows = []
     seed_action_traces = []
     seed_action_space_sizes = []
@@ -1625,6 +1662,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     best_validation_state = _init_best_validation_checkpoint_state(run_dir, algorithm_kind, logging_cfg)
     latest_training_state: Dict[str, int] = {"env_step": 0, "episode_index": 0}
     validation_pass_state: Dict[str, int] = {"index": 0}
+    last_validation_state: Dict[str, Any] = {"env_step": None, "episode_index": None, "row": None}
     try:
         config = _build_algorithm_config(cfg, run_dir, algorithm_kind)
         build_algo = getattr(config, "build_algo", None)
@@ -1687,6 +1725,9 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 evaluation_summary=validation_row,
                 evaluation_seed_rows=evaluation_seed_rows,
             )
+            last_validation_state["env_step"] = int(step)
+            last_validation_state["episode_index"] = int(episode_index)
+            last_validation_state["row"] = dict(validation_row)
             return validation_row
 
         _train_algorithm(
@@ -1698,7 +1739,15 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         )
 
         final_validation_step = int(latest_training_state.get("env_step", 0))
-        final_summary = _validate_and_log(final_validation_step)
+        final_episode_index = int(latest_training_state.get("episode_index", 0))
+        if (
+            last_validation_state.get("row") is not None
+            and int(last_validation_state.get("env_step") or -1) == final_validation_step
+            and int(last_validation_state.get("episode_index") or -1) == final_episode_index
+        ):
+            final_summary = dict(last_validation_state["row"])
+        else:
+            final_summary = _validate_and_log(final_validation_step)
         _update_wandb_summary(wandb_run, final_summary)
 
         if bool(getattr(logging_cfg, "save_final_model", True)):
