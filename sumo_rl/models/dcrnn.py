@@ -252,12 +252,16 @@ class DCRNNBackbone(nn.Module):
         )
 
     @classmethod
-    def from_actor_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
-        actor_encoder = (
-            dict(model_config.get("custom_sac", {}).get("actor", {}).get("encoder", {}) or {})
-            if isinstance(model_config.get("custom_sac"), dict)
-            else {}
-        )
+    def _from_custom_sac_encoder_config(
+        cls,
+        observation_space: Any,
+        model_config: dict[str, Any],
+        *,
+        branch: str,
+    ) -> "DCRNNBackbone":
+        custom_sac = dict(model_config.get("custom_sac", {}) or {}) if isinstance(model_config.get("custom_sac"), dict) else {}
+        branch_config = dict(custom_sac.get(branch, {}) or {})
+        encoder_config = dict(branch_config.get("encoder", {}) or {})
         history_len, num_nodes, input_dim = observation_space.shape
         del history_len
         adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
@@ -266,11 +270,19 @@ class DCRNNBackbone(nn.Module):
             adjacency=adjacency,
             num_nodes=int(model_config.get("num_nodes", num_nodes)),
             agent_index=int(model_config["agent_index"]),
-            hidden_dim=int(actor_encoder.get("hidden_dim", actor_encoder.get("hid_dim", 128))),
-            max_diffusion_step=int(actor_encoder.get("max_diffusion_step", 2)),
-            num_rnn_layers=int(actor_encoder.get("num_rnn_layers", 1)),
-            filter_type=str(actor_encoder.get("filter_type", "dual_random_walk")),
+            hidden_dim=int(encoder_config.get("hidden_dim", encoder_config.get("hid_dim", 128))),
+            max_diffusion_step=int(encoder_config.get("max_diffusion_step", 2)),
+            num_rnn_layers=int(encoder_config.get("num_rnn_layers", 1)),
+            filter_type=str(encoder_config.get("filter_type", "dual_random_walk")),
         )
+
+    @classmethod
+    def from_actor_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+        return cls._from_custom_sac_encoder_config(observation_space, model_config, branch="actor")
+
+    @classmethod
+    def from_critic_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+        return cls._from_custom_sac_encoder_config(observation_space, model_config, branch="critic")
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         obs = obs.float()

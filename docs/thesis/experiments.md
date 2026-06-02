@@ -56,6 +56,7 @@ python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experimen
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 PPO and DQN default to independent policies. To switch to a shared policy, override
@@ -94,6 +95,11 @@ placeholder message-passing metadata for later GAT experiments. The older
 `sac_dcrnn_actor` reuses the graph-observation wrapper from `dqn_dcrnn`, but
 applies the DCRNN encoder only to the SAC actor. The critics stay on the
 current MLP SAC path in v1. This variant supports independent policies only.
+
+`sac_dcrnn_full` uses the same graph-observation wrapper, but assigns separate
+DCRNN encoders to the SAC actor, `qf`, and `qf_twin` branches. The target
+critics stay on the normal SAC target-copy path rather than using separately
+configured target DCRNN stacks. This variant supports independent policies only.
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.

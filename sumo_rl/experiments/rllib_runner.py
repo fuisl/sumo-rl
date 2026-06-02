@@ -139,9 +139,16 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
 
 def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, algorithm_kind: str, policy_mode: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
-    if algorithm_kind == sac_agent.DCRNN_ACTOR_KIND:
+    if algorithm_kind in sac_agent.GRAPH_KINDS:
         return sac_agent.build_graph_eval_env(cfg, run_dir, seed=seed)
     module = _algorithm_module(algorithm_kind)
+    if module is sac_agent:
+        return build_rllib_parallel_env(
+            cfg,
+            run_dir,
+            seed=seed,
+            pad_spaces=(policy_mode == "shared"),
+        )
     build_graph_eval_env = getattr(module, "build_graph_eval_env", None)
     if callable(build_graph_eval_env):
         return build_graph_eval_env(cfg, run_dir, seed=seed)

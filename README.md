@@ -223,6 +223,7 @@ python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experimen
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
@@ -249,7 +250,11 @@ critic, and future message-passing/GAT hook settings. `algorithm=sac_custom`
 is kept as a backward-compatible alias so older launch commands still work.
 Use `algorithm=sac_dcrnn_actor` when you want the graph-history DCRNN encoder
 on the SAC actor while keeping the SAC critics on the current MLP path. The
-first version supports independent policies only.
+first version supports independent policies only. Use
+`algorithm=sac_dcrnn_full` when you want separate DCRNN encoders on the SAC
+actor, `qf`, and `qf_twin` branches while keeping the standard SAC target-copy
+behavior for the critic targets. This variant also supports independent
+policies only.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash
