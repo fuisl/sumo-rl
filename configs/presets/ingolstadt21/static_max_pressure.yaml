@@ -1,0 +1,4 @@
+# @package _global_
+defaults:
+  - /presets/resco_ingolstadt21/static_max_pressure
+  - _self_

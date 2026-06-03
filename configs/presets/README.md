@@ -17,8 +17,10 @@ The target RESCO scenarios are:
 
 - `resco_cologne1`
 - `resco_cologne3`
+- `resco_cologne8`
 - `resco_ingolstadt1`
 - `resco_ingolstadt7`
+- `resco_ingolstadt21`
 
 Each target scenario folder is meant to contain the same method names, so the layout is easy to scan:
 
@@ -28,15 +30,26 @@ configs/presets/<scenario>/
   static_max_pressure.yaml
 ```
 
+The static baseline presets now follow the RLlib validation seed layout:
+
+- `experiment.eval_seeds` is used when present
+- the thesis presets pin `eval_seeds: [1, 2, 3, 4, 5]`
+- the baseline logs only the averaged `validation/*` result, replayed every 5 episodes through episode 500 by default
+
 RLlib methods are named in `configs/algorithm/` instead:
 
 ```text
 configs/algorithm/
   ppo.yaml
   dqn.yaml
+  dqn_dcrnn.yaml
   sac_builtin.yaml
-  sac_custom.yaml
+  sac_mlp.yaml
+  sac_dcrnn_actor.yaml
 ```
+
+The older `dcrnn.yaml` and `sac_custom.yaml` files are kept as compatibility
+aliases, but the canonical public names are `dqn_dcrnn` and `sac_mlp`.
 
 How to read one preset:
 

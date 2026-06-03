@@ -816,6 +816,10 @@ def _append_debug_metrics(row: Dict[str, Any], metrics: Dict[str, Any]) -> None:
         "train/ppo/learners/": "debug/ppo/learners/",
         "train/dqn/learners/": "debug/dqn/learners/",
         "train/dqn/replay/": "debug/dqn/replay/",
+        "train/dqn_dcrnn/learners/": "debug/dqn_dcrnn/learners/",
+        "train/dqn_dcrnn/replay/": "debug/dqn_dcrnn/replay/",
+        "train/dcrnn/learners/": "debug/dqn_dcrnn/learners/",
+        "train/dcrnn/replay/": "debug/dqn_dcrnn/replay/",
         "train/sac/learners/": "debug/sac/learners/",
         "train/sac/replay/": "debug/sac/replay/",
     }

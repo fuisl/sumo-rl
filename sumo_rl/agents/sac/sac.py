@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from sumo_rl.agents.dcrnn.dcrnn import build_graph_algorithm_context, graph_params
 from sumo_rl.agents.rllib_common import (
     apply_env_runner_settings,
     apply_multi_agent_settings,
@@ -34,8 +35,18 @@ from sumo_rl.agents.sac.custom_sac import (
 
 
 BUILTIN_KIND = "sac_builtin"
-CUSTOM_KIND = "sac_custom"
-KINDS = {BUILTIN_KIND, CUSTOM_KIND}
+CUSTOM_KIND = "sac_mlp"
+DCRNN_ACTOR_KIND = "sac_dcrnn_actor"
+CUSTOM_ALIASES = {"sac_custom"}
+KINDS = {BUILTIN_KIND, CUSTOM_KIND, DCRNN_ACTOR_KIND}
+ALL_KINDS = {BUILTIN_KIND, CUSTOM_KIND, DCRNN_ACTOR_KIND, *CUSTOM_ALIASES}
+
+
+def normalize_kind(algorithm_kind: str) -> str:
+    kind = str(algorithm_kind or "").strip()
+    if kind in CUSTOM_ALIASES:
+        return CUSTOM_KIND
+    return kind
 
 
 def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -54,15 +65,52 @@ def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
+def _dcrnn_actor_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = dict(params.get("model_config") or {})
+    model_config.setdefault("architecture_tag", DCRNN_ACTOR_KIND)
+    actor_config = dict(model_config.get("actor") or {})
+    actor_encoder = dict(actor_config.get("encoder") or {})
+    actor_encoder.setdefault("type", "dcrnn")
+    actor_encoder.setdefault("hidden_dim", 128)
+    actor_encoder.setdefault("max_diffusion_step", 2)
+    actor_encoder.setdefault("num_rnn_layers", 1)
+    actor_encoder.setdefault("filter_type", "dual_random_walk")
+    actor_config["encoder"] = actor_encoder
+    model_config["actor"] = actor_config
+    model_config.update(graph_model_config)
+    return model_config
+
+
+def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+    from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
+
+    params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
+    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=graph_params(params))
+
+
 def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     from ray.rllib.algorithms.sac import SACConfig
 
-    context = build_algorithm_context(cfg, run_dir, algorithm_kind)
+    algorithm_kind = normalize_kind(algorithm_kind)
+    if algorithm_kind == DCRNN_ACTOR_KIND:
+        context, policy_model_configs = build_graph_algorithm_context(
+            cfg,
+            run_dir,
+            algorithm_kind=algorithm_kind,
+            model_config_builder=_dcrnn_actor_model_config,
+        )
+    else:
+        context = build_algorithm_context(cfg, run_dir, algorithm_kind)
+        policy_model_configs = None
     callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
     params["replay_buffer_config"] = build_replay_buffer_config(params)
-    custom_model_config = params.get("model_config")
-    if algorithm_kind == CUSTOM_KIND:
+    custom_model_config = (
+        _dcrnn_actor_model_config(params, {})
+        if algorithm_kind == DCRNN_ACTOR_KIND
+        else params.get("model_config")
+    )
+    if algorithm_kind in {CUSTOM_KIND, DCRNN_ACTOR_KIND}:
         normalized_custom_model_config = normalize_custom_sac_model_config(custom_model_config)
         custom_model_config = normalized_custom_model_config
         params.setdefault("twin_q", bool(normalized_custom_model_config.get("twin_q", True)))
@@ -99,12 +147,16 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     config = apply_multi_agent_settings(config, context)
     config = apply_standard_evaluation_settings(config, params)
 
-    if algorithm_kind == CUSTOM_KIND:
+    if algorithm_kind in {CUSTOM_KIND, DCRNN_ACTOR_KIND}:
         rl_module_specs = {
             policy_id: build_custom_sac_module_spec(
                 policy_spec.observation_space,
                 policy_spec.action_space,
-                model_config=custom_model_config,
+                model_config=(
+                    policy_model_configs[policy_id]
+                    if policy_model_configs is not None
+                    else custom_model_config
+                ),
             )
             for policy_id, policy_spec in context.active_policies.items()
         }
@@ -119,6 +171,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
 
 
 def extract_training_metrics(result: Dict[str, Any], iteration: int, *, algorithm_kind: str) -> Dict[str, Any]:
+    algorithm_kind = normalize_kind(algorithm_kind)
     metrics = extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
@@ -140,6 +193,7 @@ def train(
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
     validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
+    algorithm_kind = normalize_kind(algorithm_kind)
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params
     callbacks_class = training_episode_summary_callbacks_class()

@@ -250,7 +250,7 @@ DQN, and the SAC module owns SAC-specific config and training metrics.
 
 ### Custom SAC module
 
-`sac_builtin` is the reference RLlib SAC baseline. `sac_custom` keeps the same
+`sac_builtin` is the reference RLlib SAC baseline. `sac_mlp` keeps the same
 native discrete multi-agent SAC setup, but swaps in project-owned single-agent
 and multi-agent RLModule boundaries.
 
@@ -262,7 +262,7 @@ This is the right place to change:
 - future GAT or message-passing blocks among agents
 
 The custom path is configured through `algorithm.params.model_config` in
-`configs/algorithm/sac_custom.yaml`. Actor and critic MLP sizes, head sizes,
+`configs/algorithm/sac_mlp.yaml`. Actor and critic MLP sizes, head sizes,
 the `twin_q` setting, and the communication hook metadata are exposed there.
 Training still uses RLlib's SAC learner, replay buffer, target updates, and
 optimizer ownership; the repo only owns the module architecture boundary.
@@ -351,7 +351,7 @@ Use this recipe if the model should stay in its original repository.
 3. Export one normalized summary artifact from the external run.
 4. Convert that artifact into the shared thesis row shape.
 5. Copy the raw upstream logs into the Hydra run directory for auditability.
-6. Log one per-seed row and one final aggregate row if the run is seed-based.
+6. Log one per-seed row and one final aggregate row if the run is seed-based, unless the method intentionally exposes only a validation-style aggregate trace like the static baselines.
 7. Document clearly which metrics are native upstream fields and which are thesis-side proxies.
 
 Good fit for this path:
@@ -374,7 +374,7 @@ Confirm all of the following:
 2. `efficiency_*` and `safety_*` are present when the env logged system info.
 3. the final W&B summary matches the final CSV summary row
 4. the reward curves and the benchmark metrics tell a consistent story
-5. multi-seed methods keep one per-seed row plus one final aggregate row
+5. multi-seed methods either keep one per-seed row plus one final aggregate row, or clearly document a validation-only aggregate surface
 
 If the final summary row is zero again, debug in this order:
 

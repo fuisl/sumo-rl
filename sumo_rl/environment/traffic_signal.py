@@ -94,6 +94,7 @@ class TrafficSignal:
         self.reward_fn = reward_fn
         self.reward_weights = reward_weights
         self.sumo = sumo
+        self._last_fixed_cycle_phase_index = None
 
         if type(self.reward_fn) is list:
             self.reward_dim = len(self.reward_fn)
@@ -117,6 +118,7 @@ class TrafficSignal:
         self.out_lanes = [link[0][1] for link in self.sumo.trafficlight.getControlledLinks(self.id) if link]
         self.out_lanes = list(set(self.out_lanes))
         self.lanes_length = {lane: self.sumo.lane.getLength(lane) for lane in self.lanes + self.out_lanes}
+        self.phase_lanes = self._build_phase_lanes()
 
         self.observation_space = self.observation_fn.observation_space()
         self.action_space = spaces.Discrete(self.num_green_phases)
@@ -132,7 +134,10 @@ class TrafficSignal:
     def _build_phases(self):
         phases = self.sumo.trafficlight.getAllProgramLogics(self.id)[0].phases
         if self.env.fixed_ts:
+            self.fixed_cycle_phases = list(phases)
+            self.green_phases = [phase for index, phase in enumerate(phases) if index % 2 == 0]
             self.num_green_phases = len(phases) // 2  # Number of green phases == number of phases (green+yellow) divided by 2
+            self.sync_fixed_time_state()
             return
 
         self.green_phases = []
@@ -164,6 +169,25 @@ class TrafficSignal:
         self.sumo.trafficlight.setProgramLogic(self.id, logic)
         self.sumo.trafficlight.setRedYellowGreenState(self.id, self.all_phases[0].state)
 
+    def _build_phase_lanes(self) -> List[List[str]]:
+        phase_lanes = []
+        controlled_links = self.sumo.trafficlight.getControlledLinks(self.id)
+        for phase in getattr(self, "green_phases", []):
+            lanes = []
+            state = getattr(phase, "state", "")
+            for signal_index, signal_state in enumerate(state):
+                if signal_state not in ("G", "g"):
+                    continue
+                if signal_index >= len(controlled_links):
+                    continue
+                links = controlled_links[signal_index] or []
+                for link in links:
+                    incoming_lane = link[0]
+                    if incoming_lane not in lanes:
+                        lanes.append(incoming_lane)
+            phase_lanes.append(lanes)
+        return phase_lanes
+
     @property
     def time_to_act(self):
         """Returns True if the traffic signal should act in the current step."""
@@ -179,6 +203,34 @@ class TrafficSignal:
             # self.sumo.trafficlight.setPhase(self.id, self.green_phase)
             self.sumo.trafficlight.setRedYellowGreenState(self.id, self.all_phases[self.green_phase].state)
             self.is_yellow = False
+
+    def sync_fixed_time_state(self):
+        if not self.env.fixed_ts:
+            return
+
+        current_phase_index = int(self.sumo.trafficlight.getPhase(self.id))
+        if self._last_fixed_cycle_phase_index is None or self._last_fixed_cycle_phase_index != current_phase_index:
+            self.time_since_last_phase_change = 0
+        else:
+            self.time_since_last_phase_change += 1
+        self._last_fixed_cycle_phase_index = current_phase_index
+
+        current_state = self.sumo.trafficlight.getRedYellowGreenState(self.id)
+        matched_green_phase = next(
+            (index for index, phase in enumerate(self.green_phases) if getattr(phase, "state", "") == current_state),
+            None,
+        )
+        if matched_green_phase is None and current_phase_index > 0:
+            previous_state = getattr(self.fixed_cycle_phases[current_phase_index - 1], "state", "")
+            matched_green_phase = next(
+                (index for index, phase in enumerate(self.green_phases) if getattr(phase, "state", "") == previous_state),
+                None,
+            )
+        if matched_green_phase is None:
+            matched_green_phase = min(current_phase_index // 2, max(0, self.num_green_phases - 1))
+
+        self.green_phase = int(matched_green_phase)
+        self.is_yellow = "y" in current_state.lower()
 
     def set_next_phase(self, new_phase: int):
         """Sets what will be the next green phase and sets yellow phase if the next phase is different than the current.
@@ -351,6 +403,18 @@ class TrafficSignal:
             for veh in self.sumo.lane.getLastStepVehicleIDs(lane)
             if not _is_ghost_vehicle(veh) and self.sumo.vehicle.getSpeed(veh) < 0.1
         )
+
+    def get_phase_queued_counts(self) -> List[int]:
+        """Returns queued-vehicle counts for the lane groups served by each green phase."""
+        return [
+            sum(
+                1
+                for lane in phase_lanes
+                for veh in self.sumo.lane.getLastStepVehicleIDs(lane)
+                if not _is_ghost_vehicle(veh) and self.sumo.vehicle.getSpeed(veh) < 0.1
+            )
+            for phase_lanes in self.phase_lanes
+        ]
 
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""

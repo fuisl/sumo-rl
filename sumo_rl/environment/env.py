@@ -229,7 +229,11 @@ class SumoEnvironment(gym.Env):
             for ts in self.ts_ids
         }
 
-    def _start_simulation(self):
+    @staticmethod
+    def _sumo_cmd_has_option(sumo_cmd: List[str], *options: str) -> bool:
+        return any(option in sumo_cmd for option in options)
+
+    def _build_sumo_cmd(self) -> List[str]:
         sumo_cmd = [
             self._sumo_binary,
             "-n",
@@ -244,7 +248,7 @@ class SumoEnvironment(gym.Env):
             str(self.time_to_teleport),
         ]
         if self.begin_time > 0:
-            sumo_cmd.append(f"-b {self.begin_time}")
+            sumo_cmd.extend(["-b", str(self.begin_time)])
         if self.sumo_seed == "random":
             sumo_cmd.append("--random")
         else:
@@ -253,14 +257,22 @@ class SumoEnvironment(gym.Env):
             sumo_cmd.append("--no-warnings")
         if self.additional_sumo_cmd is not None:
             sumo_cmd.extend(self.additional_sumo_cmd.split())
+        if not self._sumo_cmd_has_option(sumo_cmd, "-e", "--end"):
+            sumo_cmd.extend(["--end", str(self.sim_max_time)])
         tripinfo_output = self._build_tripinfo_output_path()
         if tripinfo_output is not None and "--tripinfo-output" not in sumo_cmd:
-            tripinfo_output.parent.mkdir(parents=True, exist_ok=True)
             sumo_cmd.extend(["--tripinfo-output", str(tripinfo_output)])
             if "--tripinfo-output.write-unfinished" not in sumo_cmd:
                 sumo_cmd.extend(["--tripinfo-output.write-unfinished", "true"])
             if "--tripinfo-output.write-undeparted" not in sumo_cmd:
                 sumo_cmd.extend(["--tripinfo-output.write-undeparted", "true"])
+        return sumo_cmd
+
+    def _start_simulation(self):
+        sumo_cmd = self._build_sumo_cmd()
+        tripinfo_output = self._build_tripinfo_output_path()
+        if tripinfo_output is not None and "--tripinfo-output" in sumo_cmd:
+            tripinfo_output.parent.mkdir(parents=True, exist_ok=True)
         if self.use_gui or self.render_mode is not None:
             sumo_cmd.extend(["--start", "--quit-on-end"])
             if self.render_mode == "rgb_array":
@@ -457,6 +469,9 @@ class SumoEnvironment(gym.Env):
 
     def _sumo_step(self):
         self.sumo.simulationStep()
+        if self.fixed_ts:
+            for traffic_signal in self.traffic_signals.values():
+                traffic_signal.sync_fixed_time_state()
         self.num_arrived_vehicles += self.sumo.simulation.getArrivedNumber()
         self.num_departed_vehicles += self.sumo.simulation.getDepartedNumber()
         self.num_teleported_vehicles += self.sumo.simulation.getEndingTeleportNumber()

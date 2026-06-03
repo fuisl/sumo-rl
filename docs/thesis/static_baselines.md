@@ -5,7 +5,7 @@ firstpage:
 
 # Static Baselines
 
-This page covers the non-learning static baselines for the RESCO `grid4x4` scenario.
+This page covers the non-learning static baselines for the thesis RESCO scenarios.
 It also matches the fixed-time benchmark style used in the thesis, which follows the same five-seed averaging pattern.
 The logged summary values follow the RESCO formulas:
 
@@ -14,18 +14,22 @@ The logged summary values follow the RESCO formulas:
 - `resco_wait` from tripinfo `waitingTime`
 - `resco_queue` and `resco_max_queue` from live queue counts in the simulator
 
-The per-run identifier in the logs is `run_seed`, not the base config seed.
-
 ## What to Run
 
 The static baselines in this thesis use:
 
-- RESCO `grid4x4`
+- `resco_cologne1`
+- `resco_cologne3`
+- `resco_cologne8`
+- `resco_ingolstadt1`
+- `resco_ingolstadt7`
+- `resco_ingolstadt21`
 - `num_seconds: 3600`
 - `episodes: 1`
 - `seeds: [1, 2, 3, 4, 5]`
+- `eval_seeds: [1, 2, 3, 4, 5]`
 
-The runner executes one episode per seed and then writes a summary average across the five runs.
+The runner executes one validation-style episode per seed, averages those seed results, and replays the aggregated RLlib-style `validation/*` metrics on the episode axis for W&B comparison.
 
 ## Max Pressure
 
@@ -33,6 +37,8 @@ Run:
 
 ```bash
 python experiments/static_max_pressure.py
+python experiments/static_max_pressure.py scenario=resco_ingolstadt7
+python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,resco_cologne8,resco_ingolstadt1,resco_ingolstadt7,resco_ingolstadt21
 ```
 
 What it uses:
@@ -47,10 +53,19 @@ Each run writes:
 - Hydra output under `outputs/<experiment-name>/<timestamp>/`
 - per-run CSV metrics under `logs/metrics.csv`
 - raw SUMO tripinfo XML under `tripinfo/` only when `logging.save_tripinfo_output=true`
-- a final summary row with the average across the five seeds
 - optional W&B logs if enabled
-- the RESCO summary fields are logged directly, so the CSV and W&B logs match the benchmark formulas
+- one averaged RLlib-style `validation/*` baseline row replayed every 5 episodes through episode 500 by default
 - agent-level metrics stay local in the CSV when you enable them, and are not sent to W&B
+- one RLlib-style validation media bundle per run: action share, action timeline, phase queue, and tripinfo distributions
+
+## Horizontal Baselines In W&B
+
+To draw fixed-time or max-pressure as horizontal baselines in the same validation panels as RLlib runs:
+
+- the default span is `logging.baseline_line_max_episode_index=500`
+- the default cadence is `logging.baseline_line_episode_stride=5`
+
+This re-logs the same aggregated `validation/*` values at `validation/episode_index = 5, 10, ..., 500`, so W&B renders a flat comparison line instead of a single point. The validation media artefacts are still logged once per run.
 
 ## Suggested Reading Order
 

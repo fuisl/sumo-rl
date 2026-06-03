@@ -1,1 +1,1 @@
-from sumo_rl.agents.static.policies import GreedyPolicy, MaxPressurePolicy, StaticPolicy
+from sumo_rl.agents.static.policies import MaxPressurePolicy, StaticPolicy

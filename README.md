@@ -203,21 +203,27 @@ WANDB_ENTITY=your-entity
 ### Fixed-time control in a RESCO scenario:
 ```bash
 python experiments/fixed_time.py scenario=resco_grid4x4
+python experiments/fixed_time.py scenario=resco_cologne1
+python experiments/fixed_time.py -m scenario=resco_cologne1,resco_cologne3,resco_cologne8,resco_ingolstadt1,resco_ingolstadt7,resco_ingolstadt21
 ```
 
 ### Max-pressure control in a RESCO scenario:
 ```bash
 python experiments/static_max_pressure.py scenario=resco_cologne1
+python experiments/static_max_pressure.py scenario=resco_ingolstadt7
+python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,resco_cologne8,resco_ingolstadt1,resco_ingolstadt7,resco_ingolstadt21
 ```
 
-### RLlib PPO, DQN, FRAP, CoLight, and SAC:
+### RLlib PPO, DQN, FRAP, DQN+DCRNN, CoLight, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
-python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
@@ -226,6 +232,13 @@ uses the SUMO-RL observation tail as per-movement demand features
 `[density_i, queue_i]` from the default split observation layout; override
 `algorithm.params.model_config.phase_pairs` when a network needs custom
 movement-pair ordering.
+
+DQN+DCRNN is implemented as a DQN-family RLlib module with a graph-observation
+wrapper. It builds a traffic-signal graph from incoming/outgoing lanes and feeds
+rolling density/queue histories to a diffusion-convolutional recurrent
+Q-network. Use `algorithm=dqn_dcrnn` as the canonical name; `algorithm=dcrnn`
+is kept as a backward-compatible alias. The first version supports independent
+policies.
 
 CoLight is available as `algorithm=colight`. It is a DQN-family RLlib method
 with one shared graph-attention Q-network over all controlled intersections.
@@ -240,9 +253,13 @@ SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
 adapter anymore.
 Use `algorithm=sac_builtin` as the reference RLlib baseline. Use
-`algorithm=sac_custom` when you want to expose and modify the SAC RLModule
+`algorithm=sac_mlp` when you want to expose and modify the SAC RLModule
 architecture through `algorithm.params.model_config`, including actor, twin
-critic, and future message-passing/GAT hook settings.
+critic, and future message-passing/GAT hook settings. `algorithm=sac_custom`
+is kept as a backward-compatible alias so older launch commands still work.
+Use `algorithm=sac_dcrnn_actor` when you want the graph-history DCRNN encoder
+on the SAC actor while keeping the SAC critics on the current MLP path. The
+first version supports independent policies only.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash

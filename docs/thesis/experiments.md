@@ -11,7 +11,7 @@ If you are onboarding to the codebase, read [docs/thesis/engineering_guide.md](e
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
 If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
 
-The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, and SAC.
+The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, FRAP, SAC, and DCRNN.
 
 ## Hydra
 Hydra is used as the experiment composition layer.
@@ -52,10 +52,12 @@ python experiments/static_max_pressure.py scenario=resco_cologne1
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=fgs scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
-python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 PPO and DQN default to independent policies. To switch to a shared policy, override
@@ -66,6 +68,14 @@ custom RLModule replaces the Q-network with the paper's phase-competition
 architecture. The default model config consumes SUMO-RL's default observation as
 `[phase_one_hot, min_green, density, queue]` and treats `[density, queue]` as the
 per-movement demand vector by using the split density/queue layout.
+
+DQN+DCRNN is available as `algorithm=dqn_dcrnn`. It is a DQN-family RLlib
+method that wraps the PettingZoo parallel environment with graph observations
+shaped as `[history_len, num_nodes, density_queue_features]`, then replaces the
+Q-network with a diffusion-convolutional recurrent encoder. `algorithm=dcrnn`
+remains as a backward-compatible alias. The first version supports independent
+policies only; shared graph communication with existing models is a future
+extension.
 
 CoLight is available as `algorithm=colight`. It uses a shared graph-attention
 Q-network over the whole traffic-signal graph and forces
@@ -96,11 +106,16 @@ path. If SAC fails, the issue is in the RLlib discrete SAC path or the env/polic
 setup, not in a custom continuous-action wrapper.
 
 `sac_builtin` should be treated as the reference RLlib SAC baseline.
-`sac_custom` uses the same trainer and replay setup, but replaces the RLModule
+`sac_mlp` uses the same trainer and replay setup, but replaces the RLModule
 boundary with project-owned actor, twin-critic, and communication hook points.
-Use `configs/algorithm/sac_custom.yaml` or command-line overrides under
+Use `configs/algorithm/sac_mlp.yaml` or command-line overrides under
 `algorithm.params.model_config` to change actor/critic MLP sizes or enable
-placeholder message-passing metadata for later GAT experiments.
+placeholder message-passing metadata for later GAT experiments. The older
+`sac_custom` name remains as an alias.
+
+`sac_dcrnn_actor` reuses the graph-observation wrapper from `dqn_dcrnn`, but
+applies the DCRNN encoder only to the SAC actor. The critics stay on the
+current MLP SAC path in v1. This variant supports independent policies only.
 
 FGS is available as `algorithm=fgs`. FGS stands for FRAP-GNN-SAC: it applies a
 FRAP-style local phase-competition encoder to each SUMO-RL default observation,
@@ -198,4 +213,4 @@ pip install -e ".[rllib-custom]"
 - The existing environment and algorithm examples still run through the same underlying SUMO-RL code paths.
 - The RESCO summary log is the canonical run artifact for comparing against the benchmark formulas.
 - Run names now put the scenario first, for example `resco_grid4x4__fixed_time` or `resco_cologne1__static_max_pressure`.
-- Short smoke runs should watch the `train/` and `eval/` traces in addition to the episode-end summary rows.
+- Short smoke runs should watch the `train/` and `validation/` traces in addition to the episode-end summary rows.
