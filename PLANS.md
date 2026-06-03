@@ -35,6 +35,14 @@ This project will be organized in phases so the thesis work stays incremental an
 - Add the first graph algorithm as `algorithm=dqn_dcrnn`, using a DCRNN Q-network through the current runner, W&B, CSV, evaluation, and checkpoint flow.
 - Keep v1 restricted to independent policies; shared graph data passing into current models is a future extension.
 
+### Phase 5: FGS FRAP-GNN-SAC
+- Status: implemented as a project-owned, third-party-inspired RLlib integration.
+- FGS combines FRAP-style local phase competition, CoLight-style GAT communication, and discrete SAC.
+- It is not a handwritten baseline; it is a modular learning method whose components can be ablated through Hydra config.
+- The v1 critic defaults to a joint-action CTDE form over graph embeddings and same-transition joint action context, while execution remains decentralized through a shared policy.
+- The default reward remains SUMO-RL's existing `diff-waiting-time`.
+- Cologne8 FGS presets include PyG `GATv2Conv` communication ablations for both FRAP and MLP local encoders.
+
 ## Assumptions
 - `SUMO_HOME` remains required for all simulation runs.
 - W&B should support disabled or offline mode for local development.

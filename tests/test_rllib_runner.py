@@ -15,6 +15,7 @@ from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
 from sumo_rl.agents.ppo.ppo import extract_training_metrics as extract_ppo_training_metrics
 from sumo_rl.agents.sac.sac import extract_training_metrics as extract_sac_training_metrics
 from sumo_rl.agents.rllib_common import (
+    _completed_episode_summary_history,
     apply_standard_evaluation_settings,
     build_training_episode_row,
     completed_training_episodes,
@@ -51,6 +52,36 @@ def test_build_policy_mapping_independent_mode_keeps_agent_identity():
     mapping_fn = _build_policy_mapping("independent")
     assert mapping_fn("tls_1") == "tls_1"
     assert mapping_fn("tls_2") == "tls_2"
+
+
+def test_rllib_run_name_uses_logging_name_when_set():
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(name="wandb-title"),
+        experiment=SimpleNamespace(name="experiment-title"),
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+    )
+
+    assert rllib_runner._rllib_run_name(cfg, "ppo") == "wandb-title"
+
+
+def test_rllib_run_name_uses_explicit_experiment_name():
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(name=None),
+        experiment=SimpleNamespace(name="experiment-title"),
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+    )
+
+    assert rllib_runner._rllib_run_name(cfg, "ppo") == "experiment-title"
+
+
+def test_rllib_run_name_keeps_generated_name_for_default_experiment_name():
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(name=None),
+        experiment=SimpleNamespace(name="rllib"),
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+    )
+
+    assert rllib_runner._rllib_run_name(cfg, "ppo").startswith("grid4x4__ppo__")
 
 
 def test_dqn_uses_multi_agent_episode_replay_buffer_by_default():
@@ -1217,6 +1248,32 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
     assert emitted[1][1]["train/resco_wait_mean"] == 6.0
 
 
+def test_reset_only_episode_summaries_are_not_logged_as_zero_metrics():
+    class DummyEnv:
+        completed_episode_summaries = [
+            {
+                "episode/index": 1.0,
+                "episode/elapsed_seconds": 0.0,
+                "resco_wait_mean": 0.0,
+                "resco_queue_mean": 0.0,
+                "tripinfo/parse_pending": 0.0,
+            },
+            {
+                "episode/index": 2.0,
+                "episode/elapsed_seconds": 3600.0,
+                "resco_wait_mean": 6.0,
+                "resco_queue_mean": 2.5,
+                "tripinfo/parse_pending": 0.0,
+            },
+        ]
+        last_episode_summary = {}
+        sumo = None
+
+    summaries = _completed_episode_summary_history(DummyEnv())
+
+    assert [summary["episode/index"] for summary in summaries] == [2.0]
+
+
 def test_rllib_training_episode_emission_falls_back_to_completed_episode_counters():
     cfg = SimpleNamespace(
         experiment=SimpleNamespace(episodes=3, episode_seconds=100),
@@ -1485,9 +1542,12 @@ def test_validation_summary_row_maps_final_metrics_to_validation_namespace():
 
 
 def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypatch, tmp_path):
+    ray_init_calls = []
+
     class DummyRay:
         @staticmethod
         def init(**kwargs):
+            ray_init_calls.append(kwargs)
             return None
 
         @staticmethod
@@ -1649,6 +1709,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             save_final_model=True,
         ),
         experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),
+        resources=SimpleNamespace(cuda_visible_devices="1"),
         algorithm=SimpleNamespace(kind="ppo", params={}),
     )
 
@@ -1666,6 +1727,10 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert all("tls_1" in entry["action_timeline_by_agent"] for entry in action_plot_logs)
     assert all("tls_1" in entry["phase_queue_rows_by_agent"] for entry in action_plot_logs)
     assert all(entry["decision_seconds"] == 5 for entry in action_plot_logs)
+    assert ray_init_calls
+    assert ray_init_calls[0]["num_cpus"] == 2
+    assert ray_init_calls[0]["runtime_env"]["env_vars"]["OMP_NUM_THREADS"] == "1"
+    assert ray_init_calls[0]["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
     validation_rows = [args[2] for args, kwargs in logged_rows if isinstance(args[2], dict) and "validation/env_step" in args[2]]
     assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0]
     assert all(row["validation/episode_index"] == 4.0 for row in validation_rows)
@@ -1767,6 +1832,48 @@ def test_init_wandb_binds_debug_metrics_to_train_episode_index(monkeypatch, tmp_
     assert result is run
     assert (("train/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
     assert (("debug/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
+
+
+def test_init_wandb_uses_experiment_name_as_run_name(monkeypatch, tmp_path):
+    init_calls = []
+
+    class DummyRun:
+        def __init__(self):
+            self.name = None
+
+        def define_metric(self, *args, **kwargs):
+            del args, kwargs
+
+    run = DummyRun()
+
+    class DummyWandb:
+        @staticmethod
+        def init(**kwargs):
+            init_calls.append(kwargs)
+            return run
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=True,
+            env_file="",
+            name=None,
+            project=None,
+            entity=None,
+            group=None,
+            tags=[],
+            job_type="train",
+            mode="disabled",
+        ),
+        experiment=SimpleNamespace(name="fgs_mlp_gat_sac_seed7", project="proj", group=None, tags=[]),
+    )
+
+    result = _init_wandb(cfg, tmp_path)
+
+    assert result is run
+    assert init_calls[0]["name"] == "fgs_mlp_gat_sac_seed7"
+    assert run.name == "fgs_mlp_gat_sac_seed7"
 
 
 def test_init_wandb_can_skip_final_metric_definitions(monkeypatch, tmp_path):

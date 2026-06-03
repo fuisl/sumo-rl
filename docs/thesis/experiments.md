@@ -53,6 +53,8 @@ python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
+python experiments/rllib.py algorithm=fgs scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
@@ -75,6 +77,26 @@ Q-network with a diffusion-convolutional recurrent encoder. `algorithm=dcrnn`
 remains as a backward-compatible alias. The first version supports independent
 policies only; shared graph communication with existing models is a future
 extension.
+
+CoLight is available as `algorithm=colight`. It uses a shared graph-attention
+Q-network over the whole traffic-signal graph and forces
+`algorithm.params.policy_mode=shared`, because independent policies would remove
+the network-level cooperation that defines CoLight.
+The attention layer is implemented with PyTorch Geometric's `MessagePassing`
+API in the LibSignal CoLight style: RLlib observations remain plain dict
+tensors, while PyG handles self-loops and target-node-wise attention inside the
+model.
+CoLight also writes a SUMO map overlay of its directed topology to
+`topology/colight_topology.svg` plus a machine-readable edge list at
+`topology/colight_topology_edges.json` inside the run directory.
+For unstable CoLight curves, debug in this order: first confirm the exact same
+scenario files, seed, and episode length against fixed-time or max-pressure;
+then inspect reward scale, phase switching, observation scale, and the rendered
+neighbor graph. The default CoLight preset now uses a smaller learning rate,
+gradient clipping, slower epsilon decay, a larger replay buffer, and
+capacity-normalized lane-count observations. If you switch away from
+`diff-waiting-time`, prefer `normalized-queue` or `normalized-pressure` before
+using raw queue or pressure rewards.
 
 SAC now uses RLlib's native discrete-action support. The repo hands each traffic
 signal its own discrete action space through the multi-agent RLlib wrapper, and
@@ -100,6 +122,79 @@ current MLP SAC path in v1. This variant supports independent policies only.
 DCRNN encoders to the SAC actor, `qf`, and `qf_twin` branches. The target
 critics stay on the normal SAC target-copy path rather than using separately
 configured target DCRNN stacks. This variant supports independent policies only.
+
+FGS is available as `algorithm=fgs`. FGS stands for FRAP-GNN-SAC: it applies a
+FRAP-style local phase-competition encoder to each SUMO-RL default observation,
+passes the node embeddings through a CoLight-style GAT over a TLS graph, and
+trains a shared discrete SAC actor with centralized graph critics. The actor is
+decentralized at execution time because each agent selects one discrete phase
+from its ego graph embedding. During training, the default twin critics receive
+the full graph embedding plus replayed same-transition joint actions for the
+critic TD loss. Actor and target updates use current policy action distributions
+as a tractable expectation context, so FGS remains centralized during training
+without enumerating all joint actions.
+FGS defaults to the same PyTorch Geometric `MessagePassing` attention layer as
+CoLight, so the graph API is shared while the FRAP encoder and SAC heads remain
+FGS-specific. Set `algorithm.params.model_config.communication.type=gatv2` to
+swap that communication block for PyG's `GATv2Conv`; the Cologne8 presets
+include both FRAP+GATv2 and MLP+GATv2 ablations.
+
+FGS defaults to the existing `diff-waiting-time` reward. Its graph construction
+defaults to the TLS super-edge parser inspired by HMARL-TSC: it reads the SUMO
+`.net.xml`, follows legal road-edge transitions, connects each traffic light to
+the nearest downstream traffic light, and writes `topology/fgs_topology.svg`
+plus `topology/fgs_topology_edges.json` in the Hydra run directory.
+
+```mermaid
+flowchart TD
+    O["Per-TLS observation o_i^t<br/>phase one-hot, min_green, density, queue"]
+    F["FRAP local phase-competition encoder"]
+    E["Local embedding e_i^t"]
+    G["GAT over TLS topology"]
+    H["Neighbor-aware embedding h_i^t"]
+    A["Discrete SAC actor<br/>pi(a_i | h_i)"]
+    J["Replay joint action context<br/>A_all"]
+    C["Centralized twin critics<br/>Q_k(H_all, A_all, ego_i, a_i)"]
+    SUMO["SUMO step"]
+
+    O --> F --> E --> G --> H --> A --> SUMO
+    H --> C
+    A --> J --> C
+```
+
+```mermaid
+flowchart LR
+    subgraph Execution["Decentralized execution"]
+        OE["local + neighbor observations at t"]
+        AE["shared actor pi_theta"]
+        PE["phase action a_i"]
+        OE --> AE --> PE
+    end
+
+    subgraph Training["Centralized training"]
+        GT["full graph embeddings H_all"]
+        PT["joint action / policy context"]
+        QT["centralized twin critics"]
+        LT["discrete SAC losses"]
+        GT --> QT
+        PT --> QT
+        QT --> LT
+    end
+```
+
+For the intended smoke path, use the `marl` conda environment:
+
+```bash
+conda run -n marl python -m pytest tests/test_fgs.py tests/test_sac_discrete.py tests/test_frap.py tests/test_colight.py
+conda run -n marl python experiments/rllib.py algorithm=fgs scenario=single_intersection experiment.episodes=1 experiment.episode_seconds=60 logging=disabled
+```
+
+Method references: FRAP, "Learning Phase Competition for Traffic Signal
+Control" (arXiv:1905.04722); CoLight, "Learning Network-level Cooperation for
+Traffic Signal Control" (arXiv:1905.05717); SAC, "Soft Actor-Critic:
+Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor"
+(arXiv:1801.01290); and "Soft Actor-Critic for Discrete Action Settings"
+(arXiv:1910.07207).
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.

@@ -19,6 +19,20 @@ experiment:
   eval_seeds: null
   fixed_ts: false
 
+resources:
+  # Ray CPU resources are logical scheduler slots; native thread caps keep
+  # Torch/NumPy/BLAS-style libraries from oversubscribing those slots.
+  ray_num_cpus: 2
+  native_num_threads: 1
+  # Physical CUDA device ids to expose to this run. With "1", the selected GPU
+  # appears inside the process as local CUDA index 0.
+  cuda_visible_devices: "1"
+
+algorithm:
+  params:
+    # Index within CUDA_VISIBLE_DEVICES for the local RLlib learner.
+    local_gpu_idx: 0
+
 env:
   factory: parallel_env
   kwargs:

@@ -282,6 +282,19 @@ class TrafficSignal:
     def _queue_reward(self):
         return -self.get_total_queued()
 
+    def _normalized_queue_reward(self):
+        lanes_queue = self.get_lanes_queue()
+        if not lanes_queue:
+            return 0.0
+        return -float(np.mean(lanes_queue))
+
+    def _normalized_pressure_reward(self):
+        incoming = self.get_lanes_density()
+        outgoing = self.get_out_lanes_density()
+        incoming_mean = 0.0 if not incoming else float(np.mean(incoming))
+        outgoing_mean = 0.0 if not outgoing else float(np.mean(outgoing))
+        return outgoing_mean - incoming_mean
+
     def _co2_reward(self):
         return -self.get_total_co2()
 
@@ -429,6 +442,8 @@ class TrafficSignal:
         "diff-waiting-time": _diff_waiting_time_reward,
         "average-speed": _average_speed_reward,
         "queue": _queue_reward,
+        "normalized-queue": _normalized_queue_reward,
         "pressure": _pressure_reward,
+        "normalized-pressure": _normalized_pressure_reward,
         "co2": _co2_reward,
     }

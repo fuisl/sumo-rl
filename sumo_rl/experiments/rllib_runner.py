@@ -12,6 +12,20 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import xml.etree.ElementTree as ET
 
+_CPU_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+    "RAYON_NUM_THREADS",
+)
+
+for _env_var in _CPU_THREAD_ENV_VARS:
+    os.environ.setdefault(_env_var, "1")
+os.environ.setdefault("OMP_DYNAMIC", "FALSE")
+
 import numpy as np
 from omegaconf import DictConfig
 from PIL import Image, ImageDraw, ImageFont
@@ -32,6 +46,9 @@ from sumo_rl.experiments.runner import (
     _resolve_num_gpus,
     _update_wandb_summary,
 )
+from sumo_rl.agents.colight import colight as colight_agent
+from sumo_rl.agents.dqn import dqn as dqn_agent
+from sumo_rl.agents.fgs import fgs as fgs_agent
 from sumo_rl.experiments.metric_utils import map_system_metrics_to_namespaces
 from sumo_rl.agents.dqn import dqn as dqn_agent
 from sumo_rl.agents.dcrnn import dcrnn as dcrnn_agent
@@ -54,6 +71,9 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     ppo_agent.KIND,
     dqn_agent.KIND,
     frap_agent.KIND,
+    colight_agent.KIND,
+    fgs_agent.KIND,
+    *sac_agent.KINDS,
     *dcrnn_agent.ALL_KINDS,
     *sac_agent.ALL_KINDS,
 }
@@ -101,6 +121,12 @@ def _eval_seeds(cfg: DictConfig) -> list[int]:
 
 
 def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
+    logging_name = str(getattr(getattr(cfg, "logging", None), "name", "") or "").strip()
+    if logging_name:
+        return logging_name
+    experiment_name = str(getattr(getattr(cfg, "experiment", None), "name", "") or "").strip()
+    if experiment_name and experiment_name != "rllib":
+        return experiment_name
     scenario_name = scenario_factory_name(cfg) or str(getattr(getattr(cfg, "scenario", None), "name", "scenario"))
     timestamp = datetime.now().strftime("%H%M%S")
     return f"{scenario_name}__{algorithm_kind}__{timestamp}"
@@ -116,6 +142,10 @@ def _algorithm_module(algorithm_kind: str):
         return dcrnn_agent
     if algorithm_kind == frap_agent.KIND:
         return frap_agent
+    if algorithm_kind == colight_agent.KIND:
+        return colight_agent
+    if algorithm_kind == fgs_agent.KIND:
+        return fgs_agent
     if algorithm_kind in sac_agent.KINDS:
         return sac_agent
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
@@ -136,29 +166,6 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
         module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
     else:
         module.train(algo, cfg, emit_metrics=emit_metrics, validate=validate)
-
-
-def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, algorithm_kind: str, policy_mode: str):
-    algorithm_kind = normalize_algorithm_kind(algorithm_kind)
-    if algorithm_kind in sac_agent.GRAPH_KINDS:
-        return sac_agent.build_graph_eval_env(cfg, run_dir, seed=seed)
-    module = _algorithm_module(algorithm_kind)
-    if module is sac_agent:
-        return build_rllib_parallel_env(
-            cfg,
-            run_dir,
-            seed=seed,
-            pad_spaces=(policy_mode == "shared"),
-        )
-    build_graph_eval_env = getattr(module, "build_graph_eval_env", None)
-    if callable(build_graph_eval_env):
-        return build_graph_eval_env(cfg, run_dir, seed=seed)
-    return build_rllib_parallel_env(
-        cfg,
-        run_dir,
-        seed=seed,
-        pad_spaces=(policy_mode == "shared"),
-    )
 
 
 def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
@@ -192,7 +199,17 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             import torch
             from ray.rllib.core.columns import Columns
 
-            obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32).unsqueeze(0)
+            try:
+                module_device = next(module.parameters()).device
+            except StopIteration:
+                module_device = torch.device("cpu")
+            if isinstance(obs, dict):
+                obs_batch = {
+                    key: torch.as_tensor(np.asarray(value), device=module_device).unsqueeze(0)
+                    for key, value in obs.items()
+                }
+            else:
+                obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32, device=module_device).unsqueeze(0)
             with torch.no_grad():
                 output = module.forward_inference({Columns.OBS: obs_batch})
                 if Columns.ACTIONS not in output and Columns.ACTION_DIST_INPUTS in output:
@@ -205,6 +222,25 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
                 action = action.detach().cpu().numpy()
             return np.asarray(action).reshape(-1)[0].item()
     raise AttributeError("Algorithm does not expose a usable validation inference interface.")
+
+
+def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind: str, policy_mode: str):
+    algorithm_kind = normalize_algorithm_kind(algorithm_kind)
+    if algorithm_kind in sac_agent.GRAPH_KINDS:
+        return sac_agent.build_graph_eval_env(cfg, run_dir, seed=seed)
+    module = _algorithm_module(algorithm_kind)
+    build_graph_eval_env = getattr(module, "build_graph_eval_env", None)
+    if callable(build_graph_eval_env):
+        return build_graph_eval_env(cfg, run_dir, seed=seed)
+    build_eval_env = getattr(module, "build_eval_env", None)
+    if callable(build_eval_env):
+        return build_eval_env(cfg, run_dir, seed=seed)
+    return build_rllib_parallel_env(
+        cfg,
+        run_dir,
+        seed=seed,
+        pad_spaces=(policy_mode == "shared"),
+    )
 
 
 def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float:
@@ -1495,7 +1531,13 @@ def _evaluate_with_details(
     policy_mode = _policy_mode(_plain_dict(getattr(cfg.algorithm, "params", {}) or {}))
     for seed_index, seed in enumerate(eval_seeds):
         eval_episode = seed_index + 1
-        eval_env = _build_eval_env(cfg, run_dir, seed, algorithm_kind, policy_mode)
+        eval_env = _build_eval_env(
+            cfg,
+            run_dir,
+            seed,
+            algorithm_kind=algorithm_kind,
+            policy_mode=policy_mode,
+        )
         tripinfo_path = _validation_tripinfo_output_path(eval_env)
         base_env = _resolve_sumo_base_env(eval_env)
         has_keep_tripinfo_output = hasattr(base_env, "keep_tripinfo_output")
@@ -1637,6 +1679,58 @@ def _summary_episode_index_from_metrics(metrics: Dict[str, Any]) -> int:
     return 0
 
 
+def _optional_positive_int(value: Any, *, setting_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"", "auto", "none", "null"}:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{setting_name} must be a positive integer, null, or auto.")
+    return parsed
+
+
+def _rllib_runtime_params(cfg: DictConfig) -> Dict[str, Any]:
+    raw_resources = getattr(cfg, "resources", {}) or {}
+    resources = vars(raw_resources) if hasattr(raw_resources, "__dict__") else _plain_dict(raw_resources)
+    params = _plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
+    merged = dict(resources)
+    merged.update(params)
+    return merged
+
+
+def _cpu_thread_env(num_threads: Optional[int]) -> Dict[str, str]:
+    if num_threads is None:
+        return {}
+    env_vars = {env_var: str(num_threads) for env_var in _CPU_THREAD_ENV_VARS}
+    env_vars["OMP_DYNAMIC"] = "FALSE"
+    return env_vars
+
+
+def _cuda_visible_devices_env(value: Any) -> Dict[str, str]:
+    if value is None:
+        return {}
+    raw_value = str(value).strip()
+    if raw_value.lower() in {"", "none", "null"}:
+        return {}
+    return {"CUDA_VISIBLE_DEVICES": raw_value}
+
+
+def _apply_cpu_thread_limit(num_threads: Optional[int]) -> Dict[str, str]:
+    env_vars = _cpu_thread_env(num_threads)
+    for env_var, value in env_vars.items():
+        os.environ[env_var] = value
+    try:
+        import torch
+
+        if num_threads is not None:
+            torch.set_num_threads(num_threads)
+            torch.set_num_interop_threads(num_threads)
+    except (ImportError, RuntimeError):
+        pass
+    return env_vars
+
+
 def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     requested_algorithm_kind = str(getattr(cfg.algorithm, "kind", "") or "").strip()
     if requested_algorithm_kind not in SUPPORTED_RLLIB_ALGORITHMS:
@@ -1655,8 +1749,37 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     import ray
 
     params = _plain_dict(getattr(cfg.algorithm, "params", {}) or {})
+    runtime_params = _rllib_runtime_params(cfg)
+    ray_num_cpus = _optional_positive_int(runtime_params.get("ray_num_cpus", 2), setting_name="ray_num_cpus")
+    native_num_threads = _optional_positive_int(
+        runtime_params.get("native_num_threads", 1),
+        setting_name="native_num_threads",
+    )
+    cpu_thread_env = _apply_cpu_thread_limit(native_num_threads)
+    cuda_env = _cuda_visible_devices_env(runtime_params.get("cuda_visible_devices"))
+    for env_var, value in cuda_env.items():
+        os.environ[env_var] = value
     ray_num_gpus = _resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto")))
-    ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False, num_gpus=ray_num_gpus)
+    runtime_env_vars = dict(cpu_thread_env)
+    runtime_env_vars.update(cuda_env)
+    ray_init_kwargs: Dict[str, Any] = {
+        "ignore_reinit_error": True,
+        "include_dashboard": False,
+        "log_to_driver": False,
+        "num_gpus": ray_num_gpus,
+    }
+    if ray_num_cpus is not None:
+        ray_init_kwargs["num_cpus"] = ray_num_cpus
+    if runtime_env_vars:
+        ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
+    ray.init(**ray_init_kwargs)
+    print(
+        "RLlib CPU allocation: "
+        f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
+        f"native_num_threads={native_num_threads if native_num_threads is not None else 'preserve-env'}."
+    )
+    if cuda_env:
+        print(f"RLlib CUDA_VISIBLE_DEVICES={cuda_env['CUDA_VISIBLE_DEVICES']}.")
     algo = None
     final_summary: Dict[str, Any] = {}
     best_validation_state = _init_best_validation_checkpoint_state(run_dir, algorithm_kind, logging_cfg)

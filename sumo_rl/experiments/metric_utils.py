@@ -63,8 +63,12 @@ def reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:
         return "average vehicle speed for the signal"
     if reward_name == "queue":
         return "- total queued vehicles for the signal"
+    if reward_name == "normalized-queue":
+        return "- mean normalized queue density across incoming lanes"
     if reward_name == "pressure":
         return "vehicle_count(outgoing_lanes) - vehicle_count(incoming_lanes)"
+    if reward_name == "normalized-pressure":
+        return "mean outgoing lane density - mean incoming lane density"
     if reward_name == "co2":
         return "- total CO2 emissions for the signal"
     if callable(reward_fn):

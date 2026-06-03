@@ -65,7 +65,9 @@ The runner also logs reward metadata in the final episode summary:
 | `diff-waiting-time` | `last_ts_waiting_time - current_ts_waiting_time` | `current_ts_waiting_time = sum(get_accumulated_waiting_time_per_lane()) / 100` | Positive is better |
 | `average-speed` | `TrafficSignal.get_average_speed()` | per-vehicle `speed / allowed_speed` on incoming lanes | Higher is better |
 | `queue` | `-TrafficSignal.get_total_queued()` | halting-vehicle count on incoming lanes | Higher is better because the queue is negated |
+| `normalized-queue` | `-mean(TrafficSignal.get_lanes_queue())` | normalized incoming-lane queue density | CoLight-friendly scale in `[-1, 0]` |
 | `pressure` | `TrafficSignal.get_pressure()` | outgoing vehicle count minus incoming vehicle count | Diagnostic reward with implementation-specific sign |
+| `normalized-pressure` | `mean(outgoing_density) - mean(incoming_density)` | normalized lane densities from incoming and outgoing lanes | CoLight-friendly scale around `[-1, 1]` |
 | `co2` | `-TrafficSignal.get_total_co2()` | SUMO CO2 emissions on incoming lanes | Higher is better because emissions are negated |
 
 ## Trace Modes

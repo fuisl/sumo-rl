@@ -214,12 +214,13 @@ python experiments/static_max_pressure.py scenario=resco_ingolstadt7
 python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,resco_cologne8,resco_ingolstadt1,resco_ingolstadt7,resco_ingolstadt21
 ```
 
-### RLlib PPO, DQN, FRAP, DQN+DCRNN, and SAC:
+### RLlib PPO, DQN, FRAP, DQN+DCRNN, CoLight, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
@@ -230,6 +231,17 @@ To manually restore a saved RLlib checkpoint and run the repo's current
 evaluation helper from a notebook, open
 `experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
 `CHECKPOINT_PATH`.
+
+RLlib runs default to a small local CPU budget: `resources.ray_num_cpus=2`
+advertises two logical CPUs to Ray, and `resources.native_num_threads=1` caps
+OpenMP/BLAS/Torch-style thread pools. To use more CPU, override these values on
+the command line, for example `resources.ray_num_cpus=8 resources.native_num_threads=2`.
+GPU selection should be pinned with `resources.cuda_visible_devices`; for example
+`resources.cuda_visible_devices=1` exposes physical GPU 1 as local CUDA index 0,
+so keep `algorithm.params.local_gpu_idx=0`.
+For RLlib W&B titles, set `logging.name` for an explicit display name, or set a
+non-default `experiment.name`; the default `experiment.name=rllib` keeps the
+generated `scenario__algorithm__time` title.
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
 Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
@@ -244,6 +256,20 @@ rolling density/queue histories to a diffusion-convolutional recurrent
 Q-network. Use `algorithm=dqn_dcrnn` as the canonical name; `algorithm=dcrnn`
 is kept as a backward-compatible alias. The first version supports independent
 policies.
+
+CoLight is available as `algorithm=colight`. It is a DQN-family RLlib method
+with one shared graph-attention Q-network over all controlled intersections.
+The wrapper gives each traffic signal the full node-feature graph plus an ego
+index and action mask, so the shared policy remains faithful to the CoLight
+paper's network-level cooperation rather than independent per-agent DQN.
+Each CoLight run writes `topology/colight_topology.svg` and
+`topology/colight_topology_edges.json` under the Hydra output directory; set
+`algorithm.params.render_topology=false` to skip this artifact.
+
+FGS Cologne8 presets include both the original CoLight-style custom GAT
+communication and PyTorch Geometric `GATv2Conv` ablations:
+`configs/presets/resco_cologne8/fgs_frap_gatv2_sac.yaml` and
+`configs/presets/resco_cologne8/fgs_mlp_gatv2_sac.yaml`.
 
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action

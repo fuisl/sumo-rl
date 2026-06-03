@@ -30,6 +30,19 @@ configs/presets/<scenario>/
   static_max_pressure.yaml
 ```
 
+FGS RLlib presets are available for the grid and Cologne8 benchmarks:
+
+```text
+configs/presets/resco_grid4x4/
+  fgs_frap_gat_sac.yaml
+  fgs_mlp_gat_sac.yaml
+configs/presets/resco_cologne8/
+  fgs_frap_gat_sac.yaml
+  fgs_mlp_gat_sac.yaml
+  fgs_frap_gatv2_sac.yaml
+  fgs_mlp_gatv2_sac.yaml
+```
+
 The static baseline presets now follow the RLlib validation seed layout:
 
 - `experiment.eval_seeds` is used when present
@@ -43,6 +56,7 @@ configs/algorithm/
   ppo.yaml
   dqn.yaml
   dqn_dcrnn.yaml
+  fgs.yaml
   sac_builtin.yaml
   sac_mlp.yaml
   sac_dcrnn_actor.yaml
@@ -66,7 +80,12 @@ horizon is derived from the environment `delta_time` when needed. For example,
 steps. Training logs use sampled env steps (`logging.train_log_freq_steps`), while
 RLlib validation cadence is controlled by `experiment.validation_interval_episodes`
 by default. The step-based `logging.eval_freq` remains a fallback when the episode
-interval is not set.
+interval is not set. The shared RLlib config also caps local CPU use with
+`resources.ray_num_cpus=2` and `resources.native_num_threads=1`; override those
+for larger runs. Set `resources.cuda_visible_devices` in `configs/rllib.yaml`
+or on the command line to choose the physical GPU; the selected GPU is exposed
+inside the run as local CUDA index 0, so `algorithm.params.local_gpu_idx` should
+usually stay `0`.
 
 The launcher name tells you the method family.
 The folder name tells you the scenario.
