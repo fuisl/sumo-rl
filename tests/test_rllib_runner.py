@@ -1534,6 +1534,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
             save_final_model=True,
         ),
         experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),
+        resources=SimpleNamespace(cuda_visible_devices="1"),
         algorithm=SimpleNamespace(kind="ppo", params={}),
     )
 
@@ -1554,6 +1555,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert ray_init_calls
     assert ray_init_calls[0]["num_cpus"] == 2
     assert ray_init_calls[0]["runtime_env"]["env_vars"]["OMP_NUM_THREADS"] == "1"
+    assert ray_init_calls[0]["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
     validation_rows = [args[2] for args, kwargs in logged_rows if isinstance(args[2], dict) and "validation/env_step" in args[2]]
     assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0, 5.0]
     assert all(row["validation/episode_index"] == 4.0 for row in validation_rows)

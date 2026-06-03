@@ -76,8 +76,10 @@ RLlib validation cadence is controlled by `experiment.validation_interval_episod
 by default. The step-based `logging.eval_freq` remains a fallback when the episode
 interval is not set. The shared RLlib config also caps local CPU use with
 `resources.ray_num_cpus=2` and `resources.native_num_threads=1`; override those
-for larger runs. Set `algorithm.params.local_gpu_idx` in `configs/rllib.yaml`
-or on the command line to choose the learner GPU index within `CUDA_VISIBLE_DEVICES`.
+for larger runs. Set `resources.cuda_visible_devices` in `configs/rllib.yaml`
+or on the command line to choose the physical GPU; the selected GPU is exposed
+inside the run as local CUDA index 0, so `algorithm.params.local_gpu_idx` should
+usually stay `0`.
 
 The launcher name tells you the method family.
 The folder name tells you the scenario.

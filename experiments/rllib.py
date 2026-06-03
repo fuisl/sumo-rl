@@ -33,17 +33,18 @@ else:
 import hydra
 from omegaconf import DictConfig
 
-from sumo_rl.experiments.rllib_runner import train_rllib
-
-import ray
-
 print("DEBUG sumo_rl:", sumo_rl.__file__)
-print("DEBUG ray:", ray.__version__)
 print("DEBUG python:", sys.executable)
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="rllib")
 def main(cfg: DictConfig) -> None:
+    cuda_visible_devices = getattr(getattr(cfg, "resources", None), "cuda_visible_devices", None)
+    if cuda_visible_devices is not None and str(cuda_visible_devices).strip().lower() not in {"", "none", "null"}:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
+
+    from sumo_rl.experiments.rllib_runner import train_rllib
+
     train_rllib(cfg)
 
 

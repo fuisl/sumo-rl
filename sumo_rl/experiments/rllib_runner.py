@@ -1654,7 +1654,8 @@ def _optional_positive_int(value: Any, *, setting_name: str) -> Optional[int]:
 
 
 def _rllib_runtime_params(cfg: DictConfig) -> Dict[str, Any]:
-    resources = _plain_dict(getattr(cfg, "resources", {}) or {})
+    raw_resources = getattr(cfg, "resources", {}) or {}
+    resources = vars(raw_resources) if hasattr(raw_resources, "__dict__") else _plain_dict(raw_resources)
     params = _plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
     merged = dict(resources)
     merged.update(params)
@@ -1667,6 +1668,15 @@ def _cpu_thread_env(num_threads: Optional[int]) -> Dict[str, str]:
     env_vars = {env_var: str(num_threads) for env_var in _CPU_THREAD_ENV_VARS}
     env_vars["OMP_DYNAMIC"] = "FALSE"
     return env_vars
+
+
+def _cuda_visible_devices_env(value: Any) -> Dict[str, str]:
+    if value is None:
+        return {}
+    raw_value = str(value).strip()
+    if raw_value.lower() in {"", "none", "null"}:
+        return {}
+    return {"CUDA_VISIBLE_DEVICES": raw_value}
 
 
 def _apply_cpu_thread_limit(num_threads: Optional[int]) -> Dict[str, str]:
@@ -1709,7 +1719,12 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         setting_name="native_num_threads",
     )
     cpu_thread_env = _apply_cpu_thread_limit(native_num_threads)
+    cuda_env = _cuda_visible_devices_env(runtime_params.get("cuda_visible_devices"))
+    for env_var, value in cuda_env.items():
+        os.environ[env_var] = value
     ray_num_gpus = _resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto")))
+    runtime_env_vars = dict(cpu_thread_env)
+    runtime_env_vars.update(cuda_env)
     ray_init_kwargs: Dict[str, Any] = {
         "ignore_reinit_error": True,
         "include_dashboard": False,
@@ -1718,14 +1733,16 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     }
     if ray_num_cpus is not None:
         ray_init_kwargs["num_cpus"] = ray_num_cpus
-    if cpu_thread_env:
-        ray_init_kwargs["runtime_env"] = {"env_vars": cpu_thread_env}
+    if runtime_env_vars:
+        ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
     ray.init(**ray_init_kwargs)
     print(
         "RLlib CPU allocation: "
         f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
         f"native_num_threads={native_num_threads if native_num_threads is not None else 'preserve-env'}."
     )
+    if cuda_env:
+        print(f"RLlib CUDA_VISIBLE_DEVICES={cuda_env['CUDA_VISIBLE_DEVICES']}.")
     algo = None
     final_summary: Dict[str, Any] = {}
     best_validation_state = _init_best_validation_checkpoint_state(run_dir, algorithm_kind, logging_cfg)
