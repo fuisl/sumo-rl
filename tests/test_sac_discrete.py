@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from gymnasium.spaces import Box, Discrete
+from omegaconf import OmegaConf
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -652,3 +653,33 @@ def test_sac_custom_alias_normalizes_to_sac_mlp(monkeypatch, tmp_path):
     config = build_config(cfg, tmp_path, algorithm_kind="sac_custom")
 
     assert config.rl_module_spec.multi_rl_module_class.__name__ == "CustomSACMultiRLModule"
+
+
+def test_sac_graph_variants_inherit_builtin_sac_train_and_runner_defaults():
+    builtin_cfg = OmegaConf.load(ROOT / "configs" / "algorithm" / "sac_builtin.yaml")
+    actor_cfg = OmegaConf.merge(
+        builtin_cfg,
+        OmegaConf.load(ROOT / "configs" / "algorithm" / "sac_dcrnn_actor.yaml"),
+    )
+    full_cfg = OmegaConf.merge(
+        builtin_cfg,
+        OmegaConf.load(ROOT / "configs" / "algorithm" / "sac_dcrnn_full.yaml"),
+    )
+
+    shared_keys = (
+        "policy_mode",
+        "actor_lr",
+        "critic_lr",
+        "alpha_lr",
+        "tau",
+        "train_batch_size_per_learner",
+        "num_env_runners",
+        "num_envs_per_env_runner",
+        "num_gpus_per_learner",
+        "ray_num_gpus",
+        "num_steps_sampled_before_learning_starts",
+    )
+
+    for key in shared_keys:
+        assert actor_cfg.algorithm.params[key] == builtin_cfg.algorithm.params[key]
+        assert full_cfg.algorithm.params[key] == builtin_cfg.algorithm.params[key]
