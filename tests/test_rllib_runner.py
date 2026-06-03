@@ -1657,6 +1657,48 @@ def test_init_wandb_binds_debug_metrics_to_train_episode_index(monkeypatch, tmp_
     assert (("debug/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
 
 
+def test_init_wandb_uses_experiment_name_as_run_name(monkeypatch, tmp_path):
+    init_calls = []
+
+    class DummyRun:
+        def __init__(self):
+            self.name = None
+
+        def define_metric(self, *args, **kwargs):
+            del args, kwargs
+
+    run = DummyRun()
+
+    class DummyWandb:
+        @staticmethod
+        def init(**kwargs):
+            init_calls.append(kwargs)
+            return run
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=True,
+            env_file="",
+            name=None,
+            project=None,
+            entity=None,
+            group=None,
+            tags=[],
+            job_type="train",
+            mode="disabled",
+        ),
+        experiment=SimpleNamespace(name="fgs_mlp_gat_sac_seed7", project="proj", group=None, tags=[]),
+    )
+
+    result = _init_wandb(cfg, tmp_path)
+
+    assert result is run
+    assert init_calls[0]["name"] == "fgs_mlp_gat_sac_seed7"
+    assert run.name == "fgs_mlp_gat_sac_seed7"
+
+
 def test_init_wandb_can_skip_final_metric_definitions(monkeypatch, tmp_path):
     class DummyRun:
         def __init__(self):

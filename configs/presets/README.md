@@ -30,6 +30,14 @@ configs/presets/<scenario>/
   static_max_pressure.yaml
 ```
 
+FGS RLlib presets are available for the grid benchmark:
+
+```text
+configs/presets/resco_grid4x4/
+  fgs_frap_gat_sac.yaml
+  fgs_mlp_gat_sac.yaml
+```
+
 The static baseline presets now follow the RLlib validation seed layout:
 
 - `experiment.eval_seeds` is used when present
@@ -43,6 +51,7 @@ configs/algorithm/
   ppo.yaml
   dqn.yaml
   dqn_dcrnn.yaml
+  fgs.yaml
   sac_builtin.yaml
   sac_mlp.yaml
   sac_dcrnn_actor.yaml

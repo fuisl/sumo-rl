@@ -562,6 +562,10 @@ def _init_wandb(
         reinit="finish_previous",
     )
     try:
+        run.name = run_name
+    except Exception:
+        pass
+    try:
         run.define_metric("train/*", step_metric="train/episode_index")
         run.define_metric("debug/*", step_metric="train/episode_index")
         run.define_metric("train/episode_index")
