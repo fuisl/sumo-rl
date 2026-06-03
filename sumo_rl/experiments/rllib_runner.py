@@ -11,6 +11,20 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import xml.etree.ElementTree as ET
 
+_CPU_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+    "RAYON_NUM_THREADS",
+)
+
+for _env_var in _CPU_THREAD_ENV_VARS:
+    os.environ.setdefault(_env_var, "1")
+os.environ.setdefault("OMP_DYNAMIC", "FALSE")
+
 import numpy as np
 from omegaconf import DictConfig
 from PIL import Image, ImageDraw, ImageFont
@@ -1622,6 +1636,48 @@ def _summary_episode_index_from_metrics(metrics: Dict[str, Any]) -> int:
     return 0
 
 
+def _optional_positive_int(value: Any, *, setting_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"", "auto", "none", "null"}:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{setting_name} must be a positive integer, null, or auto.")
+    return parsed
+
+
+def _rllib_runtime_params(cfg: DictConfig) -> Dict[str, Any]:
+    resources = _plain_dict(getattr(cfg, "resources", {}) or {})
+    params = _plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
+    merged = dict(resources)
+    merged.update(params)
+    return merged
+
+
+def _cpu_thread_env(num_threads: Optional[int]) -> Dict[str, str]:
+    if num_threads is None:
+        return {}
+    env_vars = {env_var: str(num_threads) for env_var in _CPU_THREAD_ENV_VARS}
+    env_vars["OMP_DYNAMIC"] = "FALSE"
+    return env_vars
+
+
+def _apply_cpu_thread_limit(num_threads: Optional[int]) -> Dict[str, str]:
+    env_vars = _cpu_thread_env(num_threads)
+    for env_var, value in env_vars.items():
+        os.environ[env_var] = value
+    try:
+        import torch
+
+        if num_threads is not None:
+            torch.set_num_threads(num_threads)
+            torch.set_num_interop_threads(num_threads)
+    except (ImportError, RuntimeError):
+        pass
+    return env_vars
+
+
 def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     requested_algorithm_kind = str(getattr(cfg.algorithm, "kind", "") or "").strip()
     if requested_algorithm_kind not in SUPPORTED_RLLIB_ALGORITHMS:
@@ -1640,8 +1696,30 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     import ray
 
     params = _plain_dict(getattr(cfg.algorithm, "params", {}) or {})
+    runtime_params = _rllib_runtime_params(cfg)
+    ray_num_cpus = _optional_positive_int(runtime_params.get("ray_num_cpus", 2), setting_name="ray_num_cpus")
+    native_num_threads = _optional_positive_int(
+        runtime_params.get("native_num_threads", 1),
+        setting_name="native_num_threads",
+    )
+    cpu_thread_env = _apply_cpu_thread_limit(native_num_threads)
     ray_num_gpus = _resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto")))
-    ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False, num_gpus=ray_num_gpus)
+    ray_init_kwargs: Dict[str, Any] = {
+        "ignore_reinit_error": True,
+        "include_dashboard": False,
+        "log_to_driver": False,
+        "num_gpus": ray_num_gpus,
+    }
+    if ray_num_cpus is not None:
+        ray_init_kwargs["num_cpus"] = ray_num_cpus
+    if cpu_thread_env:
+        ray_init_kwargs["runtime_env"] = {"env_vars": cpu_thread_env}
+    ray.init(**ray_init_kwargs)
+    print(
+        "RLlib CPU allocation: "
+        f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
+        f"native_num_threads={native_num_threads if native_num_threads is not None else 'preserve-env'}."
+    )
     algo = None
     final_summary: Dict[str, Any] = {}
     best_validation_state = _init_best_validation_checkpoint_state(run_dir, algorithm_kind, logging_cfg)

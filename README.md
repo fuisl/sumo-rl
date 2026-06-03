@@ -226,6 +226,11 @@ python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
 ```
 
+RLlib runs default to a small local CPU budget: `resources.ray_num_cpus=2`
+advertises two logical CPUs to Ray, and `resources.native_num_threads=1` caps
+OpenMP/BLAS/Torch-style thread pools. To use more CPU, override these values on
+the command line, for example `resources.ray_num_cpus=8 resources.native_num_threads=2`.
+
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
 Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
 uses the SUMO-RL observation tail as per-movement demand features

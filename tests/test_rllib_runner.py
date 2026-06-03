@@ -1337,9 +1337,12 @@ def test_validation_summary_row_maps_final_metrics_to_validation_namespace():
 
 
 def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypatch, tmp_path):
+    ray_init_calls = []
+
     class DummyRay:
         @staticmethod
         def init(**kwargs):
+            ray_init_calls.append(kwargs)
             return None
 
         @staticmethod
@@ -1518,6 +1521,9 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert all("tls_1" in entry["action_timeline_by_agent"] for entry in action_plot_logs)
     assert all("tls_1" in entry["phase_queue_rows_by_agent"] for entry in action_plot_logs)
     assert all(entry["decision_seconds"] == 5 for entry in action_plot_logs)
+    assert ray_init_calls
+    assert ray_init_calls[0]["num_cpus"] == 2
+    assert ray_init_calls[0]["runtime_env"]["env_vars"]["OMP_NUM_THREADS"] == "1"
     validation_rows = [args[2] for args, kwargs in logged_rows if isinstance(args[2], dict) and "validation/env_step" in args[2]]
     assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0, 5.0]
     assert all(row["validation/episode_index"] == 4.0 for row in validation_rows)

@@ -19,6 +19,12 @@ experiment:
   eval_seeds: null
   fixed_ts: false
 
+resources:
+  # Ray CPU resources are logical scheduler slots; native thread caps keep
+  # Torch/NumPy/BLAS-style libraries from oversubscribing those slots.
+  ray_num_cpus: 2
+  native_num_threads: 1
+
 env:
   factory: parallel_env
   kwargs:
