@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
@@ -36,10 +37,35 @@ from .traffic_signal import TrafficSignal
 
 
 LIBSUMO = "LIBSUMO_AS_TRACI" in os.environ
+TRACI_START_RETRIES = 3
+TRACI_START_RETRY_DELAY_SECONDS = 0.5
 
 
 def _is_ghost_vehicle(vehicle_id: str) -> bool:
     return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
+
+
+def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
+    last_error = None
+    for attempt in range(TRACI_START_RETRIES):
+        try:
+            if label is None:
+                traci.start(cmd)
+                return traci
+            traci.start(cmd, label=label)
+            return traci.getConnection(label)
+        except Exception as exc:
+            last_error = exc
+            if label is not None:
+                try:
+                    traci.switch(label)
+                    traci.close()
+                except Exception:
+                    pass
+            if attempt + 1 >= TRACI_START_RETRIES:
+                break
+            time.sleep(TRACI_START_RETRY_DELAY_SECONDS * (attempt + 1))
+    raise last_error
 
 
 def env(**kwargs):
@@ -180,11 +206,12 @@ class SumoEnvironment(gym.Env):
         self.sumo = None
 
         if LIBSUMO:
-            traci.start([sumolib.checkBinary("sumo"), "-n", self._net])  # Start only to retrieve traffic light information
-            conn = traci
+            conn = _start_traci_with_retries([sumolib.checkBinary("sumo"), "-n", self._net])
         else:
-            traci.start([sumolib.checkBinary("sumo"), "-n", self._net], label="init_connection" + self.label)
-            conn = traci.getConnection("init_connection" + self.label)
+            conn = _start_traci_with_retries(
+                [sumolib.checkBinary("sumo"), "-n", self._net],
+                label="init_connection" + self.label,
+            )
 
         if ts_ids is None:
             self.ts_ids = list(conn.trafficlight.getIDList())
@@ -285,11 +312,9 @@ class SumoEnvironment(gym.Env):
                 print("Virtual display started.")
 
         if LIBSUMO:
-            traci.start(sumo_cmd)
-            self.sumo = traci
+            self.sumo = _start_traci_with_retries(sumo_cmd)
         else:
-            traci.start(sumo_cmd, label=self.label)
-            self.sumo = traci.getConnection(self.label)
+            self.sumo = _start_traci_with_retries(sumo_cmd, label=self.label)
 
         if self.use_gui or self.render_mode is not None:
             if "DEFAULT_VIEW" not in dir(traci.gui):  # traci.gui.DEFAULT_VIEW is not defined in libsumo
