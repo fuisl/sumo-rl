@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 from gymnasium import spaces
 
+from sumo_rl.agents.frap.model import infer_default_phase_pairs
 from sumo_rl.agents.fgs.topology import (
     TLSTopology,
     bidirectional_message_edges,
@@ -82,10 +83,15 @@ class FGSGraphParallelEnv:
                 )
             self._demand_widths[agent_id] = demand_width
         self._max_demand_width = max(self._demand_widths.values() or [1])
+        if self._max_demand_width % 2 != 0:
+            raise ValueError("FGS expects density and queue demand features with equal lane counts.")
+        self._num_movements = self._max_demand_width // 2
         self._node_feature_dim = self._num_actions + 1 + self._max_demand_width
         self._prev_joint_action = self._resize_joint_action_context(self._prev_joint_action)
         self._edges, self._edge_weights = self._build_edges()
         self._max_edges = max(1, len(self._edges))
+        self._phase_pair_mask = self._build_phase_pair_mask()
+        self._phase_competition_mask = self._build_phase_competition_mask(self._phase_pair_mask)
 
         self.observation_spaces = {
             agent_id: spaces.Dict(
@@ -112,6 +118,18 @@ class FGSGraphParallelEnv:
                         shape=(self._num_nodes, self._num_actions),
                         dtype=np.float32,
                     ),
+                    "phase_pair_mask": spaces.Box(
+                        low=0.0,
+                        high=1.0,
+                        shape=(self._num_nodes, self._num_actions, self._num_movements),
+                        dtype=np.float32,
+                    ),
+                    "phase_competition_mask": spaces.Box(
+                        low=0.0,
+                        high=1.0,
+                        shape=(self._num_nodes, self._num_actions, max(1, self._num_actions - 1)),
+                        dtype=np.float32,
+                    ),
                     "prev_joint_action": spaces.Box(
                         low=0.0,
                         high=1.0,
@@ -124,6 +142,52 @@ class FGSGraphParallelEnv:
         }
         shared_action_space = spaces.Discrete(self._num_actions)
         self.action_spaces = {agent_id: shared_action_space for agent_id in self.possible_agents}
+
+    def _build_phase_pair_mask(self) -> np.ndarray:
+        mask = np.zeros((self._num_nodes, self._num_actions, self._num_movements), dtype=np.float32)
+        base_env = _base_sumo_env(self.env)
+        traffic_signals = getattr(base_env, "traffic_signals", {})
+        for agent_id, node_index in self._agent_to_index.items():
+            traffic_signal = traffic_signals.get(agent_id)
+            lanes = list(getattr(traffic_signal, "lanes", []) or [])
+            phase_lanes = list(getattr(traffic_signal, "phase_lanes", []) or [])
+            lane_to_index = {lane: index for index, lane in enumerate(lanes)}
+            if phase_lanes and lane_to_index:
+                for action_index, active_lanes in enumerate(phase_lanes[: self._action_sizes[agent_id]]):
+                    for lane in active_lanes:
+                        movement_index = lane_to_index.get(lane)
+                        if movement_index is not None and movement_index < self._num_movements:
+                            mask[node_index, action_index, movement_index] = 1.0
+            else:
+                pairs = infer_default_phase_pairs(self._num_movements, self._action_sizes[agent_id])
+                for action_index, pair in enumerate(pairs[: self._action_sizes[agent_id]]):
+                    for movement_index in pair:
+                        if movement_index < self._num_movements:
+                            mask[node_index, action_index, movement_index] = 1.0
+        return mask
+
+    def _build_phase_competition_mask(self, phase_pair_mask: np.ndarray) -> np.ndarray:
+        relation_width = max(1, self._num_actions - 1)
+        relation = np.zeros((self._num_nodes, self._num_actions, relation_width), dtype=np.float32)
+        if self._num_actions <= 1:
+            return relation
+        for node_index, agent_id in enumerate(self.possible_agents):
+            action_size = self._action_sizes[agent_id]
+            for action_index in range(self._num_actions):
+                offset = 0
+                action_movements = phase_pair_mask[node_index, action_index] > 0
+                for other_index in range(self._num_actions):
+                    if action_index == other_index:
+                        continue
+                    if offset >= relation_width:
+                        break
+                    other_movements = phase_pair_mask[node_index, other_index] > 0
+                    if action_index < action_size and other_index < action_size:
+                        shared = np.logical_and(action_movements, other_movements)
+                        same = np.array_equal(action_movements, other_movements)
+                        relation[node_index, action_index, offset] = float(np.any(shared) and not same)
+                    offset += 1
+        return relation
 
     def _resize_joint_action_context(self, context: np.ndarray) -> np.ndarray:
         resized = np.zeros((self._num_nodes, self._num_actions), dtype=np.float32)
@@ -218,6 +282,8 @@ class FGSGraphParallelEnv:
             "ego_index": np.asarray(self._agent_to_index[agent_id], dtype=np.int64),
             "action_mask": action_mask,
             "node_action_mask": node_action_mask,
+            "phase_pair_mask": self._phase_pair_mask.copy(),
+            "phase_competition_mask": self._phase_competition_mask.copy(),
             "prev_joint_action": self._prev_joint_action.copy(),
         }
 

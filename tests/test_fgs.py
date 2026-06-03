@@ -145,9 +145,10 @@ def test_fgs_tls_super_edge_topology_connects_nearest_downstream_tls(tmp_path):
 
 
 class _DummySignal:
-    def __init__(self, lanes, out_lanes):
+    def __init__(self, lanes, out_lanes, phase_lanes=None):
         self.lanes = lanes
         self.out_lanes = out_lanes
+        self.phase_lanes = phase_lanes if phase_lanes is not None else [lanes]
 
 
 class _DummyBaseEnv:
@@ -155,8 +156,16 @@ class _DummyBaseEnv:
 
     def __init__(self):
         self.traffic_signals = {
-            "tls_0": _DummySignal(["a"], ["b"]),
-            "tls_1": _DummySignal(["b"], ["c"]),
+            "tls_0": _DummySignal(
+                ["a", "b", "c", "d"],
+                ["e"],
+                phase_lanes=[["a", "c"], ["b", "d"], ["a", "b"], ["c", "d"]],
+            ),
+            "tls_1": _DummySignal(
+                ["b", "c"],
+                ["d"],
+                phase_lanes=[["b"], ["c"]],
+            ),
         }
 
 
@@ -238,6 +247,26 @@ def test_fgs_graph_wrapper_canonicalizes_heterogeneous_default_observations():
         [1.0, 1.0, 1.0, 1.0],
         [1.0, 1.0, 0.0, 0.0],
     ]
+    assert obs["tls_1"]["phase_pair_mask"].tolist() == [
+        [
+            [1.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ],
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ],
+    ]
+    assert obs["tls_1"]["phase_competition_mask"][1].tolist() == [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ]
     assert obs["tls_1"]["node_features"][1].tolist() == pytest.approx(
         [0.0, 1.0, 0.0, 0.0, 1.0, 0.2, 0.3, 0.4, 0.5, 0.0, 0.0, 0.0, 0.0]
     )
@@ -246,6 +275,33 @@ def test_fgs_graph_wrapper_canonicalizes_heterogeneous_default_observations():
 
     assert env.env.last_actions["tls_0"] == 3
     assert env.env.last_actions["tls_1"] == 1
+
+
+def test_fgs_frap_encoder_uses_per_node_phase_masks_for_padded_actions():
+    obs = torch.zeros((2, 13), dtype=torch.float32)
+    obs[:, 0] = 1.0
+    obs[:, 5:] = 0.25
+    phase_pair_mask = torch.tensor(
+        [
+            [[1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 0, 0], [0, 0, 1, 1]],
+            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+        ],
+        dtype=torch.float32,
+    )
+    competition_mask = torch.zeros((2, 4, 3), dtype=torch.float32)
+    action_mask = torch.tensor([[1, 1, 1, 1], [1, 1, 0, 0]], dtype=torch.float32)
+    encoder = FRAPEmbeddingEncoder(observation_dim=13, num_actions=4, output_dim=16)
+
+    embeddings = encoder(
+        obs,
+        phase_pair_mask=phase_pair_mask,
+        competition_mask=competition_mask,
+        action_mask=action_mask,
+    )
+
+    assert embeddings.shape == (2, 16)
+    assert torch.isfinite(embeddings).all()
+    assert not torch.allclose(embeddings[0], embeddings[1])
 
 
 def test_fgs_joint_action_critic_depends_on_neighbor_action_context():

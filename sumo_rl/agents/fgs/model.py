@@ -79,6 +79,11 @@ class FRAPEmbeddingEncoder(nn.Module):
         self.output_layer = nn.Linear(conv_units, output_dim)
         self.output_dim = int(output_dim)
         self.register_buffer("competition_mask", build_competition_mask(self.phase_pairs), persistent=False)
+        phase_pair_mask = torch.zeros((self.num_actions, self.num_movements), dtype=torch.float32)
+        for action_index, pair in enumerate(self.phase_pairs):
+            phase_pair_mask[action_index, pair[0]] = 1.0
+            phase_pair_mask[action_index, pair[1]] = 1.0
+        self.register_buffer("phase_pair_mask", phase_pair_mask, persistent=False)
 
     def _current_phase_movements(self, obs: torch.Tensor) -> torch.Tensor:
         if not self.observation_has_phase:
@@ -100,28 +105,87 @@ class FRAPEmbeddingEncoder(nn.Module):
             return demand.reshape(obs.shape[0], self.num_movements, self.demand_shape)
         raise ValueError(f"Unsupported FGS FRAP demand_layout: {self.demand_layout!r}.")
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def _phase_pair_embeddings(
+        self,
+        movement_embeds: torch.Tensor,
+        phase_pair_mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        batch_size = int(movement_embeds.shape[0])
+        if phase_pair_mask is None:
+            mask = self.phase_pair_mask.to(device=movement_embeds.device).unsqueeze(0).expand(batch_size, -1, -1)
+        else:
+            mask = phase_pair_mask.to(device=movement_embeds.device, dtype=movement_embeds.dtype)
+            mask = mask[:, : self.num_actions, : self.num_movements]
+            if int(mask.shape[-1]) < self.num_movements:
+                pad_width = self.num_movements - int(mask.shape[-1])
+                mask = F.pad(mask, (0, pad_width))
+        counts = torch.sum(mask, dim=-1, keepdim=True)
+        scale = torch.clamp(counts, max=2.0)
+        weights = torch.where(counts > 0.0, mask * scale / counts.clamp_min(1.0), mask)
+        return torch.bmm(weights, movement_embeds)
+
+    def _ordered_competition_validity(
+        self,
+        action_mask: Optional[torch.Tensor],
+        *,
+        batch_size: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if action_mask is None:
+            valid = torch.ones((batch_size, self.num_actions), dtype=torch.float32, device=device)
+        else:
+            valid = action_mask.to(device=device, dtype=torch.float32)[:, : self.num_actions]
+            if int(valid.shape[-1]) < self.num_actions:
+                valid = F.pad(valid, (0, self.num_actions - int(valid.shape[-1])))
+        ordered = []
+        for index in range(self.num_actions):
+            row = []
+            for other_index in range(self.num_actions):
+                if index != other_index:
+                    row.append(valid[:, index] * valid[:, other_index])
+            ordered.append(torch.stack(row, dim=-1))
+        return torch.stack(ordered, dim=1)
+
+    def forward(
+        self,
+        obs: torch.Tensor,
+        *,
+        phase_pair_mask: Optional[torch.Tensor] = None,
+        competition_mask: Optional[torch.Tensor] = None,
+        action_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         obs = obs.float()
         batch_size = obs.shape[0]
         phase_embeds = torch.sigmoid(self.phase_embedding(self._current_phase_movements(obs)))
         demand_embeds = torch.sigmoid(self.demand_layer(self._movement_demands(obs)))
         movement_embeds = F.relu(self.lane_embedding(torch.cat((phase_embeds, demand_embeds), dim=-1)))
 
-        phase_pair_embeds = [movement_embeds[:, pair[0]] + movement_embeds[:, pair[1]] for pair in self.phase_pairs]
+        phase_pair_embeds = self._phase_pair_embeddings(movement_embeds, phase_pair_mask)
         ordered_competitions = []
-        for index, phase_embed in enumerate(phase_pair_embeds):
-            for other_index, other_phase_embed in enumerate(phase_pair_embeds):
+        for index in range(self.num_actions):
+            phase_embed = phase_pair_embeds[:, index]
+            for other_index in range(self.num_actions):
                 if index != other_index:
+                    other_phase_embed = phase_pair_embeds[:, other_index]
                     ordered_competitions.append(torch.cat((phase_embed, other_phase_embed), dim=-1))
         competitions = torch.stack(ordered_competitions, dim=1)
         competitions = competitions.reshape(batch_size, self.num_actions, self.num_actions - 1, -1).permute(0, 3, 1, 2)
         phase_features = F.relu(self.lane_conv(competitions))
 
-        relation_mask = self.competition_mask.to(device=obs.device).repeat(batch_size, 1, 1)
-        relation_features = F.relu(self.relation_embedding(relation_mask)).permute(0, 3, 1, 2)
+        if competition_mask is None:
+            relation_mask = self.competition_mask.to(device=obs.device).repeat(batch_size, 1, 1)
+        else:
+            relation_mask = competition_mask.to(device=obs.device, dtype=torch.long)[:, : self.num_actions, : self.num_actions - 1]
+            if int(relation_mask.shape[-1]) < self.num_actions - 1:
+                relation_mask = F.pad(relation_mask, (0, self.num_actions - 1 - int(relation_mask.shape[-1])))
+        relation_features = F.relu(self.relation_embedding(relation_mask.long())).permute(0, 3, 1, 2)
         relation_features = F.relu(self.relation_conv(relation_features))
         combined = F.relu(self.hidden_layer(phase_features * relation_features))
-        pooled = combined.mean(dim=(2, 3))
+        valid_competitions = self._ordered_competition_validity(action_mask, batch_size=batch_size, device=obs.device)
+        valid_competitions = valid_competitions.unsqueeze(1)
+        combined = combined * valid_competitions
+        denominator = torch.sum(valid_competitions, dim=(2, 3)).clamp_min(1.0)
+        pooled = torch.sum(combined, dim=(2, 3)) / denominator
         return F.relu(self.output_layer(pooled))
 
 
@@ -212,7 +276,31 @@ class FGSGraphEncoder(nn.Module):
                 "FGS received graph observations with unexpected shape: "
                 f"{tuple(node_features.shape)}; expected (*, {self.num_nodes}, {self.node_feature_dim})."
             )
-        local = self.local_encoder(node_features.reshape(batch_size * num_nodes, feature_dim))
+        flat_node_features = node_features.reshape(batch_size * num_nodes, feature_dim)
+        if isinstance(self.local_encoder, FRAPEmbeddingEncoder):
+            phase_pair_mask = obs.get("phase_pair_mask")
+            competition_mask = obs.get("phase_competition_mask")
+            node_action_mask = obs.get("node_action_mask")
+            local = self.local_encoder(
+                flat_node_features,
+                phase_pair_mask=(
+                    phase_pair_mask.float().reshape(batch_size * num_nodes, self.num_actions, -1)
+                    if phase_pair_mask is not None
+                    else None
+                ),
+                competition_mask=(
+                    competition_mask.float().reshape(batch_size * num_nodes, self.num_actions, -1)
+                    if competition_mask is not None
+                    else None
+                ),
+                action_mask=(
+                    node_action_mask.float().reshape(batch_size * num_nodes, self.num_actions)
+                    if node_action_mask is not None
+                    else None
+                ),
+            )
+        else:
+            local = self.local_encoder(flat_node_features)
         if self.gat is not None:
             local = self.gat(local, self._flatten_edges(obs))
         graph_h = local.reshape(batch_size, num_nodes, -1)
