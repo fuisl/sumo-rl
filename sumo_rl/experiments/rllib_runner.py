@@ -120,6 +120,12 @@ def _eval_seeds(cfg: DictConfig) -> list[int]:
 
 
 def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
+    logging_name = str(getattr(getattr(cfg, "logging", None), "name", "") or "").strip()
+    if logging_name:
+        return logging_name
+    experiment_name = str(getattr(getattr(cfg, "experiment", None), "name", "") or "").strip()
+    if experiment_name and experiment_name != "rllib":
+        return experiment_name
     scenario_name = scenario_factory_name(cfg) or str(getattr(getattr(cfg, "scenario", None), "name", "scenario"))
     timestamp = datetime.now().strftime("%H%M%S")
     return f"{scenario_name}__{algorithm_kind}__{timestamp}"

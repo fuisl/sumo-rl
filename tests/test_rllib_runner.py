@@ -54,6 +54,36 @@ def test_build_policy_mapping_independent_mode_keeps_agent_identity():
     assert mapping_fn("tls_2") == "tls_2"
 
 
+def test_rllib_run_name_uses_logging_name_when_set():
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(name="wandb-title"),
+        experiment=SimpleNamespace(name="experiment-title"),
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+    )
+
+    assert rllib_runner._rllib_run_name(cfg, "ppo") == "wandb-title"
+
+
+def test_rllib_run_name_uses_explicit_experiment_name():
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(name=None),
+        experiment=SimpleNamespace(name="experiment-title"),
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+    )
+
+    assert rllib_runner._rllib_run_name(cfg, "ppo") == "experiment-title"
+
+
+def test_rllib_run_name_keeps_generated_name_for_default_experiment_name():
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(name=None),
+        experiment=SimpleNamespace(name="rllib"),
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+    )
+
+    assert rllib_runner._rllib_run_name(cfg, "ppo").startswith("grid4x4__ppo__")
+
+
 def test_dqn_uses_multi_agent_episode_replay_buffer_by_default():
     replay_config = build_replay_buffer_config({})
 

@@ -25,6 +25,11 @@ resources:
   ray_num_cpus: 2
   native_num_threads: 1
 
+algorithm:
+  params:
+    # Index within CUDA_VISIBLE_DEVICES for the local RLlib learner.
+    local_gpu_idx: 1
+
 env:
   factory: parallel_env
   kwargs:
