@@ -226,6 +226,11 @@ python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 exp
 python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
 ```
 
+To manually restore a saved RLlib checkpoint and run the repo's current
+evaluation helper from a notebook, open
+`experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
+`CHECKPOINT_PATH`.
+
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
 Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
 uses the SUMO-RL observation tail as per-movement demand features
