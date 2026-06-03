@@ -127,9 +127,11 @@ the full graph embedding plus replayed same-transition joint actions for the
 critic TD loss. Actor and target updates use current policy action distributions
 as a tractable expectation context, so FGS remains centralized during training
 without enumerating all joint actions.
-FGS reuses the same PyTorch Geometric `MessagePassing` attention layer as
+FGS defaults to the same PyTorch Geometric `MessagePassing` attention layer as
 CoLight, so the graph API is shared while the FRAP encoder and SAC heads remain
-FGS-specific.
+FGS-specific. Set `algorithm.params.model_config.communication.type=gatv2` to
+swap that communication block for PyG's `GATv2Conv`; the Cologne8 presets
+include both FRAP+GATv2 and MLP+GATv2 ablations.
 
 FGS defaults to the existing `diff-waiting-time` reward. Its graph construction
 defaults to the TLS super-edge parser inspired by HMARL-TSC: it reads the SUMO

@@ -20,7 +20,7 @@ import sumo_rl
 from sumo_rl.agents.fgs import fgs
 from sumo_rl.agents.fgs.graph_env import FGSGraphParallelEnv
 from sumo_rl.agents.fgs.model import CentralGraphJointActionCritic, FGSGraphEncoder, FRAPEmbeddingEncoder
-from sumo_rl.agents.fgs.rllib_module import build_fgs_sac_module_spec
+from sumo_rl.agents.fgs.rllib_module import build_fgs_sac_module_spec, normalize_fgs_model_config
 from sumo_rl.agents.fgs.topology import extract_tls_topology, render_fgs_topology
 from sumo_rl.experiments import rllib_runner
 
@@ -79,6 +79,30 @@ def test_fgs_graph_encoder_returns_graph_and_ego_embeddings():
         model_config={
             "local_encoder": {"type": "frap", "output_dim": 16, "frap": {"demand_shape": 2}},
             "communication": {"enabled": True, "type": "gat", "num_heads": 1, "head_dim": 4, "output_dim": 16},
+        },
+    )
+
+    output = encoder(_graph_obs(batch_size=2))
+
+    assert output["graph"].shape == (2, 2, 16)
+    assert output["ego"].shape == (2, 16)
+    assert torch.isfinite(output["graph"]).all()
+
+
+def test_fgs_model_config_accepts_gatv2_communication():
+    config = normalize_fgs_model_config({"communication": {"type": "gatv2"}})
+
+    assert config["communication"]["type"] == "gatv2"
+
+
+def test_fgs_graph_encoder_returns_finite_gatv2_embeddings():
+    encoder = FGSGraphEncoder(
+        node_feature_dim=13,
+        num_nodes=2,
+        num_actions=4,
+        model_config={
+            "local_encoder": {"type": "frap", "output_dim": 16, "frap": {"demand_shape": 2}},
+            "communication": {"enabled": True, "type": "gatv2", "num_heads": 1, "head_dim": 4, "output_dim": 16},
         },
     )
 
@@ -275,6 +299,27 @@ def test_fgs_module_mlp_encoder_train_outputs_discrete_sac_tensors():
         model_config={
             "local_encoder": {"type": "mlp", "output_dim": 16, "hidden_dims": [16]},
             "communication": {"enabled": True, "type": "gat", "num_heads": 1, "head_dim": 4, "output_dim": 16},
+            "critic": {"type": "central_graph_joint_action", "hidden_dims": [32]},
+        },
+    ).build()
+    module.make_target_networks()
+
+    train_out = module.forward_train({Columns.OBS: _graph_obs(batch_size=2), Columns.NEXT_OBS: _graph_obs(batch_size=2)})
+
+    assert train_out[ACTION_PROBS].shape == (2, 4)
+    assert train_out[QF_PREDS].shape == (2, 4)
+
+
+def test_fgs_module_gatv2_train_outputs_discrete_sac_tensors():
+    from ray.rllib.algorithms.sac.sac_learner import ACTION_PROBS, QF_PREDS
+    from ray.rllib.core.columns import Columns
+
+    module = build_fgs_sac_module_spec(
+        _graph_obs_space(),
+        Discrete(4),
+        model_config={
+            "local_encoder": {"type": "frap", "output_dim": 16, "frap": {"demand_shape": 2}},
+            "communication": {"enabled": True, "type": "gatv2", "num_heads": 1, "head_dim": 4, "output_dim": 16},
             "critic": {"type": "central_graph_joint_action", "hidden_dims": [32]},
         },
     ).build()

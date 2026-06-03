@@ -260,6 +260,11 @@ Each CoLight run writes `topology/colight_topology.svg` and
 `topology/colight_topology_edges.json` under the Hydra output directory; set
 `algorithm.params.render_topology=false` to skip this artifact.
 
+FGS Cologne8 presets include both the original CoLight-style custom GAT
+communication and PyTorch Geometric `GATv2Conv` ablations:
+`configs/presets/resco_cologne8/fgs_frap_gatv2_sac.yaml` and
+`configs/presets/resco_cologne8/fgs_mlp_gatv2_sac.yaml`.
+
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
 adapter anymore.

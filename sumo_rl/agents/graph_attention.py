@@ -7,7 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 
 try:
-    from torch_geometric.nn import MessagePassing
+    from torch_geometric.nn import GATv2Conv, MessagePassing
     from torch_geometric.utils import add_self_loops, softmax
 except ImportError as exc:  # pragma: no cover - exercised only without optional extras.
     raise ImportError("Graph attention modules require torch-geometric. Install the rllib-custom extra.") from exc
@@ -50,3 +50,29 @@ class CoLightPyGAttentionLayer(MessagePassing):
 class CoLightGATLayer(CoLightPyGAttentionLayer):
     """Backward-compatible public name for the PyG-backed CoLight layer."""
 
+
+class CoLightGATv2Layer(nn.Module):
+    """PyG GATv2Conv adapter with the same public shape as the CoLight GAT layer."""
+
+    def __init__(self, input_dim: int, head_dim: int = 16, output_dim: int = 128, num_heads: int = 5) -> None:
+        super().__init__()
+        self.input_dim = int(input_dim)
+        self.head_dim = int(head_dim)
+        self.output_dim = int(output_dim)
+        self.num_heads = int(num_heads)
+        if self.num_heads < 1:
+            raise ValueError("CoLight GATv2 attention requires at least one attention head.")
+
+        self.gatv2 = GATv2Conv(
+            in_channels=self.input_dim,
+            out_channels=self.head_dim,
+            heads=self.num_heads,
+            concat=False,
+            add_self_loops=True,
+        )
+        self.output_projection = nn.Linear(self.head_dim, self.output_dim)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        edge_index = edge_index.to(device=x.device, dtype=torch.long)
+        aggregated = F.relu(self.gatv2(x, edge_index))
+        return F.relu(self.output_projection(aggregated))

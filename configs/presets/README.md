@@ -30,12 +30,17 @@ configs/presets/<scenario>/
   static_max_pressure.yaml
 ```
 
-FGS RLlib presets are available for the grid benchmark:
+FGS RLlib presets are available for the grid and Cologne8 benchmarks:
 
 ```text
 configs/presets/resco_grid4x4/
   fgs_frap_gat_sac.yaml
   fgs_mlp_gat_sac.yaml
+configs/presets/resco_cologne8/
+  fgs_frap_gat_sac.yaml
+  fgs_mlp_gat_sac.yaml
+  fgs_frap_gatv2_sac.yaml
+  fgs_mlp_gatv2_sac.yaml
 ```
 
 The static baseline presets now follow the RLlib validation seed layout:

@@ -41,6 +41,7 @@ This project will be organized in phases so the thesis work stays incremental an
 - It is not a handwritten baseline; it is a modular learning method whose components can be ablated through Hydra config.
 - The v1 critic defaults to a joint-action CTDE form over graph embeddings and same-transition joint action context, while execution remains decentralized through a shared policy.
 - The default reward remains SUMO-RL's existing `diff-waiting-time`.
+- Cologne8 FGS presets include PyG `GATv2Conv` communication ablations for both FRAP and MLP local encoders.
 
 ## Assumptions
 - `SUMO_HOME` remains required for all simulation runs.

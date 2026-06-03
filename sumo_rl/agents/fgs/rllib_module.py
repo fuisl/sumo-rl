@@ -65,8 +65,8 @@ def normalize_fgs_model_config(model_config: Optional[Dict[str, Any]] = None) ->
     config["local_encoder"]["type"] = local_type
     communication = config["communication"]
     communication_type = str(communication.get("type", "gat") or "gat").lower()
-    if communication_type not in {"gat", "identity"}:
-        raise ValueError("FGS communication.type must be one of: gat, identity.")
+    if communication_type not in {"gat", "gatv2", "identity"}:
+        raise ValueError("FGS communication.type must be one of: gat, gatv2, identity.")
     communication["type"] = communication_type
     critic_type = str(config["critic"].get("type", "central_graph_joint_action") or "central_graph_joint_action")
     if critic_type not in {"central_graph_joint_action", "central_graph_policy_context"}:

@@ -10,7 +10,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from sumo_rl.agents.frap.model import build_competition_mask, normalize_phase_pairs
-from sumo_rl.agents.graph_attention import CoLightGATLayer
+from sumo_rl.agents.graph_attention import CoLightGATLayer, CoLightGATv2Layer
 
 
 def _mlp(input_dim: int, hidden_dims: Iterable[int], output_dim: int, activation: str = "relu") -> nn.Sequential:
@@ -176,8 +176,9 @@ class FGSGraphEncoder(nn.Module):
         self.communication_type = str(communication.get("type", "gat") or "gat").lower()
         self.local_output_dim = local_output_dim
         self.output_dim = local_output_dim
-        if self.communication_enabled and self.communication_type == "gat":
-            self.gat = CoLightGATLayer(
+        if self.communication_enabled and self.communication_type in {"gat", "gatv2"}:
+            layer_cls = CoLightGATv2Layer if self.communication_type == "gatv2" else CoLightGATLayer
+            self.gat = layer_cls(
                 input_dim=local_output_dim,
                 head_dim=int(communication.get("head_dim", 16)),
                 output_dim=int(communication.get("output_dim", local_output_dim)),
@@ -185,7 +186,7 @@ class FGSGraphEncoder(nn.Module):
             )
             self.output_dim = int(communication.get("output_dim", local_output_dim))
         elif self.communication_enabled and self.communication_type != "identity":
-            raise ValueError("FGS communication.type must be one of: gat, identity.")
+            raise ValueError("FGS communication.type must be one of: gat, gatv2, identity.")
         else:
             self.gat = None
 
