@@ -214,14 +214,26 @@ def _completed_episode_summary(env: Any) -> Dict[str, Any]:
     return {}
 
 
+def _is_nonempty_episode_summary(summary: Dict[str, Any]) -> bool:
+    elapsed = summary.get("episode/elapsed_seconds")
+    if isinstance(elapsed, (int, float, np.integer, np.floating)) and float(elapsed) <= 0.0:
+        return False
+    return True
+
+
 def _completed_episode_summary_history(env: Any) -> list[Dict[str, Any]]:
     base_env = _resolve_base_env(env)
     summaries = []
     for summary in getattr(base_env, "completed_episode_summaries", []) or []:
-        if isinstance(summary, dict) and summary and not summary.get("tripinfo/parse_pending"):
+        if (
+            isinstance(summary, dict)
+            and summary
+            and not summary.get("tripinfo/parse_pending")
+            and _is_nonempty_episode_summary(summary)
+        ):
             summaries.append(dict(summary))
     latest_summary = _completed_episode_summary(base_env)
-    if latest_summary:
+    if latest_summary and _is_nonempty_episode_summary(latest_summary):
         latest_episode = latest_summary.get("episode/index")
         if not any(summary.get("episode/index") == latest_episode for summary in summaries):
             summaries.append(latest_summary)
@@ -457,6 +469,10 @@ def apply_env_runner_settings(config, params: Dict[str, Any]):
             "num_env_runners": num_env_runners,
             "num_envs_per_env_runner": num_envs_per_runner,
         }
+        if params.get("num_cpus_per_env_runner") is not None:
+            runner_kwargs["num_cpus_per_env_runner"] = int(params["num_cpus_per_env_runner"])
+        if params.get("num_gpus_per_env_runner") is not None:
+            runner_kwargs["num_gpus_per_env_runner"] = float(params["num_gpus_per_env_runner"])
         if rollout_fragment_length is not None:
             runner_kwargs["rollout_fragment_length"] = int(rollout_fragment_length)
         config = config.env_runners(**runner_kwargs)

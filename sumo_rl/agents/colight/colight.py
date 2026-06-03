@@ -170,9 +170,9 @@ def build_config(cfg: Any, run_dir: Path):
     params.setdefault("replay_buffer_type", "MultiAgentEpisodeReplayBuffer")
     params["replay_buffer_config"] = build_replay_buffer_config(params)
     params.setdefault("dueling", False)
-    params.setdefault("double_q", True)
+    params.setdefault("double_q", False)
     params.setdefault("num_atoms", 1)
-    params.setdefault("epsilon", [(0, 0.8), (200000, 0.01)])
+    params.setdefault("epsilon", [(0, 0.8), (10000, 0.01)])
     if "num_steps_sampled_before_learning_starts" in params:
         params["num_steps_sampled_before_learning_starts"] = max(
             int(params["num_steps_sampled_before_learning_starts"]),

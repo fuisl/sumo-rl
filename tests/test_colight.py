@@ -304,7 +304,7 @@ def test_colight_build_config_registers_shared_custom_rl_module(monkeypatch, tmp
     assert set(multi_spec.rl_module_specs.keys()) == {"shared_policy"}
     spec = multi_spec.rl_module_specs["shared_policy"]
     assert spec.model_config["architecture_tag"] == "colight_graph_attention"
-    assert spec.model_config["epsilon"] == [(0, 0.8), (200000, 0.01)]
+    assert spec.model_config["epsilon"] == [(0, 0.8), (10000, 0.01)]
     assert config.replay_buffer_config["type"] == "MultiAgentEpisodeReplayBuffer"
 
 

@@ -19,7 +19,7 @@ pytest.importorskip("ray")
 import sumo_rl
 from sumo_rl.agents.fgs import fgs
 from sumo_rl.agents.fgs.graph_env import FGSGraphParallelEnv
-from sumo_rl.agents.fgs.model import FGSGraphEncoder, FRAPEmbeddingEncoder
+from sumo_rl.agents.fgs.model import CentralGraphJointActionCritic, FGSGraphEncoder, FRAPEmbeddingEncoder
 from sumo_rl.agents.fgs.rllib_module import build_fgs_sac_module_spec
 from sumo_rl.agents.fgs.topology import extract_tls_topology, render_fgs_topology
 from sumo_rl.experiments import rllib_runner
@@ -35,6 +35,7 @@ def _graph_obs_space(num_nodes=2, node_dim=13, max_edges=2, num_actions=4):
             "ego_index": Box(0, max(0, num_nodes - 1), shape=(), dtype=np.int64),
             "action_mask": Box(0.0, 1.0, shape=(num_actions,), dtype=np.float32),
             "node_action_mask": Box(0.0, 1.0, shape=(num_nodes, num_actions), dtype=np.float32),
+            "prev_joint_action": Box(0.0, 1.0, shape=(num_nodes, num_actions), dtype=np.float32),
         }
     )
 
@@ -51,6 +52,10 @@ def _graph_obs(batch_size=3, num_nodes=2, node_dim=13, max_edges=2, num_actions=
         "ego_index": torch.tensor([0, 1, 0], dtype=torch.long)[:batch_size],
         "action_mask": torch.ones((batch_size, num_actions), dtype=torch.float32),
         "node_action_mask": torch.ones((batch_size, num_nodes, num_actions), dtype=torch.float32),
+        "prev_joint_action": torch.nn.functional.one_hot(
+            torch.zeros((batch_size, num_nodes), dtype=torch.long),
+            num_classes=num_actions,
+        ).float(),
     }
 
 
@@ -187,7 +192,15 @@ def test_fgs_graph_wrapper_builds_stable_graph_observations():
     assert obs["tls_0"]["node_features"].shape == (2, 13)
     assert obs["tls_0"]["edge_mask"].tolist() == [1.0, 1.0]
     assert obs["tls_0"]["action_mask"].tolist() == [1.0, 1.0, 1.0, 1.0]
+    assert obs["tls_0"]["prev_joint_action"].tolist() == [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
     assert obs["tls_1"]["ego_index"].item() == 1
+
+    stepped_obs, *_ = env.step({"tls_0": 3, "tls_1": 1})
+
+    assert stepped_obs["tls_0"]["prev_joint_action"].tolist() == [
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0, 0.0],
+    ]
 
 
 def test_fgs_graph_wrapper_canonicalizes_heterogeneous_default_observations():
@@ -211,6 +224,21 @@ def test_fgs_graph_wrapper_canonicalizes_heterogeneous_default_observations():
     assert env.env.last_actions["tls_1"] == 1
 
 
+def test_fgs_joint_action_critic_depends_on_neighbor_action_context():
+    critic = CentralGraphJointActionCritic(graph_dim=8, num_nodes=2, num_actions=3, hidden_dims=[16])
+    graph_h = torch.randn(2, 2, 8)
+    ego_index = torch.zeros(2, dtype=torch.long)
+    context_a = torch.nn.functional.one_hot(torch.tensor([[0, 0], [0, 0]]), num_classes=3).float()
+    context_b = torch.nn.functional.one_hot(torch.tensor([[0, 1], [0, 2]]), num_classes=3).float()
+
+    q_a = critic(graph_h, context_a, ego_index)
+    q_b = critic(graph_h, context_b, ego_index)
+
+    assert q_a.shape == (2, 3)
+    assert torch.isfinite(q_a).all()
+    assert not torch.allclose(q_a, q_b)
+
+
 def test_fgs_module_inference_and_train_outputs_discrete_sac_tensors():
     from ray.rllib.algorithms.sac.sac_learner import ACTION_PROBS, QF_PREDS, QF_TARGET_NEXT, QF_TWIN_PREDS
     from ray.rllib.core.columns import Columns
@@ -221,7 +249,7 @@ def test_fgs_module_inference_and_train_outputs_discrete_sac_tensors():
         model_config={
             "local_encoder": {"type": "frap", "output_dim": 16, "frap": {"demand_shape": 2}},
             "communication": {"enabled": True, "type": "gat", "num_heads": 1, "head_dim": 4, "output_dim": 16},
-            "critic": {"hidden_dims": [32]},
+            "critic": {"type": "central_graph_joint_action", "hidden_dims": [32]},
         },
     ).build()
     module.make_target_networks()
@@ -235,6 +263,27 @@ def test_fgs_module_inference_and_train_outputs_discrete_sac_tensors():
     assert train_out[QF_PREDS].shape == (2, 4)
     assert train_out[QF_TWIN_PREDS].shape == (2, 4)
     assert train_out[QF_TARGET_NEXT].shape == (2, 4)
+
+
+def test_fgs_module_mlp_encoder_train_outputs_discrete_sac_tensors():
+    from ray.rllib.algorithms.sac.sac_learner import ACTION_PROBS, QF_PREDS
+    from ray.rllib.core.columns import Columns
+
+    module = build_fgs_sac_module_spec(
+        _graph_obs_space(),
+        Discrete(4),
+        model_config={
+            "local_encoder": {"type": "mlp", "output_dim": 16, "hidden_dims": [16]},
+            "communication": {"enabled": True, "type": "gat", "num_heads": 1, "head_dim": 4, "output_dim": 16},
+            "critic": {"type": "central_graph_joint_action", "hidden_dims": [32]},
+        },
+    ).build()
+    module.make_target_networks()
+
+    train_out = module.forward_train({Columns.OBS: _graph_obs(batch_size=2), Columns.NEXT_OBS: _graph_obs(batch_size=2)})
+
+    assert train_out[ACTION_PROBS].shape == (2, 4)
+    assert train_out[QF_PREDS].shape == (2, 4)
 
 
 def test_rllib_runner_supports_fgs_algorithm_kind():
@@ -255,7 +304,7 @@ def test_fgs_build_config_registers_shared_custom_rl_module(monkeypatch, tmp_pat
                 "model_config": {
                     "local_encoder": {"type": "frap", "output_dim": 16},
                     "communication": {"enabled": False, "type": "identity"},
-                    "critic": {"hidden_dims": [32]},
+                    "critic": {"type": "central_graph_joint_action", "hidden_dims": [32]},
                     "topology": {"source": "direct_lane", "render": False},
                 },
             }
@@ -268,6 +317,26 @@ def test_fgs_build_config_registers_shared_custom_rl_module(monkeypatch, tmp_pat
     spec = config.rl_module_spec.rl_module_specs["shared_policy"]
     assert spec.module_class.__name__ == "FGSSACTorchRLModule"
     assert spec.model_config["architecture_tag"] == "fgs_frap_gnn_sac"
+    assert config.learner_class.__name__ == "FGSSACTorchLearner"
+
+
+def test_fgs_rejects_non_one_step_joint_action_training(monkeypatch, tmp_path):
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyParallelEnv())
+    cfg = SimpleNamespace(
+        scenario=SimpleNamespace(name="single_intersection"),
+        experiment=SimpleNamespace(name="fgs_test", seed=7, episode_seconds=60),
+        env=SimpleNamespace(factory="parallel_env", kwargs={}),
+        algorithm=SimpleNamespace(
+            params={
+                "policy_mode": "shared",
+                "n_step": 3,
+                "model_config": {"topology": {"source": "direct_lane", "render": False}},
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="n_step=1"):
+        fgs.build_config(cfg, tmp_path)
 
 
 def test_fgs_rejects_independent_policy_mode(monkeypatch, tmp_path):

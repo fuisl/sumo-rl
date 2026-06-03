@@ -14,6 +14,7 @@ from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
 from sumo_rl.agents.ppo.ppo import extract_training_metrics as extract_ppo_training_metrics
 from sumo_rl.agents.sac.sac import extract_training_metrics as extract_sac_training_metrics
 from sumo_rl.agents.rllib_common import (
+    _completed_episode_summary_history,
     apply_standard_evaluation_settings,
     build_training_episode_row,
     completed_training_episodes,
@@ -222,6 +223,32 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
     assert [step for step, _ in emitted] == [1, 2]
     assert emitted[0][1]["train/resco_wait_mean"] == 5.0
     assert emitted[1][1]["train/resco_wait_mean"] == 6.0
+
+
+def test_reset_only_episode_summaries_are_not_logged_as_zero_metrics():
+    class DummyEnv:
+        completed_episode_summaries = [
+            {
+                "episode/index": 1.0,
+                "episode/elapsed_seconds": 0.0,
+                "resco_wait_mean": 0.0,
+                "resco_queue_mean": 0.0,
+                "tripinfo/parse_pending": 0.0,
+            },
+            {
+                "episode/index": 2.0,
+                "episode/elapsed_seconds": 3600.0,
+                "resco_wait_mean": 6.0,
+                "resco_queue_mean": 2.5,
+                "tripinfo/parse_pending": 0.0,
+            },
+        ]
+        last_episode_summary = {}
+        sumo = None
+
+    summaries = _completed_episode_summary_history(DummyEnv())
+
+    assert [summary["episode/index"] for summary in summaries] == [2.0]
 
 
 def test_rllib_training_episode_emission_falls_back_to_completed_episode_counters():

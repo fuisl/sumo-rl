@@ -115,13 +115,17 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             import torch
             from ray.rllib.core.columns import Columns
 
+            try:
+                module_device = next(module.parameters()).device
+            except StopIteration:
+                module_device = torch.device("cpu")
             if isinstance(obs, dict):
                 obs_batch = {
-                    key: torch.as_tensor(np.asarray(value)).unsqueeze(0)
+                    key: torch.as_tensor(np.asarray(value), device=module_device).unsqueeze(0)
                     for key, value in obs.items()
                 }
             else:
-                obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32).unsqueeze(0)
+                obs_batch = torch.as_tensor(np.asarray(obs), dtype=torch.float32, device=module_device).unsqueeze(0)
             with torch.no_grad():
                 output = module.forward_inference({Columns.OBS: obs_batch})
                 if Columns.ACTIONS not in output and Columns.ACTION_DIST_INPUTS in output:

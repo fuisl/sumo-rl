@@ -53,6 +53,7 @@ class FGSGraphParallelEnv:
         self.agents = list(getattr(env, "agents", self.possible_agents))
         self._agent_to_index = {agent_id: index for index, agent_id in enumerate(self.possible_agents)}
         self._latest_local_obs: Dict[str, np.ndarray] = {}
+        self._prev_joint_action = np.zeros((max(1, len(self.possible_agents)), 1), dtype=np.float32)
         self._topology: Optional[TLSTopology] = None
         if self.topology_source == "tls_super_edges" and self.net_file:
             self._topology = extract_tls_topology(self.net_file)
@@ -82,6 +83,7 @@ class FGSGraphParallelEnv:
             self._demand_widths[agent_id] = demand_width
         self._max_demand_width = max(self._demand_widths.values() or [1])
         self._node_feature_dim = self._num_actions + 1 + self._max_demand_width
+        self._prev_joint_action = self._resize_joint_action_context(self._prev_joint_action)
         self._edges, self._edge_weights = self._build_edges()
         self._max_edges = max(1, len(self._edges))
 
@@ -110,12 +112,37 @@ class FGSGraphParallelEnv:
                         shape=(self._num_nodes, self._num_actions),
                         dtype=np.float32,
                     ),
+                    "prev_joint_action": spaces.Box(
+                        low=0.0,
+                        high=1.0,
+                        shape=(self._num_nodes, self._num_actions),
+                        dtype=np.float32,
+                    ),
                 }
             )
             for agent_id in self.possible_agents
         }
         shared_action_space = spaces.Discrete(self._num_actions)
         self.action_spaces = {agent_id: shared_action_space for agent_id in self.possible_agents}
+
+    def _resize_joint_action_context(self, context: np.ndarray) -> np.ndarray:
+        resized = np.zeros((self._num_nodes, self._num_actions), dtype=np.float32)
+        if context is None:
+            return resized
+        context = np.asarray(context, dtype=np.float32)
+        rows = min(context.shape[0], resized.shape[0]) if context.ndim == 2 else 0
+        cols = min(context.shape[1], resized.shape[1]) if context.ndim == 2 else 0
+        if rows > 0 and cols > 0:
+            resized[:rows, :cols] = context[:rows, :cols]
+        return resized
+
+    def _joint_action_one_hot(self, actions: Dict[str, int]) -> np.ndarray:
+        context = np.zeros((self._num_nodes, self._num_actions), dtype=np.float32)
+        for agent_id, node_index in self._agent_to_index.items():
+            action = int(actions.get(agent_id, 0))
+            action = int(np.clip(action, 0, self._action_sizes[agent_id] - 1))
+            context[node_index, action] = 1.0
+        return context
 
     def _canonical_local_obs(self, agent_id: str, obs: np.ndarray) -> np.ndarray:
         action_size = self._action_sizes[agent_id]
@@ -191,6 +218,7 @@ class FGSGraphParallelEnv:
             "ego_index": np.asarray(self._agent_to_index[agent_id], dtype=np.int64),
             "action_mask": action_mask,
             "node_action_mask": node_action_mask,
+            "prev_joint_action": self._prev_joint_action.copy(),
         }
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -202,6 +230,7 @@ class FGSGraphParallelEnv:
         self.agents = list(getattr(self.env, "agents", self.possible_agents))
         self._latest_local_obs = {str(agent_id): np.asarray(obs, dtype=np.float32) for agent_id, obs in local_obs.items()}
         self._refresh_spaces()
+        self._prev_joint_action = np.zeros((self._num_nodes, self._num_actions), dtype=np.float32)
         return {str(agent_id): self._graph_obs(str(agent_id)) for agent_id in local_obs.keys()}, infos
 
     def step(self, actions):
@@ -211,6 +240,7 @@ class FGSGraphParallelEnv:
         }
         local_obs, rewards, terminations, truncations, infos = self.env.step(clipped_actions)
         self.agents = list(getattr(self.env, "agents", []))
+        self._prev_joint_action = self._joint_action_one_hot(clipped_actions)
         for agent_id, obs in local_obs.items():
             self._latest_local_obs[str(agent_id)] = np.asarray(obs, dtype=np.float32)
         graph_obs = {str(agent_id): self._graph_obs(str(agent_id)) for agent_id in local_obs.keys()}

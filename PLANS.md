@@ -32,7 +32,7 @@ This project will be organized in phases so the thesis work stays incremental an
 - Status: implemented as a project-owned, third-party-inspired RLlib integration.
 - FGS combines FRAP-style local phase competition, CoLight-style GAT communication, and discrete SAC.
 - It is not a handwritten baseline; it is a modular learning method whose components can be ablated through Hydra config.
-- The v1 critic is centralized over graph embeddings and all agents' policy distributions, while execution remains decentralized through a shared policy.
+- The v1 critic defaults to a joint-action CTDE form over graph embeddings and same-transition joint action context, while execution remains decentralized through a shared policy.
 - The default reward remains SUMO-RL's existing `diff-waiting-time`.
 
 ## Assumptions

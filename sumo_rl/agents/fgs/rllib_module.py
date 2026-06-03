@@ -7,7 +7,11 @@ from typing import Any, Dict, Optional
 
 import gymnasium as gym
 
-from sumo_rl.agents.fgs.model import CentralGraphPolicyCritic, FGSGraphEncoder
+from sumo_rl.agents.fgs.model import CentralGraphJointActionCritic, CentralGraphPolicyCritic, FGSGraphEncoder
+
+
+FGS_ACTOR_QF_PREDS = "fgs_actor_qf_preds"
+FGS_ACTOR_QF_TWIN_PREDS = "fgs_actor_qf_twin_preds"
 
 
 DEFAULT_FGS_MODEL_CONFIG: Dict[str, Any] = {
@@ -32,7 +36,7 @@ DEFAULT_FGS_MODEL_CONFIG: Dict[str, Any] = {
         "output_dim": 128,
     },
     "critic": {
-        "type": "central_graph_policy_context",
+        "type": "central_graph_joint_action",
         "hidden_dims": [256, 256],
         "activation": "relu",
     },
@@ -64,9 +68,9 @@ def normalize_fgs_model_config(model_config: Optional[Dict[str, Any]] = None) ->
     if communication_type not in {"gat", "identity"}:
         raise ValueError("FGS communication.type must be one of: gat, identity.")
     communication["type"] = communication_type
-    critic_type = str(config["critic"].get("type", "central_graph_policy_context") or "central_graph_policy_context")
-    if critic_type != "central_graph_policy_context":
-        raise ValueError("FGS critic.type must be central_graph_policy_context for v1.")
+    critic_type = str(config["critic"].get("type", "central_graph_joint_action") or "central_graph_joint_action")
+    if critic_type not in {"central_graph_joint_action", "central_graph_policy_context"}:
+        raise ValueError("FGS critic.type must be one of: central_graph_joint_action, central_graph_policy_context.")
     config["critic"]["type"] = critic_type
     topology_source = str(config["topology"].get("source", "tls_super_edges") or "tls_super_edges")
     if topology_source not in {"tls_super_edges", "direct_lane"}:
@@ -120,6 +124,7 @@ def build_fgs_sac_module_class():
             self.node_feature_dim = int(spaces["node_features"].shape[-1])
             self.num_actions = int(self.action_space.n)
             self.invalid_action_value = float(self.model_config.get("invalid_action_value", -1.0e9))
+            self.critic_type = str(self.model_config.get("critic", {}).get("type", "central_graph_joint_action"))
 
             self.pi_encoder = FGSGraphEncoder(
                 node_feature_dim=self.node_feature_dim,
@@ -135,7 +140,8 @@ def build_fgs_sac_module_class():
                 model_config=self.model_config,
             )
             critic_config = dict(self.model_config.get("critic", {}) or {})
-            self.qf = CentralGraphPolicyCritic(
+            critic_cls = CentralGraphJointActionCritic if self.critic_type == "central_graph_joint_action" else CentralGraphPolicyCritic
+            self.qf = critic_cls(
                 graph_dim=self.qf_encoder.output_dim,
                 num_nodes=self.num_nodes,
                 num_actions=self.num_actions,
@@ -149,7 +155,7 @@ def build_fgs_sac_module_class():
                     num_actions=self.num_actions,
                     model_config=self.model_config,
                 )
-                self.qf_twin = CentralGraphPolicyCritic(
+                self.qf_twin = critic_cls(
                     graph_dim=self.qf_twin_encoder.output_dim,
                     num_nodes=self.num_nodes,
                     num_actions=self.num_actions,
@@ -176,9 +182,21 @@ def build_fgs_sac_module_class():
             ego_probs = torch.nn.functional.softmax(ego_logits, dim=-1)
             return ego_logits, ego_probs, torch.log(ego_probs.clamp_min(1e-12)), all_probs
 
-        def _critic_outputs(self, obs: Dict[str, torch.Tensor], all_action_probs, *, encoder, critic):
+        def _critic_outputs(self, obs: Dict[str, torch.Tensor], action_context, *, encoder, critic):
             encoded = encoder(obs)
-            return critic(encoded["graph"], all_action_probs.detach(), obs["ego_index"])
+            return self._critic_outputs_from_encoded(obs, action_context, encoded=encoded, critic=critic)
+
+        def _critic_outputs_from_encoded(self, obs: Dict[str, torch.Tensor], action_context, *, encoded, critic):
+            q_values = critic(encoded["graph"], action_context.detach(), obs["ego_index"])
+            return self._masked_logits(q_values, obs.get("action_mask"))
+
+        def _replay_joint_action_context(self, obs: Dict[str, torch.Tensor], next_obs: Dict[str, torch.Tensor], fallback):
+            if self.critic_type != "central_graph_joint_action":
+                return fallback
+            context = next_obs.get("prev_joint_action")
+            if context is None:
+                context = obs.get("prev_joint_action")
+            return context if context is not None else fallback
 
         def _forward_inference(self, batch):
             obs = batch[Columns.OBS]
@@ -203,12 +221,32 @@ def build_fgs_sac_module_class():
             del ego_logits
             output[ACTION_PROBS] = action_probs
             output[ACTION_LOG_PROBS] = action_log_probs
-            output[QF_PREDS] = self._critic_outputs(obs, all_probs, encoder=self.qf_encoder, critic=self.qf)
+            replay_context = self._replay_joint_action_context(obs, next_obs, all_probs)
+            qf_encoded = self.qf_encoder(obs)
+            output[QF_PREDS] = self._critic_outputs_from_encoded(
+                obs,
+                replay_context,
+                encoded=qf_encoded,
+                critic=self.qf,
+            )
+            output[FGS_ACTOR_QF_PREDS] = self._critic_outputs_from_encoded(
+                obs,
+                all_probs,
+                encoded=qf_encoded,
+                critic=self.qf,
+            )
             if self.twin_q:
-                output[QF_TWIN_PREDS] = self._critic_outputs(
+                qf_twin_encoded = self.qf_twin_encoder(obs)
+                output[QF_TWIN_PREDS] = self._critic_outputs_from_encoded(
+                    obs,
+                    replay_context,
+                    encoded=qf_twin_encoded,
+                    critic=self.qf_twin,
+                )
+                output[FGS_ACTOR_QF_TWIN_PREDS] = self._critic_outputs_from_encoded(
                     obs,
                     all_probs,
-                    encoder=self.qf_twin_encoder,
+                    encoded=qf_twin_encoded,
                     critic=self.qf_twin,
                 )
             return output
@@ -289,4 +327,3 @@ def build_fgs_sac_multi_module_spec(
         rl_module_specs=rl_module_specs,
         model_config=normalize_fgs_model_config(model_config),
     )
-

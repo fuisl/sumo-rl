@@ -253,3 +253,51 @@ class CentralGraphPolicyCritic(nn.Module):
             dim=-1,
         )
         return self.net(features)
+
+
+class CentralGraphJointActionCritic(nn.Module):
+    """Centralized critic over graph embeddings and joint-action context."""
+
+    def __init__(
+        self,
+        *,
+        graph_dim: int,
+        num_nodes: int,
+        num_actions: int,
+        hidden_dims: Iterable[int] = (256, 256),
+        activation: str = "relu",
+    ) -> None:
+        super().__init__()
+        self.num_nodes = int(num_nodes)
+        self.num_actions = int(num_actions)
+        self.graph_dim = int(graph_dim)
+        input_dim = self.num_nodes * self.graph_dim + self.num_nodes * self.num_actions + self.graph_dim + self.num_nodes
+        self.net = _mlp(input_dim, hidden_dims, 1, activation=activation)
+
+    def forward(
+        self,
+        graph_h: torch.Tensor,
+        joint_action_context: torch.Tensor,
+        ego_index: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_size, num_nodes, graph_dim = graph_h.shape
+        ego_index = ego_index.long().reshape(batch_size).clamp(0, num_nodes - 1)
+        ego_h = graph_h[torch.arange(batch_size, device=graph_h.device), ego_index]
+        ego_one_hot = F.one_hot(ego_index, num_classes=num_nodes).float()
+        base_context = joint_action_context.float().reshape(batch_size, num_nodes, self.num_actions)
+
+        candidate_contexts = base_context.unsqueeze(1).repeat(1, self.num_actions, 1, 1)
+        candidate_actions = F.one_hot(
+            torch.arange(self.num_actions, device=graph_h.device),
+            num_classes=self.num_actions,
+        ).float()
+        batch_indices = torch.arange(batch_size, device=graph_h.device).unsqueeze(-1)
+        action_indices = torch.arange(self.num_actions, device=graph_h.device).unsqueeze(0)
+        candidate_contexts[batch_indices, action_indices, ego_index.unsqueeze(-1), :] = candidate_actions.unsqueeze(0)
+
+        graph_flat = graph_h.reshape(batch_size, num_nodes * graph_dim).unsqueeze(1).expand(-1, self.num_actions, -1)
+        action_flat = candidate_contexts.reshape(batch_size, self.num_actions, num_nodes * self.num_actions)
+        ego_flat = ego_h.unsqueeze(1).expand(-1, self.num_actions, -1)
+        ego_index_flat = ego_one_hot.unsqueeze(1).expand(-1, self.num_actions, -1)
+        features = torch.cat((graph_flat, action_flat, ego_flat, ego_index_flat), dim=-1)
+        return self.net(features.reshape(batch_size * self.num_actions, -1)).reshape(batch_size, self.num_actions)

@@ -106,11 +106,12 @@ FGS is available as `algorithm=fgs`. FGS stands for FRAP-GNN-SAC: it applies a
 FRAP-style local phase-competition encoder to each SUMO-RL default observation,
 passes the node embeddings through a CoLight-style GAT over a TLS graph, and
 trains a shared discrete SAC actor with centralized graph critics. The actor is
-decentralized at execution time because each agent receives the graph observation
-through the wrapper and selects one discrete phase. During training, the twin
-critics receive the full graph embedding plus all nodes' current policy
-distributions, avoiding exponential joint-action enumeration while keeping the
-critic centralized.
+decentralized at execution time because each agent selects one discrete phase
+from its ego graph embedding. During training, the default twin critics receive
+the full graph embedding plus replayed same-transition joint actions for the
+critic TD loss. Actor and target updates use current policy action distributions
+as a tractable expectation context, so FGS remains centralized during training
+without enumerating all joint actions.
 FGS reuses the same PyTorch Geometric `MessagePassing` attention layer as
 CoLight, so the graph API is shared while the FRAP encoder and SAC heads remain
 FGS-specific.
@@ -129,12 +130,13 @@ flowchart TD
     G["GAT over TLS topology"]
     H["Neighbor-aware embedding h_i^t"]
     A["Discrete SAC actor<br/>pi(a_i | h_i)"]
-    C["Centralized twin critics<br/>Q_k(S_graph, Pi_all, ego_i, a_i)"]
+    J["Replay joint action context<br/>A_all"]
+    C["Centralized twin critics<br/>Q_k(H_all, A_all, ego_i, a_i)"]
     SUMO["SUMO step"]
 
     O --> F --> E --> G --> H --> A --> SUMO
     H --> C
-    A --> C
+    A --> J --> C
 ```
 
 ```mermaid
@@ -148,7 +150,7 @@ flowchart LR
 
     subgraph Training["Centralized training"]
         GT["full graph embeddings H_all"]
-        PT["all actor distributions Pi_all"]
+        PT["joint action / policy context"]
         QT["centralized twin critics"]
         LT["discrete SAC losses"]
         GT --> QT

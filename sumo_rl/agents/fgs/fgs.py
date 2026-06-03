@@ -13,6 +13,7 @@ from sumo_rl.agents.fgs.rllib_module import (
     build_fgs_sac_multi_module_spec,
     normalize_fgs_model_config,
 )
+from sumo_rl.agents.fgs.learner import FGSSACTorchLearner
 from sumo_rl.agents.rllib_common import (
     RllibAlgorithmContext,
     apply_env_runner_settings,
@@ -140,6 +141,9 @@ def build_config(cfg: Any, run_dir: Path):
     params = dict(params)
     params.setdefault("policy_mode", "shared")
     params.setdefault("twin_q", True)
+    params.setdefault("n_step", 1)
+    if int(params.get("n_step", 1)) != 1:
+        raise ValueError("FGS central_graph_joint_action critic requires algorithm.params.n_step=1.")
     params.setdefault("replay_buffer_type", "MultiAgentPrioritizedEpisodeReplayBuffer")
     params["replay_buffer_config"] = sac_agent.build_replay_buffer_config(params)
     params["model_config"] = _fgs_model_config(params)
@@ -188,6 +192,11 @@ def build_config(cfg: Any, run_dir: Path):
     config = config.rl_module(
         rl_module_spec=build_fgs_sac_multi_module_spec(rl_module_specs, model_config=params["model_config"])
     )
+    learners = getattr(config, "learners", None)
+    if callable(learners):
+        config = config.learners(learner_class=FGSSACTorchLearner)
+    else:
+        config = config.training(learner_class=FGSSACTorchLearner)
     return config.callbacks(callbacks_class)
 
 
