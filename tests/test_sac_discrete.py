@@ -38,6 +38,26 @@ class _DummyDiscreteParallelEnv:
         pass
 
 
+class _DummyHeterogeneousSharedEnv:
+    possible_agents = ["tls_0", "tls_1"]
+
+    def __init__(self, **kwargs):
+        self.kwargs = dict(kwargs)
+
+    def observation_space(self, agent_id):
+        if agent_id == "tls_0":
+            return Box(low=0.0, high=1.0, shape=(14,), dtype=np.float32)
+        return Box(low=0.0, high=1.0, shape=(16,), dtype=np.float32)
+
+    def action_space(self, agent_id):
+        if agent_id == "tls_0":
+            return Discrete(4)
+        return Discrete(5)
+
+    def close(self):
+        pass
+
+
 class _FakeGraphTrafficSignal:
     def __init__(self, ts_id, lanes, out_lanes, density, queue):
         self.id = ts_id
@@ -95,6 +115,24 @@ def test_sac_algorithm_context_uses_discrete_action_spaces(monkeypatch, tmp_path
     for policy_spec in context.active_policies.values():
         assert isinstance(policy_spec.action_space, Discrete)
         assert policy_spec.action_space.n == 3
+
+
+def test_shared_policy_context_merges_heterogeneous_box_and_discrete_spaces(monkeypatch, tmp_path):
+    monkeypatch.setattr(sumo_rl.agents.rllib_common, "_maybe_pad_pettingzoo_env", lambda env: env)
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyHeterogeneousSharedEnv(**kwargs))
+
+    cfg = SimpleNamespace(
+        scenario=SimpleNamespace(name="single_intersection"),
+        experiment=SimpleNamespace(name="sac_shared_test", seed=7, episode_seconds=60),
+        env=SimpleNamespace(factory="parallel_env", kwargs={}),
+        algorithm=SimpleNamespace(params={"policy_mode": "shared"}),
+    )
+
+    context = build_algorithm_context(cfg, tmp_path, "sac_mlp")
+
+    shared_spec = context.active_policies["shared_policy"]
+    assert shared_spec.observation_space.shape == (16,)
+    assert shared_spec.action_space.n == 5
 
 
 def test_custom_sac_module_spec_keeps_discrete_action_space():

@@ -917,19 +917,21 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
         self.env = SumoEnvironment(**self._kwargs)
         self.render_mode = self.env.render_mode
 
-        self.agents = self.env.ts_ids
-        self.possible_agents = self.env.ts_ids
+        self._refresh_agents_and_spaces()
         self._agent_selector = AgentSelector(self.agents)
         self.agent_selection = self._agent_selector.reset()
-        # spaces
-        self.action_spaces = {a: self.env.action_spaces(a) for a in self.agents}
-        self.observation_spaces = {a: self.env.observation_spaces(a) for a in self.agents}
 
         # dicts
         self.rewards = {a: 0 for a in self.agents}
         self.terminations = {a: False for a in self.agents}
         self.truncations = {a: False for a in self.agents}
         self.infos = {a: {} for a in self.agents}
+
+    def _refresh_agents_and_spaces(self) -> None:
+        self.agents = list(self.env.ts_ids)
+        self.possible_agents = list(self.env.ts_ids)
+        self.action_spaces = {a: self.env.action_spaces(a) for a in self.agents}
+        self.observation_spaces = {a: self.env.observation_spaces(a) for a in self.agents}
 
     def seed(self, seed=None):
         """Set the seed for the environment."""
@@ -938,6 +940,8 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         """Reset the environment."""
         self.env.reset(seed=seed, options=options)
+        self._refresh_agents_and_spaces()
+        self._agent_selector = AgentSelector(self.agents)
         self.agents = self.possible_agents[:]
         self.agent_selection = self._agent_selector.reset()
         self.rewards = {agent: 0 for agent in self.agents}

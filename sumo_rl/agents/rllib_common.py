@@ -424,6 +424,13 @@ def build_multi_agent_policies(cfg: Any, run_dir: Path, *, pad_spaces: bool):
     if pad_spaces:
         sample_env = _maybe_pad_pettingzoo_env(sample_env)
     try:
+        reset_env = getattr(sample_env, "reset", None)
+        if callable(reset_env):
+            seed = int(getattr(experiment, "seed", 0) or 0)
+            try:
+                reset_env(seed=seed)
+            except TypeError:
+                reset_env()
         policies = {}
         for agent_id in _possible_agents(sample_env):
             policies[str(agent_id)] = PolicySpec(
@@ -435,9 +442,62 @@ def build_multi_agent_policies(cfg: Any, run_dir: Path, *, pad_spaces: bool):
         sample_env.close()
 
 
-def build_shared_policy_dict(policies: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_box_spaces(spaces: list[Any]):
+    first = spaces[0]
+    rank = len(tuple(first.shape or ()))
+    if any(len(tuple(space.shape or ())) != rank for space in spaces):
+        raise ValueError("Shared policy mode requires Box spaces with the same rank.")
+    shape = tuple(max(int(space.shape[index]) for space in spaces) for index in range(rank))
+    dtype = first.dtype
+    merged_low = np.full(shape, -np.inf, dtype=dtype)
+    merged_high = np.full(shape, np.inf, dtype=dtype)
+    for space in spaces:
+        current_low = np.asarray(space.low, dtype=dtype)
+        current_high = np.asarray(space.high, dtype=dtype)
+        padded_low = np.full(shape, np.min(current_low), dtype=dtype)
+        padded_high = np.full(shape, np.max(current_high), dtype=dtype)
+        slices = tuple(slice(0, int(dim)) for dim in tuple(space.shape or ()))
+        padded_low[slices] = current_low
+        padded_high[slices] = current_high
+        merged_low = np.minimum(merged_low, padded_low)
+        merged_high = np.maximum(merged_high, padded_high)
+    from gymnasium import spaces as gym_spaces
+
+    return gym_spaces.Box(low=merged_low, high=merged_high, dtype=dtype)
+
+
+def _merge_discrete_spaces(spaces: list[Any]):
+    from gymnasium import spaces as gym_spaces
+
+    return gym_spaces.Discrete(max(int(space.n) for space in spaces))
+
+
+def _build_shared_policy_spec(policies: Dict[str, Any]):
+    from ray.rllib.policy.policy import PolicySpec
+
     first_spec = next(iter(policies.values()))
-    return {"shared_policy": first_spec}
+    observation_spaces = [spec.observation_space for spec in policies.values()]
+    action_spaces = [spec.action_space for spec in policies.values()]
+
+    shared_observation_space = first_spec.observation_space
+    if any(space != shared_observation_space for space in observation_spaces[1:]):
+        if hasattr(shared_observation_space, "shape") and all(hasattr(space, "shape") for space in observation_spaces):
+            shared_observation_space = _merge_box_spaces(observation_spaces)
+        else:
+            raise ValueError("Shared policy mode requires identical observation spaces or mergeable Box spaces.")
+
+    shared_action_space = first_spec.action_space
+    if any(space != shared_action_space for space in action_spaces[1:]):
+        if hasattr(shared_action_space, "n") and all(hasattr(space, "n") for space in action_spaces):
+            shared_action_space = _merge_discrete_spaces(action_spaces)
+        else:
+            raise ValueError("Shared policy mode requires identical action spaces or mergeable Discrete spaces.")
+
+    return {"shared_policy": PolicySpec(observation_space=shared_observation_space, action_space=shared_action_space)}
+
+
+def build_shared_policy_dict(policies: Dict[str, Any]) -> Dict[str, Any]:
+    return _build_shared_policy_spec(policies)
 
 
 def build_algorithm_context(cfg: Any, run_dir: Path, algorithm_kind: str) -> RllibAlgorithmContext:
