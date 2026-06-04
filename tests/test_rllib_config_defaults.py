@@ -15,13 +15,13 @@ def _compose(config_name: str, overrides: list[str] | None = None):
 def _assert_shared_ray_defaults(cfg):
     assert cfg.resources.ray_address == "auto"
     assert cfg.algorithm.params.ray_num_gpus == "auto"
-    assert cfg.algorithm.params.num_env_runners == 1
+    assert cfg.algorithm.params.num_env_runners == 0
     assert cfg.algorithm.params.num_envs_per_env_runner == 1
     assert cfg.algorithm.params.num_cpus_per_env_runner == 1
     assert cfg.algorithm.params.num_gpus_per_env_runner == 0
     assert cfg.algorithm.params.num_learners == 1
     assert cfg.algorithm.params.num_cpus_per_learner == 1
-    assert cfg.algorithm.params.num_gpus_per_learner == 0.25
+    assert cfg.algorithm.params.num_gpus_per_learner == 0.1
 
 
 def test_rllib_direct_algorithm_uses_shared_ray_defaults():

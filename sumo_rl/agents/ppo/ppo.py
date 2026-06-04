@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from sumo_rl.agents.dcrnn.dcrnn import build_graph_algorithm_context, graph_params
 from sumo_rl.agents.rllib_common import (
     apply_env_runner_settings,
     apply_multi_agent_settings,
@@ -25,12 +26,49 @@ from sumo_rl.agents.rllib_common import (
 
 
 KIND = "ppo"
+MLP_DCRNN_KIND = "ppo_dcrnn_mlp"
 
 
-def build_config(cfg: Any, run_dir: Path):
+def _ppo_dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = dict(params.get("model_config") or {})
+    model_config.setdefault("architecture_tag", MLP_DCRNN_KIND)
+    model_config.setdefault("hid_dim", 128)
+    model_config.setdefault("max_diffusion_step", 2)
+    model_config.setdefault("num_rnn_layers", 1)
+    model_config.setdefault("filter_type", "dual_random_walk")
+    pre_encoder = dict(model_config.get("pre_encoder", {}) or {})
+    pre_encoder.setdefault("enabled", True)
+    pre_encoder.setdefault("hidden_dim", int(model_config.get("hid_dim", model_config.get("hidden_dim", 128))))
+    pre_encoder.setdefault("activation", "relu")
+    model_config["pre_encoder"] = pre_encoder
+    model_config.update(graph_model_config)
+    return model_config
+
+
+def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+    from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
+
+    params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
+    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=graph_params(params))
+
+
+def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     from ray.rllib.algorithms.ppo import PPOConfig
 
-    context = build_algorithm_context(cfg, run_dir, KIND)
+    algorithm_kind = str(algorithm_kind or KIND).strip()
+    if algorithm_kind == MLP_DCRNN_KIND:
+        from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+        from sumo_rl.agents.ppo.rllib_module import build_ppo_dcrnn_module_spec
+
+        context, model_configs = build_graph_algorithm_context(
+            cfg,
+            run_dir,
+            algorithm_kind=algorithm_kind,
+            model_config_builder=_ppo_dcrnn_model_config,
+        )
+    else:
+        context = build_algorithm_context(cfg, run_dir, KIND)
+        model_configs = None
     callbacks_class = training_episode_summary_callbacks_class()
     config = PPOConfig().framework("torch").environment(env=context.env_name, disable_env_checking=True)
     config = apply_env_runner_settings(config, context.params)
@@ -56,6 +94,16 @@ def build_config(cfg: Any, run_dir: Path):
     )
     config = apply_multi_agent_settings(config, context)
     config = apply_standard_evaluation_settings(config, context.params)
+    if algorithm_kind == MLP_DCRNN_KIND:
+        rl_module_specs = {
+            policy_id: build_ppo_dcrnn_module_spec(
+                policy_spec.observation_space,
+                policy_spec.action_space,
+                model_config=model_configs[policy_id],
+            )
+            for policy_id, policy_spec in context.active_policies.items()
+        }
+        config = config.rl_module(rl_module_spec=MultiRLModuleSpec(rl_module_specs=rl_module_specs))
     return config.callbacks(callbacks_class)
 
 
@@ -74,9 +122,11 @@ def train(
     algo,
     cfg: Any,
     *,
+    algorithm_kind: str = KIND,
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
     validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
+    del algorithm_kind
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params
     callbacks_class = training_episode_summary_callbacks_class()

@@ -38,8 +38,10 @@ BUILTIN_KIND = "sac_builtin"
 CUSTOM_KIND = "sac_mlp"
 DCRNN_ACTOR_KIND = "sac_dcrnn_actor"
 DCRNN_FULL_KIND = "sac_dcrnn_full"
+DCRNN_ACTOR_MLP_KIND = "sac_dcrnn_actor_mlp"
+DCRNN_FULL_MLP_KIND = "sac_dcrnn_full_mlp"
 CUSTOM_ALIASES = {"sac_custom"}
-GRAPH_KINDS = {DCRNN_ACTOR_KIND, DCRNN_FULL_KIND}
+GRAPH_KINDS = {DCRNN_ACTOR_KIND, DCRNN_FULL_KIND, DCRNN_ACTOR_MLP_KIND, DCRNN_FULL_MLP_KIND}
 KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS}
 ALL_KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS, *CUSTOM_ALIASES}
 
@@ -87,6 +89,25 @@ def _with_dcrnn_encoder_defaults(
     return model_config
 
 
+def _with_pre_encoder_defaults(
+    model_config: Dict[str, Any],
+    *,
+    branch: str,
+) -> Dict[str, Any]:
+    model_config = dict(model_config)
+    branch_config = dict(model_config.get(branch) or {})
+    encoder_config = dict(branch_config.get("encoder") or {})
+    hidden_dim = int(encoder_config.get("hidden_dim", encoder_config.get("hid_dim", 128)))
+    pre_encoder = dict(encoder_config.get("pre_encoder") or {})
+    pre_encoder.setdefault("enabled", True)
+    pre_encoder.setdefault("hidden_dim", hidden_dim)
+    pre_encoder.setdefault("activation", "relu")
+    encoder_config["pre_encoder"] = pre_encoder
+    branch_config["encoder"] = encoder_config
+    model_config[branch] = branch_config
+    return model_config
+
+
 def _dcrnn_actor_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config = _with_dcrnn_encoder_defaults(
@@ -114,6 +135,20 @@ def _dcrnn_full_model_config(params: Dict[str, Any], graph_model_config: Dict[st
     return model_config
 
 
+def _dcrnn_actor_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = _dcrnn_actor_model_config(params, graph_model_config)
+    model_config["architecture_tag"] = DCRNN_ACTOR_MLP_KIND
+    return _with_pre_encoder_defaults(model_config, branch="actor")
+
+
+def _dcrnn_full_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = _dcrnn_full_model_config(params, graph_model_config)
+    model_config["architecture_tag"] = DCRNN_FULL_MLP_KIND
+    model_config = _with_pre_encoder_defaults(model_config, branch="actor")
+    model_config = _with_pre_encoder_defaults(model_config, branch="critic")
+    return model_config
+
+
 def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
@@ -126,11 +161,14 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
 
     algorithm_kind = normalize_kind(algorithm_kind)
     if algorithm_kind in GRAPH_KINDS:
-        model_config_builder = (
-            _dcrnn_actor_model_config
-            if algorithm_kind == DCRNN_ACTOR_KIND
-            else _dcrnn_full_model_config
-        )
+        if algorithm_kind == DCRNN_ACTOR_KIND:
+            model_config_builder = _dcrnn_actor_model_config
+        elif algorithm_kind == DCRNN_ACTOR_MLP_KIND:
+            model_config_builder = _dcrnn_actor_mlp_model_config
+        elif algorithm_kind == DCRNN_FULL_KIND:
+            model_config_builder = _dcrnn_full_model_config
+        else:
+            model_config_builder = _dcrnn_full_mlp_model_config
         context, policy_model_configs = build_graph_algorithm_context(
             cfg,
             run_dir,
@@ -147,7 +185,11 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
         (
             _dcrnn_actor_model_config(params, {})
             if algorithm_kind == DCRNN_ACTOR_KIND
+            else _dcrnn_actor_mlp_model_config(params, {})
+            if algorithm_kind == DCRNN_ACTOR_MLP_KIND
             else _dcrnn_full_model_config(params, {})
+            if algorithm_kind == DCRNN_FULL_KIND
+            else _dcrnn_full_mlp_model_config(params, {})
         )
         if algorithm_kind in GRAPH_KINDS
         else params.get("model_config")

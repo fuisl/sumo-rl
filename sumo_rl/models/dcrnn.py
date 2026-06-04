@@ -9,6 +9,19 @@ import torch
 from torch import nn
 
 
+def _activation_layer(name: str) -> nn.Module:
+    activation = str(name or "relu").lower()
+    if activation == "relu":
+        return nn.ReLU()
+    if activation == "tanh":
+        return nn.Tanh()
+    if activation == "sigmoid":
+        return nn.Sigmoid()
+    if activation in {"identity", "linear", "none"}:
+        return nn.Identity()
+    raise ValueError(f"Unsupported DCRNN activation: {name!r}.")
+
+
 def _row_normalize(matrix: np.ndarray) -> np.ndarray:
     matrix = np.asarray(matrix, dtype=np.float32)
     degree = matrix.sum(axis=1)
@@ -78,7 +91,7 @@ class DiffusionGraphConv(nn.Module):
         return [value for name, value in self.named_buffers() if name.startswith("support_")]
 
     def forward(self, inputs: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
-        batch_size = inputs.shape[0]
+        batch_size = inputs.shape[0]  # (B, num_nodes * input_dim * history)
         inputs = inputs.reshape(batch_size, self.num_nodes, -1)
         state = state.reshape(batch_size, self.num_nodes, -1)
         x = torch.cat([inputs, state], dim=-1)
@@ -215,14 +228,27 @@ class DCRNNBackbone(nn.Module):
         max_diffusion_step: int = 2,
         num_rnn_layers: int = 1,
         filter_type: str = "dual_random_walk",
+        pre_encoder_enabled: bool = False,
+        pre_encoder_hidden_dim: int | None = None,
+        pre_encoder_activation: str = "relu",
     ) -> None:
         super().__init__()
         self.input_dim = int(input_dim)
         self.hidden_dim = int(hidden_dim)
         self.num_nodes = int(num_nodes)
         self.agent_index = int(agent_index)
+        self.pre_encoder_enabled = bool(pre_encoder_enabled)
+        self.pre_encoder_input_dim = self.input_dim
+        self.pre_encoder_output_dim = int(pre_encoder_hidden_dim or self.hidden_dim) if self.pre_encoder_enabled else self.input_dim
+        self.pre_encoder_activation = str(pre_encoder_activation or "relu")
+        self.pre_encoder = None
+        if self.pre_encoder_enabled:
+            self.pre_encoder = nn.Sequential(
+                nn.Linear(self.input_dim, self.pre_encoder_output_dim),
+                _activation_layer(self.pre_encoder_activation),
+            )
         self.encoder = DCRNNEncoder(
-            input_dim=input_dim,
+            input_dim=self.pre_encoder_output_dim,
             adjacency=adjacency,
             max_diffusion_step=max_diffusion_step,
             hidden_dim=hidden_dim,
@@ -233,22 +259,46 @@ class DCRNNBackbone(nn.Module):
 
     @property
     def output_dim(self) -> int:
-        return self.hidden_dim + self.input_dim
+        return self.hidden_dim + self.pre_encoder_output_dim
+
+    def _encode_observations(self, obs: torch.Tensor) -> torch.Tensor:
+        if self.pre_encoder is None:
+            return obs
+        batch_size, history_len, num_nodes, _ = obs.shape
+        encoded = self.pre_encoder(obs.reshape(batch_size * history_len * num_nodes, self.input_dim))
+        return encoded.reshape(batch_size, history_len, num_nodes, self.pre_encoder_output_dim)
+
+    @staticmethod
+    def _resolve_pre_encoder_kwargs(
+        config: dict[str, Any],
+        *,
+        hidden_dim: int,
+        fallback_enabled: bool = False,
+    ) -> dict[str, Any]:
+        pre_encoder_config = dict(config.get("pre_encoder", {}) or {})
+        enabled = bool(pre_encoder_config.get("enabled", fallback_enabled))
+        return {
+            "pre_encoder_enabled": enabled,
+            "pre_encoder_hidden_dim": int(pre_encoder_config.get("hidden_dim", hidden_dim)) if enabled else None,
+            "pre_encoder_activation": str(pre_encoder_config.get("activation", "relu") or "relu"),
+        }
 
     @classmethod
     def from_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
         history_len, num_nodes, input_dim = observation_space.shape
         del history_len
         adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
+        hidden_dim = int(model_config.get("hid_dim", model_config.get("hidden_dim", 128)))
         return cls(
             input_dim=int(model_config.get("input_dim", input_dim)),
             adjacency=adjacency,
             num_nodes=int(model_config.get("num_nodes", num_nodes)),
             agent_index=int(model_config["agent_index"]),
-            hidden_dim=int(model_config.get("hid_dim", model_config.get("hidden_dim", 128))),
+            hidden_dim=hidden_dim,
             max_diffusion_step=int(model_config.get("max_diffusion_step", 2)),
             num_rnn_layers=int(model_config.get("num_rnn_layers", 1)),
             filter_type=str(model_config.get("filter_type", "dual_random_walk")),
+            **cls._resolve_pre_encoder_kwargs(model_config, hidden_dim=hidden_dim),
         )
 
     @classmethod
@@ -265,15 +315,21 @@ class DCRNNBackbone(nn.Module):
         history_len, num_nodes, input_dim = observation_space.shape
         del history_len
         adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
+        hidden_dim = int(encoder_config.get("hidden_dim", encoder_config.get("hid_dim", 128)))
         return cls(
             input_dim=int(model_config.get("input_dim", input_dim)),
             adjacency=adjacency,
             num_nodes=int(model_config.get("num_nodes", num_nodes)),
             agent_index=int(model_config["agent_index"]),
-            hidden_dim=int(encoder_config.get("hidden_dim", encoder_config.get("hid_dim", 128))),
+            hidden_dim=hidden_dim,
             max_diffusion_step=int(encoder_config.get("max_diffusion_step", 2)),
             num_rnn_layers=int(encoder_config.get("num_rnn_layers", 1)),
             filter_type=str(encoder_config.get("filter_type", "dual_random_walk")),
+            **cls._resolve_pre_encoder_kwargs(
+                encoder_config,
+                hidden_dim=hidden_dim,
+                fallback_enabled=False,
+            ),
         )
 
     @classmethod
@@ -288,8 +344,9 @@ class DCRNNBackbone(nn.Module):
         obs = obs.float()
         if obs.ndim != 4:
             raise ValueError(f"DCRNN expects observations with shape [B, H, N, F], got {tuple(obs.shape)}.")
-        encoded = self.encoder(obs.transpose(0, 1))
-        latest_features = obs[:, -1]
+        encoded_obs = self._encode_observations(obs)
+        encoded = self.encoder(encoded_obs.transpose(0, 1))
+        latest_features = encoded_obs[:, -1]
         agent_hidden = encoded[:, self.agent_index, :]
         agent_features = latest_features[:, self.agent_index, :]
         return torch.cat([agent_hidden, agent_features], dim=-1)
@@ -311,6 +368,9 @@ class DCRNNQNetwork(nn.Module):
         num_rnn_layers: int = 1,
         filter_type: str = "dual_random_walk",
         head_hidden_dim: int | None = None,
+        pre_encoder_enabled: bool = False,
+        pre_encoder_hidden_dim: int | None = None,
+        pre_encoder_activation: str = "relu",
     ) -> None:
         super().__init__()
         self.backbone = DCRNNBackbone(
@@ -322,6 +382,9 @@ class DCRNNQNetwork(nn.Module):
             max_diffusion_step=max_diffusion_step,
             num_rnn_layers=num_rnn_layers,
             filter_type=filter_type,
+            pre_encoder_enabled=pre_encoder_enabled,
+            pre_encoder_hidden_dim=pre_encoder_hidden_dim,
+            pre_encoder_activation=pre_encoder_activation,
         )
         head_hidden = int(head_hidden_dim or hidden_dim)
         self.head = nn.Sequential(
@@ -344,6 +407,9 @@ class DCRNNQNetwork(nn.Module):
             num_rnn_layers=int(model_config.get("num_rnn_layers", 1)),
             filter_type=str(model_config.get("filter_type", "dual_random_walk")),
             head_hidden_dim=model_config.get("head_hidden_dim"),
+            pre_encoder_enabled=backbone.pre_encoder_enabled,
+            pre_encoder_hidden_dim=backbone.pre_encoder_output_dim if backbone.pre_encoder_enabled else None,
+            pre_encoder_activation=backbone.pre_encoder_activation,
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:

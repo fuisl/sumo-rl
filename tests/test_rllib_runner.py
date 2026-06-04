@@ -310,6 +310,58 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp
     assert built_env is graph_eval_env
 
 
+def test_build_eval_env_uses_graph_eval_env_for_ppo_dcrnn_mlp(monkeypatch, tmp_path):
+    graph_eval_env = object()
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+    )
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="ppo_dcrnn_mlp",
+        policy_mode="independent",
+    )
+
+    assert built_env is graph_eval_env
+
+
+def test_build_eval_env_uses_graph_eval_env_for_dqn_dcrnn_mlp(monkeypatch, tmp_path):
+    graph_eval_env = object()
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+    )
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="dqn_dcrnn_mlp",
+        policy_mode="independent",
+    )
+
+    assert built_env is graph_eval_env
+
+
 def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_full(monkeypatch, tmp_path):
     graph_eval_env = object()
 

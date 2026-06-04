@@ -28,9 +28,11 @@ from sumo_rl.agents.rllib_common import (
 )
 
 
-KIND = "dqn_dcrnn"
+DQN_KIND = "dqn_dcrnn"
+MLP_KIND = "dqn_dcrnn_mlp"
+KIND = DQN_KIND
 ALIASES = {"dcrnn"}
-ALL_KINDS = {KIND, *ALIASES}
+ALL_KINDS = {DQN_KIND, MLP_KIND, *ALIASES}
 
 
 def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,6 +59,17 @@ def _dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, An
         if key in params and params[key] is not None:
             model_config[key] = params[key]
     model_config.update(graph_model_config)
+    return model_config
+
+
+def _dcrnn_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = _dcrnn_model_config(params, graph_model_config)
+    model_config["architecture_tag"] = MLP_KIND
+    pre_encoder = dict(model_config.get("pre_encoder", {}) or {})
+    pre_encoder.setdefault("enabled", True)
+    pre_encoder.setdefault("hidden_dim", int(model_config.get("hid_dim", model_config.get("hidden_dim", 128))))
+    pre_encoder.setdefault("activation", "relu")
+    model_config["pre_encoder"] = pre_encoder
     return model_config
 
 
@@ -139,16 +152,18 @@ def build_graph_algorithm_context(
     return context, model_configs
 
 
-def build_config(cfg: Any, run_dir: Path):
+def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     from ray.rllib.algorithms.dqn import DQNConfig
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
     from sumo_rl.agents.dcrnn.rllib_module import build_dcrnn_dqn_module_spec
 
+    algorithm_kind = str(algorithm_kind or KIND).strip()
+    model_config_builder = _dcrnn_mlp_model_config if algorithm_kind == MLP_KIND else _dcrnn_model_config
     context, model_configs = build_graph_algorithm_context(
         cfg,
         run_dir,
-        algorithm_kind=KIND,
-        model_config_builder=_dcrnn_model_config,
+        algorithm_kind=algorithm_kind,
+        model_config_builder=model_config_builder,
     )
     callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
@@ -217,9 +232,11 @@ def train(
     algo,
     cfg: Any,
     *,
+    algorithm_kind: str = KIND,
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
     validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
+    del algorithm_kind
     callbacks_class = training_episode_summary_callbacks_class()
     callbacks_class.reset_episode_summary_tracking()
     iteration = 0

@@ -61,17 +61,21 @@ from sumo_rl.agents.rllib_common import (
 )
 SUPPORTED_RLLIB_ALGORITHMS = {
     "ppo",
+    "ppo_dcrnn_mlp",
     "dqn",
     "frap",
     "colight",
     "fgs",
     "dqn_dcrnn",
+    "dqn_dcrnn_mlp",
     "dcrnn",
     "sac_builtin",
     fgsv2_agent.KIND,
     "sac_mlp",
     "sac_dcrnn_actor",
+    "sac_dcrnn_actor_mlp",
     "sac_dcrnn_full",
+    "sac_dcrnn_full_mlp",
     "sac_custom",
 }
 
@@ -131,11 +135,11 @@ def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
 
 def _algorithm_module(algorithm_kind: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
-    if algorithm_kind == "ppo":
+    if algorithm_kind in {"ppo", "ppo_dcrnn_mlp"}:
         return importlib.import_module("sumo_rl.agents.ppo.ppo")
     if algorithm_kind == "dqn":
         return importlib.import_module("sumo_rl.agents.dqn.dqn")
-    if algorithm_kind == "dqn_dcrnn":
+    if algorithm_kind in {"dqn_dcrnn", "dqn_dcrnn_mlp"}:
         return importlib.import_module("sumo_rl.agents.dcrnn.dcrnn")
     if algorithm_kind == "frap":
         return importlib.import_module("sumo_rl.agents.frap.frap")
@@ -145,7 +149,14 @@ def _algorithm_module(algorithm_kind: str):
         return importlib.import_module("sumo_rl.agents.fgs.fgs")
     if algorithm_kind == fgsv2_agent.KIND:
         return fgsv2_agent
-    if algorithm_kind in {"sac_builtin", "sac_mlp", "sac_dcrnn_actor", "sac_dcrnn_full"}:
+    if algorithm_kind in {
+        "sac_builtin",
+        "sac_mlp",
+        "sac_dcrnn_actor",
+        "sac_dcrnn_actor_mlp",
+        "sac_dcrnn_full",
+        "sac_dcrnn_full_mlp",
+    }:
         return importlib.import_module("sumo_rl.agents.sac.sac")
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
 
@@ -153,7 +164,16 @@ def _algorithm_module(algorithm_kind: str):
 def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
-    if algorithm_kind in {"sac_builtin", "sac_mlp", "sac_dcrnn_actor", "sac_dcrnn_full"}:
+    if algorithm_kind in {
+        "ppo_dcrnn_mlp",
+        "dqn_dcrnn_mlp",
+        "sac_builtin",
+        "sac_mlp",
+        "sac_dcrnn_actor",
+        "sac_dcrnn_actor_mlp",
+        "sac_dcrnn_full",
+        "sac_dcrnn_full_mlp",
+    }:
         return module.build_config(cfg, run_dir, algorithm_kind=algorithm_kind)
     return module.build_config(cfg, run_dir)
 
@@ -161,7 +181,16 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
 def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, validate=None) -> None:
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
-    if algorithm_kind in {"sac_builtin", "sac_mlp", "sac_dcrnn_actor", "sac_dcrnn_full"}:
+    if algorithm_kind in {
+        "ppo_dcrnn_mlp",
+        "dqn_dcrnn_mlp",
+        "sac_builtin",
+        "sac_mlp",
+        "sac_dcrnn_actor",
+        "sac_dcrnn_actor_mlp",
+        "sac_dcrnn_full",
+        "sac_dcrnn_full_mlp",
+    }:
         module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
     else:
         module.train(algo, cfg, emit_metrics=emit_metrics, validate=validate)
@@ -226,7 +255,15 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
 def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind: str, policy_mode: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
-    if algorithm_kind in {"dqn_dcrnn", "sac_dcrnn_actor", "sac_dcrnn_full"}:
+    if algorithm_kind in {
+        "dqn_dcrnn",
+        "dqn_dcrnn_mlp",
+        "ppo_dcrnn_mlp",
+        "sac_dcrnn_actor",
+        "sac_dcrnn_actor_mlp",
+        "sac_dcrnn_full",
+        "sac_dcrnn_full_mlp",
+    }:
         return module.build_graph_eval_env(cfg, run_dir, seed=seed)
     build_eval_env = getattr(module, "build_eval_env", None)
     if callable(build_eval_env):

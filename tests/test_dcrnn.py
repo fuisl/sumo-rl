@@ -103,6 +103,32 @@ def test_dcrnn_q_network_outputs_one_q_value_per_action():
     assert torch.isfinite(q_values).all()
 
 
+def test_dcrnn_backbone_pre_encoder_projects_features_before_recurrent_stack():
+    torch = pytest.importorskip("torch")
+    from sumo_rl.models.dcrnn import DCRNNBackbone
+
+    graph = build_traffic_signal_graph(_fake_signals(), include_virtual_nodes=True)
+    backbone = DCRNNBackbone(
+        input_dim=graph.feature_dim,
+        adjacency=graph.adjacency,
+        num_nodes=graph.num_nodes,
+        agent_index=graph.ts_index["tls_1"],
+        hidden_dim=16,
+        max_diffusion_step=1,
+        pre_encoder_enabled=True,
+        pre_encoder_hidden_dim=12,
+        pre_encoder_activation="relu",
+    )
+
+    obs = torch.zeros((2, 5, graph.num_nodes, graph.feature_dim), dtype=torch.float32)
+    projected = backbone._encode_observations(obs)
+    latent = backbone(obs)
+
+    assert projected.shape == (2, 5, graph.num_nodes, 12)
+    assert latent.shape == (2, 28)
+    assert torch.isfinite(latent).all()
+
+
 class _DummyDCRNNParallelEnv:
     possible_agents = ["tls_0", "tls_1"]
     agents = ["tls_0", "tls_1"]
@@ -129,6 +155,7 @@ def test_rllib_runner_supports_dcrnn_algorithm_kind():
     from sumo_rl.experiments import rllib_runner
 
     assert "dqn_dcrnn" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
+    assert "dqn_dcrnn_mlp" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
     assert "dcrnn" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
 
 
@@ -162,3 +189,35 @@ def test_dcrnn_build_config_registers_graph_rl_modules(monkeypatch, tmp_path):
     assert multi_spec.rl_module_specs["tls_0"].model_config["agent_index"] == 0
     assert multi_spec.rl_module_specs["tls_1"].model_config["agent_index"] == 1
     assert multi_spec.rl_module_specs["tls_0"].model_config["architecture_tag"] == "dqn_dcrnn"
+
+
+def test_dcrnn_mlp_build_config_enables_pre_encoder(monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from sumo_rl.agents.dcrnn import dcrnn
+
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyDCRNNParallelEnv(**kwargs))
+    cfg = SimpleNamespace(
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+        experiment=SimpleNamespace(name="dcrnn_mlp_test", seed=7, episode_seconds=60),
+        env=SimpleNamespace(factory="parallel_env", kwargs={}),
+        algorithm=SimpleNamespace(
+            params={
+                "policy_mode": "independent",
+                "history_len": 5,
+                "model_config": {
+                    "hid_dim": 16,
+                    "max_diffusion_step": 1,
+                    "num_rnn_layers": 1,
+                },
+            }
+        ),
+    )
+
+    config = dcrnn.build_config(cfg, tmp_path, algorithm_kind=dcrnn.MLP_KIND)
+    multi_spec = config.get_multi_rl_module_spec(env=None, spaces=None, inference_only=False)
+
+    assert set(multi_spec.rl_module_specs.keys()) == {"tls_0", "tls_1"}
+    spec = multi_spec.rl_module_specs["tls_0"]
+    assert spec.model_config["architecture_tag"] == "dqn_dcrnn_mlp"
+    assert spec.model_config["pre_encoder"]["enabled"] is True

@@ -121,5 +121,8 @@ reportCallIssue = "warning"
 reportAttributeAccessIssue = "warning"
 
 [tool.pytest.ini_options]
+addopts = "--basetemp=.pytest_tmp"
+testpaths = ["tests"]
+norecursedirs = [".git", ".venv", ".pytest_cache", ".pytest_tmp", "ray_results", "outputs", "multirun", "*.egg-info"]
 filterwarnings = ['ignore:.*The environment .* is out of date.*']
 # filterwarnings = ['ignore:.*step API.*:DeprecationWarning']

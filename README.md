@@ -217,14 +217,18 @@ python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_colog
 ### RLlib PPO, DQN, FRAP, DQN+DCRNN, CoLight, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
+python experiments/rllib.py algorithm=ppo_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=dqn_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_actor_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full_mlp scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 Scenario-first RLlib presets are launched by keeping the config root at
@@ -249,18 +253,23 @@ standalone local debugging, override with `resources.ray_address=null`; local
 runs default to a small CPU budget where `resources.ray_num_cpus=2` advertises
 two logical CPUs to Ray and `resources.native_num_threads=1` caps
 OpenMP/BLAS/Torch-style thread pools.
-The shared config creates one remote EnvRunner and one remote Learner by default
-so `ray status` reports resource use and Ray can queue jobs instead of silently
-oversubscribing the same GPU. The default learner reservation is fractional
-(`algorithm.params.num_gpus_per_learner=0.25`) so several runs can share the
-selected GPU when memory headroom is available; override it to `1` for exclusive
-GPU use.
+The shared config keeps sampling in the local process by default
+(`algorithm.params.num_env_runners=0`) and uses one learner actor so `ray status`
+still reports reserved learner resources. The default learner reservation is
+fractional (`algorithm.params.num_gpus_per_learner=0.1`) so several runs can
+share the selected GPU when memory headroom is available; override it to `1`
+for exclusive GPU use.
 GPU selection should be pinned with `resources.cuda_visible_devices`; for example
 `resources.cuda_visible_devices=1` exposes physical GPU 1 as local CUDA index 0,
 so keep `algorithm.params.local_gpu_idx=0`.
 For RLlib W&B titles, set `logging.name` for an explicit display name, or set a
 non-default `experiment.name`; the default `experiment.name=rllib` keeps the
 generated `scenario__algorithm__time` title.
+
+`ppo_dcrnn_mlp` uses the same graph-history wrapper as the DCRNN DQN/SAC
+variants, then feeds each agent through a shared MLP+DCRNN backbone with
+separate PPO policy and value heads. This graph PPO variant supports
+independent policies only.
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
 Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
@@ -275,6 +284,9 @@ rolling density/queue histories to a diffusion-convolutional recurrent
 Q-network. Use `algorithm=dqn_dcrnn` as the canonical name; `algorithm=dcrnn`
 is kept as a backward-compatible alias. The first version supports independent
 policies.
+
+`dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one node-wise
+MLP layer before the DCRNN stack.
 
 CoLight is available as `algorithm=colight`. It is a DQN-family RLlib method
 with one shared graph-attention Q-network over all controlled intersections.
@@ -310,6 +322,9 @@ first version supports independent policies only. Use
 actor, `qf`, and `qf_twin` branches while keeping the standard SAC target-copy
 behavior for the critic targets. This variant also supports independent
 policies only.
+`algorithm=sac_dcrnn_actor_mlp` and `algorithm=sac_dcrnn_full_mlp` keep those
+same branch layouts, but add one node-wise MLP layer before each enabled DCRNN
+encoder.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash

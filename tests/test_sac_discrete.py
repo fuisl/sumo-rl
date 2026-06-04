@@ -238,6 +238,30 @@ def test_custom_sac_model_config_accepts_dcrnn_actor_encoder():
     assert model_config["fcnet_hiddens"] == []
 
 
+def test_custom_sac_model_config_preserves_dcrnn_pre_encoder_metadata():
+    model_config = normalize_custom_sac_model_config(
+        {
+            "architecture_tag": "sac_dcrnn_actor_mlp",
+            "actor": {
+                "encoder": {
+                    "type": "dcrnn",
+                    "hidden_dim": 32,
+                    "pre_encoder": {
+                        "enabled": True,
+                        "hidden_dim": 32,
+                        "activation": "relu",
+                    },
+                },
+            },
+        }
+    )
+
+    pre_encoder = model_config["custom_sac"]["actor"]["encoder"]["pre_encoder"]
+    assert pre_encoder["enabled"] is True
+    assert pre_encoder["hidden_dim"] == 32
+    assert pre_encoder["activation"] == "relu"
+
+
 def test_custom_sac_model_config_accepts_dcrnn_critic_encoder():
     model_config = normalize_custom_sac_model_config(
         {
@@ -508,6 +532,20 @@ def test_sac_dcrnn_full_algorithm_kind_is_supported_by_rllib_runner():
     assert "sac_dcrnn_full" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
 
 
+def test_sac_dcrnn_actor_mlp_algorithm_kind_is_supported_by_rllib_runner():
+    pytest.importorskip("ray")
+    from sumo_rl.experiments import rllib_runner
+
+    assert "sac_dcrnn_actor_mlp" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
+
+
+def test_sac_dcrnn_full_mlp_algorithm_kind_is_supported_by_rllib_runner():
+    pytest.importorskip("ray")
+    from sumo_rl.experiments import rllib_runner
+
+    assert "sac_dcrnn_full_mlp" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
+
+
 def test_sac_dcrnn_actor_build_config_installs_graph_multi_module(monkeypatch, tmp_path):
     monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyGraphParallelEnv(**kwargs))
 
@@ -592,6 +630,87 @@ def test_sac_dcrnn_full_build_config_installs_graph_multi_module(monkeypatch, tm
         assert spec.model_config["custom_sac"]["critic"]["encoder"]["type"] == "dcrnn"
         assert "agent_index" in spec.model_config
         assert "adjacency" in spec.model_config
+
+
+def test_sac_dcrnn_actor_mlp_build_config_enables_actor_pre_encoder(monkeypatch, tmp_path):
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyGraphParallelEnv(**kwargs))
+
+    cfg = SimpleNamespace(
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+        experiment=SimpleNamespace(name="sac_dcrnn_actor_mlp_test", seed=7, episode_seconds=60),
+        env=SimpleNamespace(factory="parallel_env", kwargs={}),
+        algorithm=SimpleNamespace(
+            params={
+                "policy_mode": "independent",
+                "history_len": 5,
+                "num_env_runners": 0,
+                "num_envs_per_env_runner": 1,
+                "model_config": {
+                    "architecture_tag": "sac_dcrnn_actor_mlp",
+                    "actor": {
+                        "encoder": {
+                            "type": "dcrnn",
+                            "hidden_dim": 16,
+                            "max_diffusion_step": 1,
+                        }
+                    },
+                },
+            }
+        ),
+    )
+
+    config = build_config(cfg, tmp_path, algorithm_kind="sac_dcrnn_actor_mlp")
+
+    assert set(config.rl_module_spec.rl_module_specs.keys()) == {"tls_0", "tls_1"}
+    for spec in config.rl_module_spec.rl_module_specs.values():
+        pre_encoder = spec.model_config["custom_sac"]["actor"]["encoder"]["pre_encoder"]
+        assert spec.model_config["architecture_tag"] == "sac_dcrnn_actor_mlp"
+        assert pre_encoder["enabled"] is True
+
+
+def test_sac_dcrnn_full_mlp_build_config_enables_actor_and_critic_pre_encoder(monkeypatch, tmp_path):
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyGraphParallelEnv(**kwargs))
+
+    cfg = SimpleNamespace(
+        scenario=SimpleNamespace(name="resco_grid4x4"),
+        experiment=SimpleNamespace(name="sac_dcrnn_full_mlp_test", seed=7, episode_seconds=60),
+        env=SimpleNamespace(factory="parallel_env", kwargs={}),
+        algorithm=SimpleNamespace(
+            params={
+                "policy_mode": "independent",
+                "history_len": 5,
+                "num_env_runners": 0,
+                "num_envs_per_env_runner": 1,
+                "model_config": {
+                    "architecture_tag": "sac_dcrnn_full_mlp",
+                    "actor": {
+                        "encoder": {
+                            "type": "dcrnn",
+                            "hidden_dim": 16,
+                            "max_diffusion_step": 1,
+                        }
+                    },
+                    "critic": {
+                        "encoder": {
+                            "type": "dcrnn",
+                            "hidden_dim": 12,
+                            "max_diffusion_step": 1,
+                        }
+                    },
+                },
+            }
+        ),
+    )
+
+    config = build_config(cfg, tmp_path, algorithm_kind="sac_dcrnn_full_mlp")
+
+    assert set(config.rl_module_spec.rl_module_specs.keys()) == {"tls_0", "tls_1"}
+    for spec in config.rl_module_spec.rl_module_specs.values():
+        actor_pre = spec.model_config["custom_sac"]["actor"]["encoder"]["pre_encoder"]
+        critic_pre = spec.model_config["custom_sac"]["critic"]["encoder"]["pre_encoder"]
+        assert spec.model_config["architecture_tag"] == "sac_dcrnn_full_mlp"
+        assert actor_pre["enabled"] is True
+        assert critic_pre["enabled"] is True
 
 
 def test_sac_dcrnn_actor_rejects_shared_policy_mode(monkeypatch, tmp_path):
@@ -693,7 +812,7 @@ def test_sac_custom_alias_normalizes_to_sac_mlp(monkeypatch, tmp_path):
     assert config.rl_module_spec.multi_rl_module_class.__name__ == "CustomSACMultiRLModule"
 
 
-def test_sac_graph_variants_inherit_builtin_sac_train_and_runner_defaults():
+def test_sac_graph_variants_inherit_builtin_sac_training_defaults():
     builtin_cfg = OmegaConf.load(ROOT / "configs" / "algorithm" / "sac_builtin.yaml")
     actor_cfg = OmegaConf.merge(
         builtin_cfg,
@@ -711,10 +830,6 @@ def test_sac_graph_variants_inherit_builtin_sac_train_and_runner_defaults():
         "alpha_lr",
         "tau",
         "train_batch_size_per_learner",
-        "num_env_runners",
-        "num_envs_per_env_runner",
-        "num_gpus_per_learner",
-        "ray_num_gpus",
         "num_steps_sampled_before_learning_starts",
     )
 

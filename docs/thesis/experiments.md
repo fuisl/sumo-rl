@@ -50,19 +50,27 @@ Other common entrypoints:
 ```bash
 python experiments/static_max_pressure.py scenario=resco_cologne1
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
+python experiments/rllib.py algorithm=ppo_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=dqn_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=fgs scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
 python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_actor_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full_mlp scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 PPO and DQN default to independent policies. To switch to a shared policy, override
 `algorithm.params.policy_mode=shared` on the command line.
+
+`algorithm=ppo_dcrnn_mlp` keeps PPO on independent policies, but swaps the flat
+observation path for graph histories plus a shared MLP+DCRNN backbone with
+separate policy/value heads.
 
 FRAP is available as `algorithm=frap`. It is a DQN-family RLlib method whose
 custom RLModule replaces the Q-network with the paper's phase-competition
@@ -77,6 +85,9 @@ Q-network with a diffusion-convolutional recurrent encoder. `algorithm=dcrnn`
 remains as a backward-compatible alias. The first version supports independent
 policies only; shared graph communication with existing models is a future
 extension.
+
+`algorithm=dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one
+node-wise MLP layer before the DCRNN stack.
 
 CoLight is available as `algorithm=colight`. It uses a shared graph-attention
 Q-network over the whole traffic-signal graph and forces
@@ -118,10 +129,16 @@ placeholder message-passing metadata for later GAT experiments. The older
 applies the DCRNN encoder only to the SAC actor. The critics stay on the
 current MLP SAC path in v1. This variant supports independent policies only.
 
+`sac_dcrnn_actor_mlp` keeps the same actor-only graph layout, but inserts one
+node-wise MLP layer before the actor DCRNN encoder.
+
 `sac_dcrnn_full` uses the same graph-observation wrapper, but assigns separate
 DCRNN encoders to the SAC actor, `qf`, and `qf_twin` branches. The target
 critics stay on the normal SAC target-copy path rather than using separately
 configured target DCRNN stacks. This variant supports independent policies only.
+
+`sac_dcrnn_full_mlp` keeps the same full-graph DCRNN SAC layout, but inserts
+one node-wise MLP layer before each DCRNN encoder.
 
 FGS is available as `algorithm=fgs`. FGS stands for FRAP-GNN-SAC: it applies a
 FRAP-style local phase-competition encoder to each SUMO-RL default observation,

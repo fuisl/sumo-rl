@@ -96,10 +96,11 @@ the desired CPU/GPU capacity before launching jobs. To pin the shared head to
 physical GPU 1, start it with
 `CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`. Override
 `resources.ray_address=null` for standalone local debugging. The shared default
-also uses one remote EnvRunner and one remote Learner per experiment so Ray can
-account for CPU/GPU reservations; the default
-`algorithm.params.num_gpus_per_learner=0.25` lets several learner actors share
-one selected GPU, while `1` reserves it exclusively. Set
+keeps EnvRunner sampling in-process with `algorithm.params.num_env_runners=0`
+and uses one learner actor per experiment so Ray can account for CPU/GPU
+reservations; the default `algorithm.params.num_gpus_per_learner=0.1` lets
+several learner actors share one selected GPU, while `1` reserves it
+exclusively. Set
 `resources.cuda_visible_devices` in `configs/rllib.yaml`
 or on the command line to choose the physical GPU; the selected GPU is exposed
 inside the run as local CUDA index 0, so `algorithm.params.local_gpu_idx` should
