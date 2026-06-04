@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /rllib
+  - override /scenario: resco_cologne8
+  - override /algorithm: sac_builtin
+  - _self_
+
+experiment:
+  name: ${scenario.name}__sac_builtin

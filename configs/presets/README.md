@@ -37,6 +37,7 @@ configs/presets/resco_grid4x4/
   fgs_frap_gat_sac.yaml
   fgs_mlp_gat_sac.yaml
 configs/presets/resco_cologne8/
+  sac_builtin.yaml
   fgs_frap_gat_sac.yaml
   fgs_mlp_gat_sac.yaml
   fgs_frap_gatv2_sac.yaml
