@@ -50,7 +50,7 @@ def map_system_metrics_to_namespaces(info: Any) -> Dict[str, float]:
     return namespaced
 
 
-def reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:
+def reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penalty_lambda: Any = None) -> str:
     if isinstance(reward_fn, list):
         if reward_weights is not None:
             return "weighted_sum(reward_fn_i) across the configured reward functions"
@@ -59,6 +59,13 @@ def reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:
     reward_name = str(reward_fn)
     if reward_name == "diff-waiting-time":
         return "last_waiting_time - current_waiting_time, where current_waiting_time = sum(accumulated_waiting_time_per_lane) / 100"
+    if reward_name == "diff-waiting-time-with-unchosen-phase-penalty":
+        penalty_lambda = 0.1 if reward_penalty_lambda is None else float(reward_penalty_lambda)
+        return (
+            "last_waiting_time - current_waiting_time - "
+            f"{penalty_lambda} * max(cumulative_waiting_time_per_unchosen_phase / queue_length_per_unchosen_phase), "
+            "where current_waiting_time = sum(accumulated_waiting_time_per_lane) / 100 and phases with zero queue contribute 0"
+        )
     if reward_name == "average-speed":
         return "average vehicle speed for the signal"
     if reward_name == "queue":

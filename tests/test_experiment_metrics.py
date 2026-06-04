@@ -158,6 +158,7 @@ def test_resco_summary_row_uses_standard_static_metric_names() -> None:
             self.sumo = None
             self.reward_fn = "diff-waiting-time"
             self.reward_weights = None
+            self.reward_penalty_lambda = 0.1
             self.last_episode_summary = {
                 "episode/index": 3.0,
                 "episode/steps": 3600.0,
@@ -203,6 +204,43 @@ def test_resco_summary_row_uses_standard_static_metric_names() -> None:
     )
 
 
+def test_resco_summary_row_includes_unchosen_phase_penalty_formula() -> None:
+    class DummyBaseEnv:
+        def __init__(self) -> None:
+            self.metrics = []
+            self.sumo = None
+            self.reward_fn = "diff-waiting-time-with-unchosen-phase-penalty"
+            self.reward_weights = None
+            self.reward_penalty_lambda = 0.25
+            self.last_episode_summary = {
+                "episode/index": 3.0,
+                "episode/steps": 3600.0,
+                "sim_step": 3600.0,
+                "resco_avg_delay": 12.0,
+                "resco_avg_delay_std": 1.25,
+                "resco_trip_time": 34.0,
+                "resco_wait": 7.0,
+                "resco_wait_std": 0.5,
+                "resco_queue": 2.5,
+                "resco_max_queue": 9.0,
+            }
+            self.last_episode_final_info = {}
+            self.last_lane_waiting_times = {"agent_a": []}
+            self.last_episode_lane_waiting_times = {"agent_a": [1.0, 3.0]}
+            self.traffic_signals = {"agent_a": object()}
+
+        def finalize_episode_summary(self):
+            return dict(self.last_episode_summary)
+
+    row = _build_episode_benchmark_summary_row(DummyBaseEnv(), extra={"algorithm/kind": "fixed_time"})
+
+    assert row["reward/formula"] == (
+        "last_waiting_time - current_waiting_time - "
+        "0.25 * max(cumulative_waiting_time_per_unchosen_phase / queue_length_per_unchosen_phase), "
+        "where current_waiting_time = sum(accumulated_waiting_time_per_lane) / 100 and phases with zero queue contribute 0"
+    )
+
+
 def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     class DummyBaseEnv:
         def __init__(self) -> None:
@@ -225,6 +263,7 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
             self.sumo = None
             self.reward_fn = "diff-waiting-time"
             self.reward_weights = None
+            self.reward_penalty_lambda = 0.1
             self.last_episode_summary = {
                 "episode/index": 3.0,
                 "episode/sim_time_abs": 3600.0,

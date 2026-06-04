@@ -655,14 +655,15 @@ def _rllib_validation_helpers():
     return rllib_runner
 
 
-def _reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:
-    return _metric_reward_formula_text(reward_fn, reward_weights)
+def _reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penalty_lambda: Any = None) -> str:
+    return _metric_reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda)
 
 
 def _reward_metadata_from_env(env) -> Dict[str, Any]:
     base_env = _get_base_env(env)
     reward_fn = getattr(base_env, "reward_fn", "diff-waiting-time")
     reward_weights = getattr(base_env, "reward_weights", None)
+    reward_penalty_lambda = getattr(base_env, "reward_penalty_lambda", None)
     reward_name = None
 
     if isinstance(reward_fn, list):
@@ -676,7 +677,7 @@ def _reward_metadata_from_env(env) -> Dict[str, Any]:
 
     return {
         "reward/name": reward_name,
-        "reward/formula": _reward_formula_text(reward_fn, reward_weights),
+        "reward/formula": _reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda),
         "reward/source": "sumo_rl.environment.traffic_signal.TrafficSignal.compute_reward",
         "reward/scope": "per-agent environment reward",
     }
