@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 import colorsys
 from dataclasses import dataclass
+import importlib
 import json
 import os
 import shutil
@@ -46,14 +47,7 @@ from sumo_rl.experiments.runner import (
     _resolve_num_gpus,
     _update_wandb_summary,
 )
-from sumo_rl.agents.colight import colight as colight_agent
-from sumo_rl.agents.dqn import dqn as dqn_agent
-from sumo_rl.agents.fgs import fgs as fgs_agent
 from sumo_rl.experiments.metric_utils import map_system_metrics_to_namespaces
-from sumo_rl.agents.dqn import dqn as dqn_agent
-from sumo_rl.agents.dcrnn import dcrnn as dcrnn_agent
-from sumo_rl.agents.frap import frap as frap_agent
-from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.rllib_common import (
     build_rllib_parallel_env,
     build_policy_mapping as _build_policy_mapping,
@@ -64,27 +58,28 @@ from sumo_rl.agents.rllib_common import (
     policy_mode as _policy_mode,
     scenario_factory_name,
 )
-from sumo_rl.agents.sac import sac as sac_agent
-
-
 SUPPORTED_RLLIB_ALGORITHMS = {
-    ppo_agent.KIND,
-    dqn_agent.KIND,
-    frap_agent.KIND,
-    colight_agent.KIND,
-    fgs_agent.KIND,
-    *sac_agent.KINDS,
-    *dcrnn_agent.ALL_KINDS,
-    *sac_agent.ALL_KINDS,
+    "ppo",
+    "dqn",
+    "frap",
+    "colight",
+    "fgs",
+    "dqn_dcrnn",
+    "dcrnn",
+    "sac_builtin",
+    "sac_mlp",
+    "sac_dcrnn_actor",
+    "sac_dcrnn_full",
+    "sac_custom",
 }
 
 
 def normalize_algorithm_kind(algorithm_kind: str) -> str:
     kind = str(algorithm_kind or "").strip()
-    if kind in dcrnn_agent.ALL_KINDS:
-        return dcrnn_agent.KIND
-    if kind in sac_agent.ALL_KINDS:
-        return sac_agent.normalize_kind(kind)
+    if kind == "dcrnn":
+        return "dqn_dcrnn"
+    if kind == "sac_custom":
+        return "sac_mlp"
     return kind
 
 
@@ -134,27 +129,27 @@ def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
 
 def _algorithm_module(algorithm_kind: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
-    if algorithm_kind == ppo_agent.KIND:
-        return ppo_agent
-    if algorithm_kind == dqn_agent.KIND:
-        return dqn_agent
-    if algorithm_kind == dcrnn_agent.KIND:
-        return dcrnn_agent
-    if algorithm_kind == frap_agent.KIND:
-        return frap_agent
-    if algorithm_kind == colight_agent.KIND:
-        return colight_agent
-    if algorithm_kind == fgs_agent.KIND:
-        return fgs_agent
-    if algorithm_kind in sac_agent.KINDS:
-        return sac_agent
+    if algorithm_kind == "ppo":
+        return importlib.import_module("sumo_rl.agents.ppo.ppo")
+    if algorithm_kind == "dqn":
+        return importlib.import_module("sumo_rl.agents.dqn.dqn")
+    if algorithm_kind == "dqn_dcrnn":
+        return importlib.import_module("sumo_rl.agents.dcrnn.dcrnn")
+    if algorithm_kind == "frap":
+        return importlib.import_module("sumo_rl.agents.frap.frap")
+    if algorithm_kind == "colight":
+        return importlib.import_module("sumo_rl.agents.colight.colight")
+    if algorithm_kind == "fgs":
+        return importlib.import_module("sumo_rl.agents.fgs.fgs")
+    if algorithm_kind in {"sac_builtin", "sac_mlp", "sac_dcrnn_actor", "sac_dcrnn_full"}:
+        return importlib.import_module("sumo_rl.agents.sac.sac")
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
 
 
 def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
-    if module is sac_agent:
+    if algorithm_kind in {"sac_builtin", "sac_mlp", "sac_dcrnn_actor", "sac_dcrnn_full"}:
         return module.build_config(cfg, run_dir, algorithm_kind=algorithm_kind)
     return module.build_config(cfg, run_dir)
 
@@ -162,7 +157,7 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
 def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, validate=None) -> None:
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
-    if module is sac_agent:
+    if algorithm_kind in {"sac_builtin", "sac_mlp", "sac_dcrnn_actor", "sac_dcrnn_full"}:
         module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
     else:
         module.train(algo, cfg, emit_metrics=emit_metrics, validate=validate)
@@ -201,7 +196,7 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
 
             try:
                 module_device = next(module.parameters()).device
-            except StopIteration:
+            except (AttributeError, StopIteration):
                 module_device = torch.device("cpu")
             if isinstance(obs, dict):
                 obs_batch = {
@@ -226,12 +221,9 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
 
 def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind: str, policy_mode: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
-    if algorithm_kind in sac_agent.GRAPH_KINDS:
-        return sac_agent.build_graph_eval_env(cfg, run_dir, seed=seed)
     module = _algorithm_module(algorithm_kind)
-    build_graph_eval_env = getattr(module, "build_graph_eval_env", None)
-    if callable(build_graph_eval_env):
-        return build_graph_eval_env(cfg, run_dir, seed=seed)
+    if algorithm_kind in {"dqn_dcrnn", "sac_dcrnn_actor", "sac_dcrnn_full"}:
+        return module.build_graph_eval_env(cfg, run_dir, seed=seed)
     build_eval_env = getattr(module, "build_eval_env", None)
     if callable(build_eval_env):
         return build_eval_env(cfg, run_dir, seed=seed)

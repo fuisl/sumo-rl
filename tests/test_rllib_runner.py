@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -181,7 +180,11 @@ def test_build_eval_env_does_not_mutate_tripinfo_retention(monkeypatch, tmp_path
 def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp_path):
     graph_eval_env = object()
 
-    monkeypatch.setattr(rllib_runner.sac_agent, "build_graph_eval_env", lambda *args, **kwargs: graph_eval_env)
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+    )
     monkeypatch.setattr(
         rllib_runner,
         "build_rllib_parallel_env",
@@ -203,7 +206,11 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp
 def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_full(monkeypatch, tmp_path):
     graph_eval_env = object()
 
-    monkeypatch.setattr(rllib_runner.sac_agent, "build_graph_eval_env", lambda *args, **kwargs: graph_eval_env)
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+    )
     monkeypatch.setattr(
         rllib_runner,
         "build_rllib_parallel_env",
@@ -220,6 +227,32 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_full(monkeypatch, tmp_
     )
 
     assert built_env is graph_eval_env
+
+
+def test_build_eval_env_uses_flat_env_for_sac_builtin(monkeypatch, tmp_path):
+    flat_eval_env = object()
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("graph eval env should not be used"))),
+    )
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: flat_eval_env,
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="sac_builtin",
+        policy_mode="independent",
+    )
+
+    assert built_env is flat_eval_env
 
 
 def test_sync_env_runner_weights_for_evaluation_uses_learner_weights():
@@ -313,9 +346,13 @@ def test_compute_single_action_falls_back_to_module_when_rllib_compute_single_ac
         float32 = "float32"
 
         @staticmethod
-        def as_tensor(values, dtype=None):
-            del dtype
+        def as_tensor(values, dtype=None, device=None):
+            del dtype, device
             return DummyTensor(values)
+
+        @staticmethod
+        def device(name):
+            return name
 
         @staticmethod
         def no_grad():
