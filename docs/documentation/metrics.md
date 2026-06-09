@@ -128,6 +128,13 @@ The shared validation metrics are:
 - `validation/safety_total_collisions`
 - `validation/eval/episode`
 - `validation/episode/sim_time_abs`
+
+For RLlib runs, W&B summary also exposes additive best-overview namespaces:
+
+- `best_train/*` from the training row with the lowest `train/resco_delay_mean`
+- `best_validation/*` from the validation row with the lowest `validation/resco_delay_mean`
+
+These namespaces do not replace or rename the existing `validation/*` summary fields.
 - `validation/episode/elapsed_seconds`
 - `validation/warnings/*`
 
@@ -482,6 +489,7 @@ These runners use:
 For multi-seed evaluation, the runner builds one cached summary per eval seed and then averages the validation-facing scalar metrics into one validation row.
 Warnings are kept if any eval seed shows the problem.
 The last forced validation pass is the canonical end-of-run RLlib result; the RLlib path no longer publishes a separate final benchmark namespace.
+The runner also publishes additive `best_train/*` and `best_validation/*` W&B summary namespaces without changing the validation-history or end-of-run validation row behavior.
 If validation action plots are enabled, that forced last validation pass also logs the final `validation/actions_share/<agent_id>` and `validation/actions_timeline/<agent_id>` payloads and advances `validation/pass_index` once more.
 
 ### SAC through RLlib

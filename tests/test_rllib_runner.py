@@ -1306,6 +1306,88 @@ def test_best_validation_checkpoint_skips_missing_or_non_finite_metric(tmp_path)
     assert not state["metadata_path"].exists()
 
 
+def test_consider_best_metrics_row_prefers_lower_delay_and_keeps_full_row():
+    current = None
+    current = rllib_runner._consider_best_metrics_row(
+        current,
+        {"train/resco_delay_mean": 12.0, "train/reward_mean": 3.0},
+        metric_name="train/resco_delay_mean",
+    )
+    current = rllib_runner._consider_best_metrics_row(
+        current,
+        {"train/resco_delay_mean": 9.0, "train/reward_mean": 7.5, "train/custom_metric": 11.0},
+        metric_name="train/resco_delay_mean",
+    )
+    current = rllib_runner._consider_best_metrics_row(
+        current,
+        {"train/resco_delay_mean": 9.0, "train/reward_mean": 99.0},
+        metric_name="train/resco_delay_mean",
+    )
+
+    assert current == {
+        "train/resco_delay_mean": 9.0,
+        "train/reward_mean": 7.5,
+        "train/custom_metric": 11.0,
+    }
+
+
+def test_consider_best_metrics_row_skips_missing_or_non_finite_metric():
+    current = rllib_runner._consider_best_metrics_row(
+        None,
+        {"validation/resco_delay_mean": 8.5, "validation/reward_mean": 2.0},
+        metric_name="validation/resco_delay_mean",
+    )
+
+    unchanged = rllib_runner._consider_best_metrics_row(
+        current,
+        {"validation/reward_mean": 4.0},
+        metric_name="validation/resco_delay_mean",
+    )
+    unchanged = rllib_runner._consider_best_metrics_row(
+        unchanged,
+        {"validation/resco_delay_mean": float("nan"), "validation/reward_mean": 6.0},
+        metric_name="validation/resco_delay_mean",
+    )
+
+    assert unchanged == current
+
+
+def test_update_wandb_best_summary_prefixes_train_and_validation_metrics_and_cleans_stale_keys():
+    class DummyRun:
+        def __init__(self):
+            self.summary = {
+                "best_train/obsolete": 99.0,
+                "best_validation/obsolete": 101.0,
+                "validation/resco_delay_mean": 7.0,
+            }
+
+    run = DummyRun()
+
+    rllib_runner._update_wandb_best_summary(
+        run,
+        {
+            "best_train": {
+                "train/resco_delay_mean": 5.0,
+                "train/reward_mean": 9.0,
+                "debug/ignored": 1.0,
+            },
+            "best_validation": {
+                "validation/resco_delay_mean": 4.0,
+                "validation/reward_mean": 8.0,
+                "train/ignored": 2.0,
+            },
+        },
+    )
+
+    assert run.summary == {
+        "validation/resco_delay_mean": 7.0,
+        "best_train/resco_delay_mean": 5.0,
+        "best_train/reward_mean": 9.0,
+        "best_validation/resco_delay_mean": 4.0,
+        "best_validation/reward_mean": 8.0,
+    }
+
+
 def test_restore_checkpoint_loads_saved_weights_and_reproduces_metric(tmp_path):
     class FakeAlgo:
         def __init__(self, metric_value=0.0):
@@ -1768,7 +1850,16 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
         def build(self):
             return algo
 
+    class DummyWandbRun:
+        def __init__(self):
+            self.summary = {}
+            self.finished = False
+
+        def finish(self):
+            self.finished = True
+
     algo = DummyAlgo()
+    wandb_run = DummyWandbRun()
     logged_rows = []
     action_plot_logs = []
     validation_summaries = [
@@ -1811,32 +1902,20 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
         (
             {
                 "algorithm/kind": "ppo",
-                "validation/resco_delay_mean": 8.0,
+                "validation/resco_delay_mean": 13.0,
                 "validation/eval/episode": 2.0,
                 "eval/episode": 2.0,
             },
-            [{"eval/seed": 1.0, "validation/resco_delay_mean": 8.0}],
+            [{"eval/seed": 1.0, "validation/resco_delay_mean": 13.0}],
             {"tls_1": [{"step": 1.0, "action_0": 0.75, "action_1": 0.25}]},
             {"tls_1": [0, 0, 1]},
             {"tls_1": [{"step": 1.0, "active_phase": 0.0, "phase_0": 4.0, "phase_1": 2.0}]},
-        ),
-        (
-            {
-                "algorithm/kind": "ppo",
-                "validation/resco_delay_mean": 7.0,
-                "validation/eval/episode": 2.0,
-                "eval/episode": 2.0,
-            },
-            [{"eval/seed": 1.0, "validation/resco_delay_mean": 7.0}],
-            {"tls_1": [{"step": 1.0, "action_0": 0.0, "action_1": 1.0}]},
-            {"tls_1": [1, 1, 1]},
-            {"tls_1": [{"step": 1.0, "active_phase": 1.0, "phase_0": 0.0, "phase_1": 6.0}]},
         ),
     ]
 
     def fake_train_algorithm(algo_obj, cfg, algorithm_kind, emit_metrics, validate=None):
         del algo_obj, cfg, algorithm_kind
-        emit_metrics({"train/env_step": 40.0, "train/episode_index": 4.0}, 4)
+        emit_metrics({"train/env_step": 40.0, "train/episode_index": 4.0, "train/resco_delay_mean": 10.0}, 4)
         validate({}, 10)
         validate({}, 20)
         validate({}, 30)
@@ -1874,6 +1953,7 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     monkeypatch.setitem(sys.modules, "ray", DummyRay)
     monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
     monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
+    monkeypatch.setattr(rllib_runner, "_init_wandb", lambda *args, **kwargs: wandb_run)
     monkeypatch.setattr(rllib_runner, "_train_algorithm", fake_train_algorithm)
     monkeypatch.setattr(rllib_runner, "_evaluate_with_details", fake_evaluate_with_details)
     monkeypatch.setattr(rllib_runner, "_log_outputs", lambda *args, **kwargs: logged_rows.append((args, kwargs)))
@@ -1894,7 +1974,6 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
         ),
     )
     monkeypatch.setattr(rllib_runner, "_log_validation_tripinfo_distribution_images", lambda *args, **kwargs: None)
-    monkeypatch.setattr(rllib_runner, "_update_wandb_summary", lambda *args, **kwargs: None)
 
     cfg = SimpleNamespace(
         logging=SimpleNamespace(
@@ -1913,9 +1992,9 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
 
     metadata_path = tmp_path / "checkpoints" / "ppo" / "best_validation" / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    assert [item["metric_value"] for item in metadata["retained"]] == [8.0, 9.0, 11.0]
+    assert [item["metric_value"] for item in metadata["retained"]] == [9.0, 11.0, 12.0]
     assert len(metadata["retained"][0]["evaluation_seed_rows"]) == 1
-    assert len(algo.saved_paths) == 5
+    assert len(algo.saved_paths) == 4
     assert any(Path(path).name == "ppo" for path in algo.saved_paths)
     assert [entry["pass_index"] for entry in action_plot_logs] == [1, 2, 3, 4]
     assert all(entry["episode_index"] == 4 for entry in action_plot_logs)
@@ -1930,10 +2009,95 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     validation_rows = [args[2] for args, kwargs in logged_rows if isinstance(args[2], dict) and "validation/env_step" in args[2]]
     assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0]
     assert all(row["validation/episode_index"] == 4.0 for row in validation_rows)
-    assert result["validation/resco_delay_mean"] == 8.0
+    assert result["validation/resco_delay_mean"] == 13.0
     assert result["validation/env_step"] == 40.0
     assert result["validation/episode_index"] == 4.0
     assert result["validation/pass_index"] == 4.0
+    assert wandb_run.summary["validation/resco_delay_mean"] == 13.0
+    assert wandb_run.summary["best_train/resco_delay_mean"] == 10.0
+    assert wandb_run.summary["best_train/episode_index"] == 4.0
+    assert wandb_run.summary["best_train/env_step"] == 40.0
+    assert wandb_run.summary["best_validation/resco_delay_mean"] == 9.0
+    assert wandb_run.summary["best_validation/pass_index"] == 2.0
+    assert wandb_run.finished is True
+
+
+def test_train_rllib_writes_best_summary_on_interrupt(monkeypatch, tmp_path):
+    ray_shutdown_calls = []
+
+    class DummyRay:
+        @staticmethod
+        def init(**kwargs):
+            return None
+
+        @staticmethod
+        def shutdown():
+            ray_shutdown_calls.append(True)
+
+    class DummyAlgo:
+        def __init__(self):
+            self.stop_calls = 0
+
+        def stop(self):
+            self.stop_calls += 1
+
+    class DummyConfig:
+        def build(self):
+            return algo
+
+    class DummyWandbRun:
+        def __init__(self):
+            self.summary = {
+                "best_train/obsolete": 123.0,
+                "best_validation/resco_delay_mean": 5.0,
+            }
+            self.finished = False
+
+        def finish(self):
+            self.finished = True
+
+    algo = DummyAlgo()
+    wandb_run = DummyWandbRun()
+
+    def fake_train_algorithm(algo_obj, cfg, algorithm_kind, emit_metrics, validate=None):
+        del algo_obj, cfg, algorithm_kind, validate
+        emit_metrics({"train/env_step": 10.0, "train/episode_index": 1.0, "train/resco_delay_mean": 15.0}, 1)
+        emit_metrics({"train/env_step": 20.0, "train/episode_index": 2.0, "train/resco_delay_mean": 9.0}, 2)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setitem(sys.modules, "ray", DummyRay)
+    monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
+    monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
+    monkeypatch.setattr(rllib_runner, "_init_wandb", lambda *args, **kwargs: wandb_run)
+    monkeypatch.setattr(rllib_runner, "_train_algorithm", fake_train_algorithm)
+    monkeypatch.setattr(rllib_runner, "_log_outputs", lambda *args, **kwargs: None)
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=True,
+            save_best_validation_checkpoints=False,
+            best_validation_checkpoint_count=3,
+            best_validation_metric="validation/resco_delay_mean",
+            save_final_model=False,
+        ),
+        experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),
+        resources=SimpleNamespace(cuda_visible_devices="1"),
+        algorithm=SimpleNamespace(kind="ppo", params={}),
+    )
+
+    try:
+        rllib_runner.train_rllib(cfg)
+        assert False, "Expected KeyboardInterrupt"
+    except KeyboardInterrupt:
+        pass
+
+    assert wandb_run.summary["best_train/resco_delay_mean"] == 9.0
+    assert wandb_run.summary["best_train/env_step"] == 20.0
+    assert "best_train/obsolete" not in wandb_run.summary
+    assert "best_validation/resco_delay_mean" not in wandb_run.summary
+    assert wandb_run.finished is True
+    assert algo.stop_calls == 1
+    assert ray_shutdown_calls == [True]
 
 
 def test_standard_evaluation_settings_use_rllib_algorithm_config_api():

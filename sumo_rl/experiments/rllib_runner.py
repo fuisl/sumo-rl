@@ -1385,6 +1385,80 @@ def _best_validation_directory(run_dir: Path, algorithm_kind: str) -> Path:
     return run_dir / "checkpoints" / algorithm_kind / "best_validation"
 
 
+def _best_metric_value(metrics: Dict[str, Any], metric_name: str) -> Optional[float]:
+    metric_value = metrics.get(metric_name)
+    if not isinstance(metric_value, (int, float, np.integer, np.floating)) or isinstance(metric_value, bool):
+        return None
+    metric_value = float(metric_value)
+    if not np.isfinite(metric_value):
+        return None
+    return metric_value
+
+
+def _consider_best_metrics_row(
+    current_best: Optional[Dict[str, Any]],
+    candidate_metrics: Dict[str, Any],
+    *,
+    metric_name: str,
+) -> Optional[Dict[str, Any]]:
+    candidate_value = _best_metric_value(candidate_metrics, metric_name)
+    if candidate_value is None:
+        return current_best
+    if current_best is None:
+        return dict(candidate_metrics)
+
+    current_value = _best_metric_value(current_best, metric_name)
+    if current_value is None or candidate_value < current_value:
+        return dict(candidate_metrics)
+    return current_best
+
+
+def _prefix_best_metrics(metrics: Dict[str, Any], *, source_prefix: str, target_prefix: str) -> Dict[str, Any]:
+    prefix = f"{source_prefix}/"
+    target = f"{target_prefix}/"
+    prefixed = {}
+    for key, value in metrics.items():
+        if not isinstance(key, str):
+            continue
+        if key.startswith(prefix):
+            prefixed[f"{target}{key[len(prefix):]}"] = value
+    return prefixed
+
+
+def _clear_wandb_summary_prefix(wandb_run, prefix: str) -> None:
+    if wandb_run is None:
+        return
+    summary = getattr(wandb_run, "summary", None)
+    if summary is None:
+        return
+    key_prefix = f"{prefix}/"
+    keys = getattr(summary, "keys", None)
+    if not callable(keys):
+        return
+    for key in list(keys()):
+        if not isinstance(key, str) or not key.startswith(key_prefix):
+            continue
+        try:
+            del summary[key]
+        except Exception:
+            try:
+                summary.pop(key, None)
+            except Exception:
+                pass
+
+
+def _update_wandb_best_summary(wandb_run, best_rows: Dict[str, Optional[Dict[str, Any]]]) -> None:
+    if wandb_run is None:
+        return
+    payloads = {}
+    for target_prefix, source_prefix in (("best_train", "train"), ("best_validation", "validation")):
+        metrics = best_rows.get(target_prefix)
+        _clear_wandb_summary_prefix(wandb_run, target_prefix)
+        if metrics:
+            payloads.update(_prefix_best_metrics(metrics, source_prefix=source_prefix, target_prefix=target_prefix))
+    _update_wandb_summary(wandb_run, payloads)
+
+
 def _save_checkpoint(algo, checkpoint_dir: Path) -> Optional[Path]:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = None
@@ -1484,11 +1558,8 @@ def _consider_best_validation_checkpoint(
 
     state["validation_pass_index"] = int(state.get("validation_pass_index", 0)) + 1
     metric_name = str(state["metric_name"])
-    metric_value = validation_metrics.get(metric_name)
-    if not isinstance(metric_value, (int, float, np.integer, np.floating)) or isinstance(metric_value, bool):
-        return None
-    metric_value = float(metric_value)
-    if not np.isfinite(metric_value):
+    metric_value = _best_metric_value(validation_metrics, metric_name)
+    if metric_value is None:
         return None
 
     retained = list(state["retained"])
@@ -1890,6 +1961,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     latest_training_state: Dict[str, int] = {"env_step": 0, "episode_index": 0}
     validation_pass_state: Dict[str, int] = {"index": 0}
     last_validation_state: Dict[str, Any] = {"env_step": None, "episode_index": None, "row": None}
+    best_summary_rows: Dict[str, Optional[Dict[str, Any]]] = {"best_train": None, "best_validation": None}
     try:
         config = _build_algorithm_config(cfg, run_dir, algorithm_kind)
         build_algo = getattr(config, "build_algo", None)
@@ -1903,6 +1975,11 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
             latest_training_state["episode_index"] = max(
                 int(latest_training_state.get("episode_index", 0)),
                 int(_summary_episode_index_from_metrics(metrics) or 0),
+            )
+            best_summary_rows["best_train"] = _consider_best_metrics_row(
+                best_summary_rows.get("best_train"),
+                metrics,
+                metric_name="train/resco_delay_mean",
             )
             _log_outputs(wandb_run, csv_run, metrics, step=step)
 
@@ -1927,6 +2004,11 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
             episode_index = int(latest_training_state.get("episode_index", 0))
             validation_row = _validation_summary_row(evaluation_summary, step=step, episode_index=episode_index)
             validation_row["validation/pass_index"] = float(pass_index)
+            best_summary_rows["best_validation"] = _consider_best_metrics_row(
+                best_summary_rows.get("best_validation"),
+                validation_row,
+                metric_name="validation/resco_delay_mean",
+            )
             _log_outputs(wandb_run, csv_run, validation_row, step=step)
             _log_validation_action_plot_images(
                 wandb_run,
@@ -1989,6 +2071,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 print(f"[{algorithm_kind}] saved checkpoint to {checkpoint}")
         return final_summary
     finally:
+        _update_wandb_best_summary(wandb_run, best_summary_rows)
         if algo is not None and hasattr(algo, "stop"):
             algo.stop()
         ray.shutdown()
