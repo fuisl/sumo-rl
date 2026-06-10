@@ -22,10 +22,10 @@ experiment:
 resources:
   # Ray CPU resources are logical scheduler slots; native thread caps keep
   # Torch/NumPy/BLAS-style libraries from oversubscribing those slots.
-  # Set ray_address=auto to join a pre-started Ray head instead of starting a
-  # new local Ray instance for this process.
-  ray_address: null
-  ray_num_cpus: 2
+  # Join a pre-started Ray head by default so parallel jobs share one cluster.
+  # Override with ray_address=null for standalone local debugging.
+  ray_address: auto
+  ray_num_cpus: 16
   native_num_threads: 1
   # Physical CUDA device ids to expose to this run. With "1", the selected GPU
   # appears inside the process as local CUDA index 0.
@@ -35,6 +35,18 @@ algorithm:
   params:
     # Index within CUDA_VISIBLE_DEVICES for the local RLlib learner.
     local_gpu_idx: 0
+    # Keep RLlib sampling and learning inside Ray actors so shared Ray clusters
+    # can account for CPU/GPU use and avoid oversubscribing parallel jobs.
+    ray_num_gpus: auto
+    num_env_runners: 1
+    num_envs_per_env_runner: 1
+    num_cpus_per_env_runner: 1
+    num_gpus_per_env_runner: 0
+    num_learners: 1
+    num_cpus_per_learner: 1
+    # Fractional GPU lets multiple learner actors share the selected physical
+    # device when memory headroom is available. Override to 1 for exclusive use.
+    num_gpus_per_learner: 0.25
 
 env:
   factory: parallel_env

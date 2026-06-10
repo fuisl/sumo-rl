@@ -227,20 +227,34 @@ python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 exp
 python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
 ```
 
+Scenario-first RLlib presets are launched by keeping the config root at
+`configs/` and passing the preset path as the config name:
+
+```bash
+python experiments/rllib.py --config-name presets/resco_cologne8/fgs_mlp_gat_sac
+python experiments/rllib.py --config-name presets/resco_cologne8/sac_builtin
+```
+
 To manually restore a saved RLlib checkpoint and run the repo's current
 evaluation helper from a notebook, open
 `experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
 `CHECKPOINT_PATH`.
 
-RLlib runs default to a small local CPU budget: `resources.ray_num_cpus=2`
-advertises two logical CPUs to Ray, and `resources.native_num_threads=1` caps
-OpenMP/BLAS/Torch-style thread pools. To use more CPU, override these values on
-the command line, for example `resources.ray_num_cpus=8 resources.native_num_threads=2`.
-Standalone commands start and shut down their own local Ray instance. For a
-parallel sweep, start one shared Ray head first, for example
-`ray start --head --num-cpus=8 --num-gpus=1`, then launch jobs with
-`resources.ray_address=auto`; in that mode the head's resources come from
-`ray start`, not from `resources.ray_num_cpus` or `algorithm.params.ray_num_gpus`.
+RLlib runs default to `resources.ray_address=auto`, so start one shared Ray head
+first, for example
+`CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`, then
+launch one or more jobs. In this mode the head's resources come from `ray start`,
+not from `resources.ray_num_cpus` or `algorithm.params.ray_num_gpus`. For quick
+standalone local debugging, override with `resources.ray_address=null`; local
+runs default to a small CPU budget where `resources.ray_num_cpus=2` advertises
+two logical CPUs to Ray and `resources.native_num_threads=1` caps
+OpenMP/BLAS/Torch-style thread pools.
+The shared config creates one remote EnvRunner and one remote Learner by default
+so `ray status` reports resource use and Ray can queue jobs instead of silently
+oversubscribing the same GPU. The default learner reservation is fractional
+(`algorithm.params.num_gpus_per_learner=0.25`) so several runs can share the
+selected GPU when memory headroom is available; override it to `1` for exclusive
+GPU use.
 GPU selection should be pinned with `resources.cuda_visible_devices`; for example
 `resources.cuda_visible_devices=1` exposes physical GPU 1 as local CUDA index 0,
 so keep `algorithm.params.local_gpu_idx=0`.
