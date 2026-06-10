@@ -11,7 +11,7 @@ If you are onboarding to the codebase, read [docs/thesis/engineering_guide.md](e
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
 If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
 
-The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, and SAC.
+The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, FRAP, SAC, and DCRNN.
 
 ## Hydra
 Hydra is used as the experiment composition layer.
@@ -23,13 +23,15 @@ Hydra is used as the experiment composition layer.
 - A local metrics CSV is written to `outputs/<experiment-name>/<timestamp>/logs/metrics.csv` for quick debugging
 - Episode horizon is configured in seconds with `experiment.episode_seconds`. If you need the decision-step horizon, divide by `delta_time`; for example, `3600` seconds with `delta_time=5` is about `720` steps.
 - RLlib validation is episode-based by default with `experiment.validation_interval_episodes=5`; `logging.eval_freq` is only the step-based fallback when the episode interval is unset.
+- Training trace logging defaults to `logging.trace_mode=training`; switch to `logging.trace_mode=debug` to add RLlib learner, replay, return, and entropy diagnostics under `debug/*`.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
   - `resco_avg_delay` from SUMO tripinfo `timeLoss`
   - `resco_trip_time` from SUMO tripinfo `duration`
   - `resco_wait` from SUMO tripinfo `waitingTime`
   - `resco_queue` and `resco_max_queue` from the live queue metrics
-  - `efficiency_*` for queue, speed, waiting-time, and throughput aggregates
+  - `efficiency_*` for queue, speed, waiting-time, and throughput diagnostics in episode summaries and eval/final outputs
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
+  - the RLlib training trace keeps only the episode-facing throughput totals in `train/*`; the end-of-episode live snapshot diagnostics stay under `debug/*`
   - tripinfo XML is generated to compute metrics and deleted by default; set `logging.save_tripinfo_output=true` to keep the raw XML files under `outputs/<experiment-name>/<timestamp>/tripinfo/`
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup
@@ -48,13 +50,64 @@ Other common entrypoints:
 ```bash
 python experiments/static_max_pressure.py scenario=resco_cologne1
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
+python experiments/rllib.py algorithm=ppo_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
+python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=dqn_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
+python experiments/rllib.py algorithm=fgs scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
-python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_actor_mlp scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full_mlp scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 PPO and DQN default to independent policies. To switch to a shared policy, override
 `algorithm.params.policy_mode=shared` on the command line.
+
+`algorithm=ppo_dcrnn_mlp` keeps PPO on independent policies, but swaps the flat
+observation path for graph histories plus a shared MLP+DCRNN backbone with
+separate policy/value heads.
+
+FRAP is available as `algorithm=frap`. It is a DQN-family RLlib method whose
+custom RLModule replaces the Q-network with the paper's phase-competition
+architecture. The default model config consumes SUMO-RL's default observation as
+`[phase_one_hot, min_green, density, queue]` and treats `[density, queue]` as the
+per-movement demand vector by using the split density/queue layout.
+
+DQN+DCRNN is available as `algorithm=dqn_dcrnn`. It is a DQN-family RLlib
+method that wraps the PettingZoo parallel environment with graph observations
+shaped as `[history_len, num_nodes, density_queue_features]`, then replaces the
+Q-network with a diffusion-convolutional recurrent encoder. `algorithm=dcrnn`
+remains as a backward-compatible alias. The first version supports independent
+policies only; shared graph communication with existing models is a future
+extension.
+
+`algorithm=dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one
+node-wise MLP layer before the DCRNN stack.
+
+CoLight is available as `algorithm=colight`. It uses a shared graph-attention
+Q-network over the whole traffic-signal graph and forces
+`algorithm.params.policy_mode=shared`, because independent policies would remove
+the network-level cooperation that defines CoLight.
+The attention layer is implemented with PyTorch Geometric's `MessagePassing`
+API in the LibSignal CoLight style: RLlib observations remain plain dict
+tensors, while PyG handles self-loops and target-node-wise attention inside the
+model.
+CoLight also writes a SUMO map overlay of its directed topology to
+`topology/colight_topology.svg` plus a machine-readable edge list at
+`topology/colight_topology_edges.json` inside the run directory.
+For unstable CoLight curves, debug in this order: first confirm the exact same
+scenario files, seed, and episode length against fixed-time or max-pressure;
+then inspect reward scale, phase switching, observation scale, and the rendered
+neighbor graph. The default CoLight preset now uses a smaller learning rate,
+gradient clipping, slower epsilon decay, a larger replay buffer, and
+capacity-normalized lane-count observations. If you switch away from
+`diff-waiting-time`, prefer `normalized-queue` or `normalized-pressure` before
+using raw queue or pressure rewards.
 
 SAC now uses RLlib's native discrete-action support. The repo hands each traffic
 signal its own discrete action space through the multi-agent RLlib wrapper, and
@@ -65,11 +118,100 @@ path. If SAC fails, the issue is in the RLlib discrete SAC path or the env/polic
 setup, not in a custom continuous-action wrapper.
 
 `sac_builtin` should be treated as the reference RLlib SAC baseline.
-`sac_custom` uses the same trainer and replay setup, but replaces the RLModule
+`sac_mlp` uses the same trainer and replay setup, but replaces the RLModule
 boundary with project-owned actor, twin-critic, and communication hook points.
-Use `configs/algorithm/sac_custom.yaml` or command-line overrides under
+Use `configs/algorithm/sac_mlp.yaml` or command-line overrides under
 `algorithm.params.model_config` to change actor/critic MLP sizes or enable
-placeholder message-passing metadata for later GAT experiments.
+placeholder message-passing metadata for later GAT experiments. The older
+`sac_custom` name remains as an alias.
+
+`sac_dcrnn_actor` reuses the graph-observation wrapper from `dqn_dcrnn`, but
+applies the DCRNN encoder only to the SAC actor. The critics stay on the
+current MLP SAC path in v1. This variant supports independent policies only.
+
+`sac_dcrnn_actor_mlp` keeps the same actor-only graph layout, but inserts one
+node-wise MLP layer before the actor DCRNN encoder.
+
+`sac_dcrnn_full` uses the same graph-observation wrapper, but assigns separate
+DCRNN encoders to the SAC actor, `qf`, and `qf_twin` branches. The target
+critics stay on the normal SAC target-copy path rather than using separately
+configured target DCRNN stacks. This variant supports independent policies only.
+
+`sac_dcrnn_full_mlp` keeps the same full-graph DCRNN SAC layout, but inserts
+one node-wise MLP layer before each DCRNN encoder.
+
+FGS is available as `algorithm=fgs`. FGS stands for FRAP-GNN-SAC: it applies a
+FRAP-style local phase-competition encoder to each SUMO-RL default observation,
+passes the node embeddings through a CoLight-style GAT over a TLS graph, and
+trains a shared discrete SAC actor with centralized graph critics. The actor is
+decentralized at execution time because each agent selects one discrete phase
+from its ego graph embedding. During training, the default twin critics receive
+the full graph embedding plus replayed same-transition joint actions for the
+critic TD loss. Actor and target updates use current policy action distributions
+as a tractable expectation context, so FGS remains centralized during training
+without enumerating all joint actions.
+FGS defaults to the same PyTorch Geometric `MessagePassing` attention layer as
+CoLight, so the graph API is shared while the FRAP encoder and SAC heads remain
+FGS-specific. Set `algorithm.params.model_config.communication.type=gatv2` to
+swap that communication block for PyG's `GATv2Conv`; the Cologne8 presets
+include both FRAP+GATv2 and MLP+GATv2 ablations.
+
+FGS defaults to the existing `diff-waiting-time` reward. Its graph construction
+defaults to the TLS super-edge parser inspired by HMARL-TSC: it reads the SUMO
+`.net.xml`, follows legal road-edge transitions, connects each traffic light to
+the nearest downstream traffic light, and writes `topology/fgs_topology.svg`
+plus `topology/fgs_topology_edges.json` in the Hydra run directory.
+
+```mermaid
+flowchart TD
+    O["Per-TLS observation o_i^t<br/>phase one-hot, min_green, density, queue"]
+    F["FRAP local phase-competition encoder"]
+    E["Local embedding e_i^t"]
+    G["GAT over TLS topology"]
+    H["Neighbor-aware embedding h_i^t"]
+    A["Discrete SAC actor<br/>pi(a_i | h_i)"]
+    J["Replay joint action context<br/>A_all"]
+    C["Centralized twin critics<br/>Q_k(H_all, A_all, ego_i, a_i)"]
+    SUMO["SUMO step"]
+
+    O --> F --> E --> G --> H --> A --> SUMO
+    H --> C
+    A --> J --> C
+```
+
+```mermaid
+flowchart LR
+    subgraph Execution["Decentralized execution"]
+        OE["local + neighbor observations at t"]
+        AE["shared actor pi_theta"]
+        PE["phase action a_i"]
+        OE --> AE --> PE
+    end
+
+    subgraph Training["Centralized training"]
+        GT["full graph embeddings H_all"]
+        PT["joint action / policy context"]
+        QT["centralized twin critics"]
+        LT["discrete SAC losses"]
+        GT --> QT
+        PT --> QT
+        QT --> LT
+    end
+```
+
+For the intended smoke path, use the `marl` conda environment:
+
+```bash
+conda run -n marl python -m pytest tests/test_fgs.py tests/test_sac_discrete.py tests/test_frap.py tests/test_colight.py
+conda run -n marl python experiments/rllib.py algorithm=fgs scenario=single_intersection experiment.episodes=1 experiment.episode_seconds=60 logging=disabled
+```
+
+Method references: FRAP, "Learning Phase Competition for Traffic Signal
+Control" (arXiv:1905.04722); CoLight, "Learning Network-level Cooperation for
+Traffic Signal Control" (arXiv:1905.05717); SAC, "Soft Actor-Critic:
+Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor"
+(arXiv:1801.01290); and "Soft Actor-Critic for Discrete Action Settings"
+(arXiv:1910.07207).
 
 ## Weights & Biases
 Weights & Biases is used for experiment tracking.
@@ -96,4 +238,4 @@ pip install -e ".[rllib-custom]"
 - The existing environment and algorithm examples still run through the same underlying SUMO-RL code paths.
 - The RESCO summary log is the canonical run artifact for comparing against the benchmark formulas.
 - Run names now put the scenario first, for example `resco_grid4x4__fixed_time` or `resco_cologne1__static_max_pressure`.
-- Short smoke runs should watch the `train/` and `eval/` traces in addition to the episode-end summary rows.
+- Short smoke runs should watch the `train/` and `validation/` traces in addition to the episode-end summary rows.

@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
@@ -36,10 +37,44 @@ from .traffic_signal import TrafficSignal
 
 
 LIBSUMO = "LIBSUMO_AS_TRACI" in os.environ
+TRACI_START_RETRIES = 3
+TRACI_START_RETRY_DELAY_SECONDS = 0.5
 
 
 def _is_ghost_vehicle(vehicle_id: str) -> bool:
     return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
+
+
+def _env_var_truthy(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() not in {"", "0", "false", "no"}
+
+
+def default_use_libsumo() -> bool:
+    return _env_var_truthy(os.environ.get("LIBSUMO_AS_TRACI"))
+
+
+def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
+    last_error = None
+    for attempt in range(TRACI_START_RETRIES):
+        try:
+            if label is None:
+                traci.start(cmd)
+                return traci
+            traci.start(cmd, label=label)
+            return traci.getConnection(label)
+        except Exception as exc:
+            last_error = exc
+            if label is not None:
+                try:
+                    if hasattr(traci, "switch"):
+                        traci.switch(label)
+                        traci.close()
+                except Exception:
+                    pass
+            if attempt + 1 >= TRACI_START_RETRIES:
+                break
+            time.sleep(TRACI_START_RETRY_DELAY_SECONDS * (attempt + 1))
+    raise last_error
 
 
 def env(**kwargs):
@@ -79,6 +114,7 @@ class SumoEnvironment(gym.Env):
         single_agent (bool): If true, it behaves like a regular gym.Env. Else, it behaves like a MultiagentEnv (returns dict of observations, rewards, dones, infos).
         reward_fn (str/function/dict/List): String with the name of the reward function used by the agents, a reward function, dictionary with reward functions assigned to individual traffic lights by their keys, or a List of reward functions.
         reward_weights (List[float]/np.ndarray): Weights for linearly combining the reward functions, in case reward_fn is a list. If it is None, the reward returned will be a np.ndarray. Default: None
+        reward_penalty_lambda (float): Coefficient for penalty-based reward functions that subtract an extra queue-aware waiting-time penalty. Default: 0.1
         observation_class (ObservationFunction): Inherited class which has both the observation function and observation space.
         add_system_info (bool): If true, it computes system metrics (total queue, total waiting time, average speed) in the info dictionary.
         add_per_agent_info (bool): If true, it computes per-agent (per-traffic signal) metrics (average accumulated waiting time, average queue) in the info dictionary.
@@ -118,11 +154,13 @@ class SumoEnvironment(gym.Env):
         single_agent: bool = False,
         reward_fn: Union[str, Callable, dict, List] = "diff-waiting-time",
         reward_weights: Optional[List[float]] = None,
+        reward_penalty_lambda: float = 0.1,
         observation_class: type[ObservationFunction] = DefaultObservationFunction,
         add_system_info: bool = True,
         add_per_agent_info: bool = False,
         tripinfo_output_name: Optional[str] = None,
         keep_tripinfo_output: bool = False,
+        use_libsumo: Optional[bool] = None,
         sumo_seed: Union[str, int] = "random",
         ts_ids: Optional[List[str]] = None,
         fixed_ts: bool = False,
@@ -160,6 +198,7 @@ class SumoEnvironment(gym.Env):
         self.single_agent = single_agent
         self.reward_fn = reward_fn
         self.reward_weights = reward_weights
+        self.reward_penalty_lambda = float(reward_penalty_lambda)
         self.sumo_seed = sumo_seed
         if isinstance(self.sumo_seed, int):
             self.sumo_seed &= 0x7FFFFFFF  # Ensure 32 bit non-negative seed
@@ -170,6 +209,7 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.keep_tripinfo_output = keep_tripinfo_output
+        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo) or default_use_libsumo()
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
@@ -179,12 +219,13 @@ class SumoEnvironment(gym.Env):
         SumoEnvironment.CONNECTION_LABEL += 1
         self.sumo = None
 
-        if LIBSUMO:
-            traci.start([sumolib.checkBinary("sumo"), "-n", self._net])  # Start only to retrieve traffic light information
-            conn = traci
+        if self.use_libsumo:
+            conn = _start_traci_with_retries([sumolib.checkBinary("sumo"), "-n", self._net])
         else:
-            traci.start([sumolib.checkBinary("sumo"), "-n", self._net], label="init_connection" + self.label)
-            conn = traci.getConnection("init_connection" + self.label)
+            conn = _start_traci_with_retries(
+                [sumolib.checkBinary("sumo"), "-n", self._net],
+                label="init_connection" + self.label,
+            )
 
         if ts_ids is None:
             self.ts_ids = list(conn.trafficlight.getIDList())
@@ -206,6 +247,7 @@ class SumoEnvironment(gym.Env):
         self.observations = {ts: None for ts in self.ts_ids}
         self.rewards = {ts: None for ts in self.ts_ids}
         self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
+        self.episode_agent_reward_totals = {ts: 0.0 for ts in self.ts_ids}
 
     def _build_traffic_signals(self, conn):
         if not isinstance(self.reward_fn, dict):
@@ -223,12 +265,17 @@ class SumoEnvironment(gym.Env):
                 self.begin_time,
                 self.reward_fn[ts],
                 self.reward_weights,
+                self.reward_penalty_lambda,
                 conn,
             )
             for ts in self.ts_ids
         }
 
-    def _start_simulation(self):
+    @staticmethod
+    def _sumo_cmd_has_option(sumo_cmd: List[str], *options: str) -> bool:
+        return any(option in sumo_cmd for option in options)
+
+    def _build_sumo_cmd(self) -> List[str]:
         sumo_cmd = [
             self._sumo_binary,
             "-n",
@@ -243,7 +290,7 @@ class SumoEnvironment(gym.Env):
             str(self.time_to_teleport),
         ]
         if self.begin_time > 0:
-            sumo_cmd.append(f"-b {self.begin_time}")
+            sumo_cmd.extend(["-b", str(self.begin_time)])
         if self.sumo_seed == "random":
             sumo_cmd.append("--random")
         else:
@@ -252,14 +299,22 @@ class SumoEnvironment(gym.Env):
             sumo_cmd.append("--no-warnings")
         if self.additional_sumo_cmd is not None:
             sumo_cmd.extend(self.additional_sumo_cmd.split())
+        if not self._sumo_cmd_has_option(sumo_cmd, "-e", "--end"):
+            sumo_cmd.extend(["--end", str(self.sim_max_time)])
         tripinfo_output = self._build_tripinfo_output_path()
         if tripinfo_output is not None and "--tripinfo-output" not in sumo_cmd:
-            tripinfo_output.parent.mkdir(parents=True, exist_ok=True)
             sumo_cmd.extend(["--tripinfo-output", str(tripinfo_output)])
             if "--tripinfo-output.write-unfinished" not in sumo_cmd:
                 sumo_cmd.extend(["--tripinfo-output.write-unfinished", "true"])
             if "--tripinfo-output.write-undeparted" not in sumo_cmd:
                 sumo_cmd.extend(["--tripinfo-output.write-undeparted", "true"])
+        return sumo_cmd
+
+    def _start_simulation(self):
+        sumo_cmd = self._build_sumo_cmd()
+        tripinfo_output = self._build_tripinfo_output_path()
+        if tripinfo_output is not None and "--tripinfo-output" in sumo_cmd:
+            tripinfo_output.parent.mkdir(parents=True, exist_ok=True)
         if self.use_gui or self.render_mode is not None:
             sumo_cmd.extend(["--start", "--quit-on-end"])
             if self.render_mode == "rgb_array":
@@ -271,12 +326,10 @@ class SumoEnvironment(gym.Env):
                 self.disp.start()
                 print("Virtual display started.")
 
-        if LIBSUMO:
-            traci.start(sumo_cmd)
-            self.sumo = traci
+        if self.use_libsumo:
+            self.sumo = _start_traci_with_retries(sumo_cmd)
         else:
-            traci.start(sumo_cmd, label=self.label)
-            self.sumo = traci.getConnection(self.label)
+            self.sumo = _start_traci_with_retries(sumo_cmd, label=self.label)
 
         if self.use_gui or self.render_mode is not None:
             if "DEFAULT_VIEW" not in dir(traci.gui):  # traci.gui.DEFAULT_VIEW is not defined in libsumo
@@ -306,6 +359,7 @@ class SumoEnvironment(gym.Env):
         self.num_emergency_brakes = 0
         self.num_collisions = 0
         self.last_lane_waiting_times = {ts: [] for ts in self.ts_ids}
+        self.episode_agent_reward_totals = {ts: 0.0 for ts in self.ts_ids}
 
         if self.single_agent:
             return self._compute_observations()[self.ts_ids[0]], self._compute_info()
@@ -404,7 +458,14 @@ class SumoEnvironment(gym.Env):
                 if self.traffic_signals[ts].time_to_act or self.fixed_ts
             }
         )
-        return {ts: self.rewards[ts] for ts in self.rewards.keys() if self.traffic_signals[ts].time_to_act or self.fixed_ts}
+        active_rewards = {
+            ts: self.rewards[ts] for ts in self.rewards.keys() if self.traffic_signals[ts].time_to_act or self.fixed_ts
+        }
+        for ts, reward in active_rewards.items():
+            reward_value = self._reward_to_scalar(reward)
+            if reward_value is not None:
+                self.episode_agent_reward_totals[ts] = float(self.episode_agent_reward_totals.get(ts, 0.0)) + reward_value
+        return active_rewards
 
     @property
     def observation_space(self):
@@ -448,6 +509,9 @@ class SumoEnvironment(gym.Env):
 
     def _sumo_step(self):
         self.sumo.simulationStep()
+        if self.fixed_ts:
+            for traffic_signal in self.traffic_signals.values():
+                traffic_signal.sync_fixed_time_state()
         self.num_arrived_vehicles += self.sumo.simulation.getArrivedNumber()
         self.num_departed_vehicles += self.sumo.simulation.getDepartedNumber()
         self.num_teleported_vehicles += self.sumo.simulation.getEndingTeleportNumber()
@@ -528,9 +592,11 @@ class SumoEnvironment(gym.Env):
         if getattr(self, "sumo", None) is None:
             return
 
-        if not LIBSUMO:
+        if not self.use_libsumo and hasattr(traci, "switch"):
             traci.switch(self.label)
-        traci.close()
+            traci.close()
+        else:
+            self.sumo.close()
 
         if self.metrics and (
             not self.last_episode_summary
@@ -554,6 +620,24 @@ class SumoEnvironment(gym.Env):
         return Path(f"{self.tripinfo_output_name}_conn{self.label}_ep{self.episode}.xml")
 
     @staticmethod
+    def _reward_to_scalar(value) -> Optional[float]:
+        if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+            numeric_value = float(value)
+            if np.isfinite(numeric_value):
+                return numeric_value
+            return None
+        try:
+            array_value = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
+            return None
+        if array_value.size != 1:
+            return None
+        numeric_value = float(array_value.reshape(-1)[0])
+        if np.isfinite(numeric_value):
+            return numeric_value
+        return None
+
+    @staticmethod
     def _is_truthy_xml_value(value: Optional[str]) -> bool:
         return str(value).strip().lower() in {"1", "true", "yes"}
 
@@ -571,12 +655,20 @@ class SumoEnvironment(gym.Env):
             "tripinfo/std_time_loss": nan,
             "tripinfo/avg_delay": nan,
             "tripinfo/std_delay": nan,
+            "tripinfo/max_delay": nan,
+            "tripinfo/max_waiting_time": nan,
             "resco_avg_delay": nan,
             "resco_avg_delay_std": nan,
+            "resco_delay_mean": nan,
+            "resco_delay_max": nan,
+            "resco_delay_std": nan,
             "resco_trip_time": nan,
             "resco_trip_time_std": nan,
+            "resco_trip_time_mean": nan,
             "resco_wait": nan,
             "resco_wait_std": nan,
+            "resco_wait_mean": nan,
+            "resco_wait_max": nan,
             "resco_tripinfo_count": 0.0,
             "tripinfo/parse_success": 0.0,
             "tripinfo/parse_pending": 0.0,
@@ -621,10 +713,12 @@ class SumoEnvironment(gym.Env):
         total_count = finished_count + unfinished_count
         avg_delay = float(np.mean(delays)) if delays else nan
         std_delay = float(np.std(delays)) if delays else nan
+        max_delay = float(np.max(delays)) if delays else nan
         avg_trip_time = float(np.mean(trip_times)) if trip_times else nan
         std_trip_time = float(np.std(trip_times)) if trip_times else nan
         avg_wait = float(np.mean(waits)) if waits else nan
         std_wait = float(np.std(waits)) if waits else nan
+        max_wait = float(np.max(waits)) if waits else nan
         avg_time_loss = float(np.mean(time_losses)) if time_losses else nan
         std_time_loss = float(np.std(time_losses)) if time_losses else nan
         return {
@@ -639,18 +733,26 @@ class SumoEnvironment(gym.Env):
             "tripinfo/std_time_loss": std_time_loss,
             "tripinfo/avg_delay": avg_delay,
             "tripinfo/std_delay": std_delay,
+            "tripinfo/max_delay": max_delay,
+            "tripinfo/max_waiting_time": max_wait,
             "resco_avg_delay": avg_delay,
             "resco_avg_delay_std": std_delay,
+            "resco_delay_mean": avg_delay,
+            "resco_delay_max": max_delay,
+            "resco_delay_std": std_delay,
             "resco_trip_time": avg_trip_time,
             "resco_trip_time_std": std_trip_time,
+            "resco_trip_time_mean": avg_trip_time,
             "resco_wait": avg_wait,
             "resco_wait_std": std_wait,
+            "resco_wait_mean": avg_wait,
+            "resco_wait_max": max_wait,
             "resco_tripinfo_count": float(finished_count),
             "tripinfo/parse_success": 1.0,
             "tripinfo/parse_pending": 0.0,
         }
 
-    def _parse_queue_summary(self) -> dict:
+    def _build_resco_queue_summary(self) -> dict:
         if not self.metrics:
             return {"resco_queue": 0.0, "resco_max_queue": 0.0}
 
@@ -670,7 +772,30 @@ class SumoEnvironment(gym.Env):
         return {
             "resco_queue": float(np.mean(queue_values)) if queue_values else 0.0,
             "resco_max_queue": float(np.max(max_queue_values)) if max_queue_values else 0.0,
+            "resco_queue_mean": float(np.mean(queue_values)) if queue_values else 0.0,
+            "resco_queue_max": float(np.max(max_queue_values)) if max_queue_values else 0.0,
         }
+
+    def _build_episode_reward_summary(self) -> dict:
+        """Aggregate per-agent episode reward totals into the shared training trace."""
+
+        numeric_rewards = {
+            str(agent_id): float(value)
+            for agent_id, value in (self.episode_agent_reward_totals or {}).items()
+            if isinstance(value, (int, float, np.integer, np.floating)) and np.isfinite(float(value))
+        }
+        if not numeric_rewards:
+            return {}
+
+        reward_values = np.asarray(list(numeric_rewards.values()), dtype=float)
+        summary = {
+            "reward/mean": float(np.mean(reward_values)),
+            "reward/max": float(np.max(reward_values)),
+            "reward/std": float(np.std(reward_values)),
+        }
+        for agent_id, reward_value in numeric_rewards.items():
+            summary[f"reward/agent/{agent_id}"] = reward_value
+        return summary
 
     def _cache_episode_summary(self, summary: dict) -> None:
         episode_index = summary.get("episode/index")
@@ -722,7 +847,13 @@ class SumoEnvironment(gym.Env):
                         pass
             else:
                 summary["tripinfo/parse_pending"] = 1.0
-        summary.update(self._parse_queue_summary())
+        # Queue metrics summarize the whole episode from `self.metrics`, while
+        # the raw `system_*` values copied above are only the final live
+        # snapshot. Keeping both here lets the training row split them into
+        # episode-level `train/*` metrics and end-of-episode `debug/*`
+        # diagnostics without recomputing formulas in the runner.
+        summary.update(self._build_resco_queue_summary())
+        summary.update(self._build_episode_reward_summary())
         self.last_episode_summary = summary
         self._cache_episode_summary(summary)
         self.last_episode_final_info = last_info
@@ -799,19 +930,21 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
         self.env = SumoEnvironment(**self._kwargs)
         self.render_mode = self.env.render_mode
 
-        self.agents = self.env.ts_ids
-        self.possible_agents = self.env.ts_ids
+        self._refresh_agents_and_spaces()
         self._agent_selector = AgentSelector(self.agents)
         self.agent_selection = self._agent_selector.reset()
-        # spaces
-        self.action_spaces = {a: self.env.action_spaces(a) for a in self.agents}
-        self.observation_spaces = {a: self.env.observation_spaces(a) for a in self.agents}
 
         # dicts
         self.rewards = {a: 0 for a in self.agents}
         self.terminations = {a: False for a in self.agents}
         self.truncations = {a: False for a in self.agents}
         self.infos = {a: {} for a in self.agents}
+
+    def _refresh_agents_and_spaces(self) -> None:
+        self.agents = list(self.env.ts_ids)
+        self.possible_agents = list(self.env.ts_ids)
+        self.action_spaces = {a: self.env.action_spaces(a) for a in self.agents}
+        self.observation_spaces = {a: self.env.observation_spaces(a) for a in self.agents}
 
     def seed(self, seed=None):
         """Set the seed for the environment."""
@@ -820,6 +953,8 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         """Reset the environment."""
         self.env.reset(seed=seed, options=options)
+        self._refresh_agents_and_spaces()
+        self._agent_selector = AgentSelector(self.agents)
         self.agents = self.possible_agents[:]
         self.agent_selection = self._agent_selector.reset()
         self.rewards = {agent: 0 for agent in self.agents}

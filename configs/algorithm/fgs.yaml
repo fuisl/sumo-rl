@@ -1,0 +1,46 @@
+# @package _global_
+algorithm:
+  kind: fgs
+  params:
+    policy_mode: shared
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    alpha_lr: 0.0003
+    tau: 0.005
+    gamma: 0.95
+    grad_clip: 5.0
+    train_batch_size_per_learner: 256
+    replay_buffer_type: MultiAgentPrioritizedEpisodeReplayBuffer
+    replay_buffer_capacity: 100000
+    replay_buffer_alpha: 0.6
+    replay_buffer_beta: 0.4
+    num_steps_sampled_before_learning_starts: 2000
+    target_network_update_freq: 1
+    n_step: 1
+    twin_q: true
+    model_config:
+      architecture_tag: fgs_frap_gnn_sac
+      twin_q: true
+      local_encoder:
+        type: frap
+        output_dim: 128
+        frap:
+          demand_shape: 2
+          demand_layout: split
+          observation_has_phase: true
+          observation_has_min_green: true
+          conv_units: 32
+      communication:
+        enabled: true
+        type: gat
+        num_heads: 5
+        head_dim: 16
+        output_dim: 128
+      critic:
+        type: central_graph_joint_action
+        hidden_dims: [256, 256]
+        activation: relu
+      topology:
+        source: tls_super_edges
+        render: true
+      invalid_action_value: -1000000000.0

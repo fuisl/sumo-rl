@@ -14,8 +14,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from sumo_rl.experiments.metric_utils import (
     add_namespace_aliases as _metric_add_namespace_aliases,
-    build_namespaced_metrics as _metric_build_namespaced_metrics,
     keep_namespaced_metrics as _metric_keep_namespaced_metrics,
+    map_system_metrics_to_namespaces as _metric_map_system_metrics_to_namespaces,
     reward_formula_text as _metric_reward_formula_text,
 )
 
@@ -73,6 +73,24 @@ def _get_run_seeds(cfg: DictConfig) -> list[int]:
     total_runs = int(getattr(cfg.experiment, "runs", 1))
     base_seed = int(cfg.experiment.seed) if cfg.experiment.seed is not None else 0
     return [base_seed for _ in range(total_runs)]
+
+
+def _get_validation_run_seeds(cfg: DictConfig) -> list[int]:
+    explicit_eval_seeds = _as_plain_dict(getattr(cfg.experiment, "eval_seeds", None))
+    eval_episodes = int(getattr(cfg.experiment, "eval_episodes", 0) or 0)
+    if isinstance(explicit_eval_seeds, list) and explicit_eval_seeds:
+        seeds = [int(seed) for seed in explicit_eval_seeds]
+        return seeds[:eval_episodes] if eval_episodes > 0 else seeds
+
+    explicit_run_seeds = _as_plain_dict(getattr(cfg.experiment, "seeds", None))
+    if isinstance(explicit_run_seeds, list) and explicit_run_seeds:
+        seeds = [int(seed) for seed in explicit_run_seeds]
+        return seeds[:eval_episodes] if eval_episodes > 0 else seeds
+
+    total_runs = int(getattr(cfg.experiment, "runs", 1) or 1)
+    base_seed = int(cfg.experiment.seed) if cfg.experiment.seed is not None else 0
+    count = max(1, eval_episodes or total_runs)
+    return [base_seed + index for index in range(count)]
 
 
 def _get_log_every_seconds(cfg: DictConfig) -> int:
@@ -503,7 +521,13 @@ def _get_run_dir() -> Path:
     return Path("outputs") / f"run_{timestamp}"
 
 
-def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = None):
+def _init_wandb(
+    cfg: DictConfig,
+    run_dir: Path,
+    *,
+    run_name: Optional[str] = None,
+    include_final_metrics: bool = True,
+):
     logging_cfg = cfg.logging
     if not logging_cfg.enabled:
         return None
@@ -538,15 +562,25 @@ def _init_wandb(cfg: DictConfig, run_dir: Path, *, run_name: Optional[str] = Non
         reinit="finish_previous",
     )
     try:
-        run.define_metric("train/*", step_metric="train/env_step")
+        run.name = run_name
+    except Exception:
+        pass
+    try:
+        run.define_metric("train/*", step_metric="train/episode_index")
+        run.define_metric("debug/*", step_metric="train/episode_index")
+        run.define_metric("train/episode_index")
+        run.define_metric("train/rollout_index")
         run.define_metric("train/env_step")
-        run.define_metric("validation/*", step_metric="validation/env_step")
+        run.define_metric("validation/*", step_metric="validation/episode_index")
+        run.define_metric("validation/episode_index")
+        run.define_metric("validation/rollout_index")
         run.define_metric("validation/env_step")
-        run.define_metric("eval/*", step_metric="eval/episode")
-        run.define_metric("final/*", step_metric="eval/episode")
-        run.define_metric("tripinfo/*", step_metric="eval/episode")
-        run.define_metric("episode/*", step_metric="eval/episode")
-        run.define_metric("warnings/*", step_metric="eval/episode")
+        if include_final_metrics:
+            run.define_metric("eval/episode")
+            run.define_metric("final/*", step_metric="eval/episode")
+            run.define_metric("tripinfo/*", step_metric="eval/episode")
+            run.define_metric("episode/*", step_metric="eval/episode")
+            run.define_metric("warnings/*", step_metric="eval/episode")
     except Exception:
         pass
     return run
@@ -617,14 +651,21 @@ def _prepare_row_for_wandb(row: Dict[str, Any], logging_cfg, *, include_debug: b
     return prepared
 
 
-def _reward_formula_text(reward_fn: Any, reward_weights: Any = None) -> str:
-    return _metric_reward_formula_text(reward_fn, reward_weights)
+def _rllib_validation_helpers():
+    from sumo_rl.experiments import rllib_runner
+
+    return rllib_runner
+
+
+def _reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penalty_lambda: Any = None) -> str:
+    return _metric_reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda)
 
 
 def _reward_metadata_from_env(env) -> Dict[str, Any]:
     base_env = _get_base_env(env)
     reward_fn = getattr(base_env, "reward_fn", "diff-waiting-time")
     reward_weights = getattr(base_env, "reward_weights", None)
+    reward_penalty_lambda = getattr(base_env, "reward_penalty_lambda", None)
     reward_name = None
 
     if isinstance(reward_fn, list):
@@ -638,43 +679,10 @@ def _reward_metadata_from_env(env) -> Dict[str, Any]:
 
     return {
         "reward/name": reward_name,
-        "reward/formula": _reward_formula_text(reward_fn, reward_weights),
+        "reward/formula": _reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda),
         "reward/source": "sumo_rl.environment.traffic_signal.TrafficSignal.compute_reward",
         "reward/scope": "per-agent environment reward",
     }
-
-
-def _prefix_metric_keys(metrics: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-    return {f"{prefix}{key}": value for key, value in metrics.items()}
-
-
-def _add_namespace_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
-    return _metric_add_namespace_aliases(row)
-
-
-def _build_namespaced_metrics(info: Any, include_agent_metrics_local: bool = False) -> tuple[Dict[str, float], Dict[str, float]]:
-    del include_agent_metrics_local
-    return _metric_build_namespaced_metrics(info), {}
-
-
-def _log_resco_metrics(
-    wandb_run,
-    csv_run,
-    shared_metrics: Dict[str, Any],
-    info: Any,
-    step: Optional[int] = None,
-    include_agent_metrics_local: bool = False,
-) -> None:
-    del include_agent_metrics_local
-    namespaced_metrics, _ = _build_namespaced_metrics(info)
-    wandb_metrics = dict(shared_metrics)
-    wandb_metrics.update(namespaced_metrics)
-    csv_metrics = dict(wandb_metrics)
-
-    if wandb_run is not None:
-        wandb_run.log(wandb_metrics, step=step)
-    if csv_run is not None:
-        csv_run.log(csv_metrics, step=step)
 
 
 def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
@@ -691,7 +699,14 @@ def _log_outputs(wandb_run, csv_run, metrics: Dict[str, Any], step: Optional[int
                 log_step = int(candidate_step)
     if wandb_run is not None:
         has_custom_step_axis = any(
-            axis_key in metrics for axis_key in ("train/env_step", "validation/env_step", "eval/episode")
+            axis_key in metrics
+            for axis_key in (
+                "train/episode_index",
+                "train/env_step",
+                "validation/episode_index",
+                "validation/env_step",
+                "eval/episode",
+            )
         )
         if has_custom_step_axis:
             wandb_run.log(metrics)
@@ -859,6 +874,58 @@ def _aggregate_final_eval_rows(
     return aggregated
 
 
+def _copy_numeric_metric(row: Dict[str, Any], key: str, value: Any) -> None:
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+        row[key] = float(value)
+
+
+def _summary_value(summary: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in summary:
+            return summary[key]
+    return None
+
+
+def _validation_seed_metrics(episode_summary: Dict[str, Any]) -> Dict[str, Any]:
+    row: Dict[str, Any] = {}
+
+    reward_key_map = {
+        "validation/reward_mean": ("reward/mean",),
+        "validation/reward_max": ("reward/max",),
+        "validation/reward_std": ("reward/std",),
+    }
+    resco_key_map = {
+        "validation/resco_delay_mean": ("resco_delay_mean", "resco_avg_delay"),
+        "validation/resco_delay_max": ("resco_delay_max",),
+        "validation/resco_delay_std": ("resco_delay_std", "resco_avg_delay_std"),
+        "validation/resco_wait_mean": ("resco_wait_mean", "resco_wait"),
+        "validation/resco_wait_max": ("resco_wait_max",),
+        "validation/resco_wait_std": ("resco_wait_std",),
+        "validation/resco_trip_time_mean": ("resco_trip_time_mean", "resco_trip_time"),
+        "validation/resco_queue_mean": ("resco_queue_mean", "resco_queue"),
+        "validation/resco_queue_max": ("resco_queue_max", "resco_max_queue"),
+        "validation/resco_tripinfo_count": ("resco_tripinfo_count",),
+    }
+    for row_key, summary_keys in reward_key_map.items():
+        _copy_numeric_metric(row, row_key, _summary_value(episode_summary, *summary_keys))
+    for row_key, summary_keys in resco_key_map.items():
+        _copy_numeric_metric(row, row_key, _summary_value(episode_summary, *summary_keys))
+
+    namespaced_metrics = _metric_map_system_metrics_to_namespaces(
+        {key: value for key, value in episode_summary.items() if key.startswith("system_")}
+    )
+    for source_key in ("efficiency_total_arrived", "efficiency_total_departed"):
+        _copy_numeric_metric(row, f"validation/{source_key}", namespaced_metrics.get(source_key))
+    for source_key in (
+        "safety_total_teleported",
+        "safety_total_emergency_brake",
+        "safety_total_collisions",
+    ):
+        _copy_numeric_metric(row, f"validation/{source_key}", namespaced_metrics.get(source_key))
+
+    return row
+
+
 def _episode_index_from_summary(summary: Any) -> Optional[float]:
     if not isinstance(summary, dict):
         return None
@@ -944,7 +1011,9 @@ def _build_episode_summary_row(
     return row
 
 
-def _build_resco_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _build_episode_benchmark_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Build one episode-end benchmark row for CSV/W&B summary style outputs."""
+
     base_env = _get_base_env(env)
     summary = _get_completed_episode_summary(base_env)
     row = {
@@ -954,8 +1023,11 @@ def _build_resco_summary_row(env, extra: Optional[Dict[str, Any]] = None) -> Dic
         or key.startswith("tripinfo/")
         or key in {"sim_step", "episode/index", "episode/steps", "episode/sim_time_abs", "episode/elapsed_seconds"}
     }
-    namespaced_metrics, _ = _build_namespaced_metrics(_get_final_info(env), include_agent_metrics_local=False)
-    row.update(namespaced_metrics)
+    # The cached summary already contains episode-wide RESCO values. Pull the
+    # final `system_*` snapshot separately here so the benchmark row keeps the
+    # same efficiency/safety fields as evaluation and final summaries.
+    system_namespace_metrics = _metric_map_system_metrics_to_namespaces(_get_final_info(env))
+    row.update(system_namespace_metrics)
     row.update(_reward_metadata_from_env(base_env))
     if extra:
         row.update(extra)
@@ -983,31 +1055,30 @@ def _build_final_eval_summary_row(
         "episode/elapsed_seconds": float(summary.get("episode/elapsed_seconds", 0.0)),
     }
     reward_metadata = _reward_metadata_from_env(base_env)
-    traffic_metrics, _ = _build_namespaced_metrics(_get_final_info(base_env), include_agent_metrics_local=False)
+    traffic_metrics = _metric_map_system_metrics_to_namespaces(_get_final_info(base_env))
 
     if _logging_flag(logging_cfg, "log_final_traffic_metrics", True):
-        final_row.update(
-            {
-                "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
-                "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
-                "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
-                "final/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
-                "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
-                "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
-                "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
-                "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
-                "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
-                "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
-                "tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
-                "tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
-                "final/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
-                "final/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
-                "final/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
-                "final/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
-                "final/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
-                "final/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
-            }
-        )
+        eval_traffic_row = {
+            "final/resco/avg_delay": float(summary.get("resco_avg_delay", float("nan"))),
+            "final/resco/avg_delay_std": float(summary.get("resco_avg_delay_std", float("nan"))),
+            "final/resco/wait": float(summary.get("resco_wait", float("nan"))),
+            "final/resco/wait_std": float(summary.get("resco_wait_std", float("nan"))),
+            "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
+            "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
+            "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
+            "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
+            "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
+            "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),
+            "tripinfo/avg_waiting_time": float(summary.get("tripinfo/avg_waiting_time", float("nan"))),
+            "tripinfo/avg_time_loss": float(summary.get("tripinfo/avg_time_loss", float("nan"))),
+            "final/efficiency/total_arrived": float(traffic_metrics.get("efficiency_total_arrived", float("nan"))),
+            "final/efficiency/total_departed": float(traffic_metrics.get("efficiency_total_departed", float("nan"))),
+            "final/efficiency/total_running": float(traffic_metrics.get("efficiency_total_running", float("nan"))),
+            "final/safety/total_teleported": float(traffic_metrics.get("safety_total_teleported", float("nan"))),
+            "final/safety/total_emergency_brake": float(traffic_metrics.get("safety_total_emergency_brake", float("nan"))),
+            "final/safety/total_collisions": float(traffic_metrics.get("safety_total_collisions", float("nan"))),
+        }
+        final_row.update(eval_traffic_row)
 
     final_row["final/reward/name"] = reward_metadata["reward/name"]
     final_row["final/reward/formula"] = reward_metadata["reward/formula"]
@@ -1055,6 +1126,78 @@ def _build_final_eval_summary_row(
         )
         final_row["debug/final_summary_key_count"] = float(len(final_row) + 1)
     return final_row
+
+
+def _episode_steps_from_cfg(cfg: DictConfig) -> int:
+    episode_seconds = int(getattr(cfg.experiment, "episode_seconds", 1) or 1)
+    env_kwargs = getattr(getattr(cfg, "env", None), "kwargs", None)
+    delta_time = getattr(env_kwargs, "delta_time", None) if env_kwargs is not None else None
+    if delta_time is None and isinstance(env_kwargs, dict):
+        delta_time = env_kwargs.get("delta_time")
+    return max(1, episode_seconds // max(1, int(delta_time or 5)))
+
+
+def _baseline_line_max_episode_index(logging_cfg) -> Optional[int]:
+    if logging_cfg is None or not hasattr(logging_cfg, "baseline_line_max_episode_index"):
+        return None
+    value = getattr(logging_cfg, "baseline_line_max_episode_index")
+    if value in (None, "", 0, "0", False):
+        return None
+    return max(1, int(value))
+
+
+def _baseline_line_episode_stride(cfg: DictConfig) -> int:
+    logging_cfg = getattr(cfg, "logging", None)
+    explicit = getattr(logging_cfg, "baseline_line_episode_stride", None) if logging_cfg is not None else None
+    if explicit not in (None, "", 0, "0", False):
+        return max(1, int(explicit))
+    return 5
+
+
+def _emit_baseline_reference_validation_rows(
+    cfg: DictConfig,
+    wandb_run,
+    csv_run,
+    validation_row: Dict[str, Any],
+) -> None:
+    logging_cfg = getattr(cfg, "logging", None)
+    max_episode_index = _baseline_line_max_episode_index(logging_cfg)
+    if max_episode_index is None:
+        return
+
+    stride = _baseline_line_episode_stride(cfg)
+    steps_per_episode = _episode_steps_from_cfg(cfg)
+    for episode_index in range(stride, max_episode_index + 1, stride):
+        row = dict(validation_row)
+        row["validation/rollout_index"] = float(episode_index)
+        row["validation/episode_index"] = float(episode_index)
+        row["validation/env_step"] = float(episode_index * steps_per_episode)
+        row["validation/reference_line"] = True
+        _log_outputs(wandb_run, csv_run, row, step=episode_index * steps_per_episode)
+
+
+def _static_validation_summary_row(
+    summary: Dict[str, Any],
+    *,
+    step: int,
+    episode_index: int,
+    policy_name: str,
+    pass_index: int,
+) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        "algorithm/kind": summary.get("algorithm/kind"),
+        "static/policy": policy_name,
+        "validation/env_step": float(step),
+        "validation/rollout_index": float(episode_index),
+        "validation/episode_index": float(episode_index),
+        "validation/pass_index": float(pass_index),
+    }
+    for key, value in summary.items():
+        if key.startswith("validation/"):
+            row[key] = value
+        elif key.startswith("warnings/"):
+            row[f"validation/{key}"] = value
+    return row
 
 
 def _update_wandb_summary(wandb_run, metrics: Dict[str, Any]) -> None:
@@ -1146,6 +1289,231 @@ def _aggregate_numeric_row_values(rows: list[Dict[str, Any]], prefix: str = "sum
     return summary
 
 
+def _episode_reward_total(base_env: Any) -> float:
+    totals = getattr(base_env, "episode_agent_reward_totals", {}) or {}
+    values = [
+        float(value)
+        for value in totals.values()
+        if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
+    ]
+    return float(np.sum(values)) if values else 0.0
+
+
+def _action_space_size_for_static_signal(base_env: Any, agent_id: str) -> int:
+    action_space_fn = getattr(base_env, "action_spaces", None)
+    if callable(action_space_fn):
+        try:
+            space = action_space_fn(agent_id)
+        except TypeError:
+            space = action_space_fn()
+        if hasattr(space, "n"):
+            return max(0, int(space.n))
+    traffic_signal = getattr(base_env, "traffic_signals", {}).get(agent_id)
+    green_phases = getattr(traffic_signal, "green_phases", None) if traffic_signal is not None else None
+    if isinstance(green_phases, list):
+        return max(0, len(green_phases))
+    return 0
+
+
+def _fixed_time_step_action(env, base_env: Any, agent_ids: list[str]) -> Any:
+    candidates = [env, getattr(env, "unwrapped", None), base_env]
+    expects_mapping = any(
+        candidate is not None and (hasattr(candidate, "possible_agents") or hasattr(candidate, "agents"))
+        for candidate in candidates
+    )
+    if not expects_mapping:
+        return None
+    return {
+        agent_id: int(getattr(base_env.traffic_signals[agent_id], "green_phase", 0) or 0) for agent_id in agent_ids
+    }
+
+
+def _run_static_validation_episode_trace(env, *, policy=None):
+    base_env = _get_base_env(env)
+    validation_helpers = _rllib_validation_helpers()
+    agent_ids = [str(agent_id) for agent_id in getattr(base_env, "ts_ids", [])]
+    action_traces = {agent_id: [] for agent_id in agent_ids}
+    action_space_sizes = {
+        agent_id: _action_space_size_for_static_signal(base_env, agent_id) for agent_id in agent_ids
+    }
+    phase_queue_traces = {agent_id: [] for agent_id in agent_ids}
+    tripinfo_path = validation_helpers._validation_tripinfo_output_path(env)
+    has_keep_tripinfo_output = hasattr(base_env, "keep_tripinfo_output")
+    original_keep_tripinfo_output = getattr(base_env, "keep_tripinfo_output", None)
+    if has_keep_tripinfo_output:
+        base_env.keep_tripinfo_output = True
+
+    try:
+        reset_result = env.reset()
+        if isinstance(reset_result, tuple):
+            _obs = reset_result[0]
+        done = False
+        while not done:
+            if policy is None:
+                next_step = env.step(_fixed_time_step_action(env, base_env, agent_ids))
+                actions = {
+                    agent_id: int(getattr(base_env.traffic_signals[agent_id], "green_phase", 0) or 0)
+                    for agent_id in agent_ids
+                }
+            else:
+                actions = {agent_id: policy.select_action(base_env.traffic_signals[agent_id]) for agent_id in agent_ids}
+                next_step = env.step(actions)
+
+            for agent_id, action in actions.items():
+                action_traces[agent_id].append(int(action))
+
+            if len(next_step) == 5:
+                _obs, _reward, terminated, truncated, _info = next_step
+                if isinstance(terminated, dict):
+                    done = bool(terminated.get("__all__", False) or truncated.get("__all__", False))
+                else:
+                    done = bool(terminated or truncated)
+            else:
+                _obs, _reward, dones, _info = next_step
+                done = bool(dones["__all__"])
+
+            phase_queue_snapshot = validation_helpers._collect_phase_queue_snapshot(env, agent_ids)
+            for agent_id, agent_snapshot in phase_queue_snapshot.items():
+                phase_queue_traces[agent_id].append(
+                    {
+                        "step": float(len(phase_queue_traces[agent_id]) + 1),
+                        "active_phase": int(agent_snapshot["active_phase"]),
+                        "phase_queues": [int(value) for value in agent_snapshot["phase_queues"]],
+                    }
+                )
+    finally:
+        try:
+            env.close()
+        finally:
+            if has_keep_tripinfo_output:
+                base_env.keep_tripinfo_output = original_keep_tripinfo_output
+
+    episode_summary = _get_completed_episode_summary(env)
+    return (
+        base_env,
+        _episode_reward_total(base_env),
+        episode_summary,
+        action_traces,
+        action_space_sizes,
+        phase_queue_traces,
+        tripinfo_path,
+    )
+
+
+def _run_validation_only_static_baseline(
+    cfg: DictConfig,
+    run_dir: Path,
+    wandb_run,
+    csv_run,
+    *,
+    algorithm_kind: str,
+    policy_name: str,
+    policy=None,
+) -> None:
+    validation_helpers = _rllib_validation_helpers()
+    seeds = _get_validation_run_seeds(cfg)
+    csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
+    seed_rows: list[Dict[str, Any]] = []
+    seed_action_traces = []
+    seed_action_space_sizes = []
+    seed_phase_queue_traces = []
+    seed_artifacts = []
+
+    for seed_index, seed in enumerate(seeds):
+        env = _build_env(cfg, run_dir, seed=seed)
+        (
+            base_env,
+            episode_reward,
+            episode_summary,
+            action_traces,
+            action_space_sizes,
+            phase_queue_traces,
+            tripinfo_path,
+        ) = _run_static_validation_episode_trace(env, policy=policy)
+        save_env = base_env if hasattr(base_env, "save_csv") else env
+        save_env.save_csv(str(csv_prefix), seed_index + 1)
+
+        seed_row = _build_final_eval_summary_row(
+            base_env,
+            algorithm_kind=algorithm_kind,
+            eval_mean_reward=episode_reward,
+            eval_std_reward=0.0,
+            eval_episodes=1,
+            logging_cfg=cfg.logging,
+        )
+        seed_row.update(_validation_seed_metrics(episode_summary))
+        seed_rows.append(seed_row)
+        seed_action_traces.append(action_traces)
+        seed_action_space_sizes.append(action_space_sizes)
+        seed_phase_queue_traces.append(phase_queue_traces)
+        seed_artifacts.append(
+            validation_helpers._extract_validation_seed_artifacts(
+                seed=seed,
+                tripinfo_path=tripinfo_path,
+                episode_summary=episode_summary,
+                action_traces=action_traces,
+                action_space_sizes=action_space_sizes,
+                phase_queue_traces=phase_queue_traces,
+                remove_tripinfo_after_parse=not bool(getattr(cfg.logging, "save_tripinfo_output", False)),
+            )
+        )
+
+    eval_mean_reward = float(np.mean([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
+    eval_std_reward = float(np.std([row["final/eval/mean_reward"] for row in seed_rows])) if seed_rows else 0.0
+    summary = _aggregate_final_eval_rows(
+        seed_rows,
+        algorithm_kind=algorithm_kind,
+        eval_mean_reward=eval_mean_reward,
+        eval_std_reward=eval_std_reward,
+        eval_episodes=len(seeds),
+    )
+    action_plot_rows_by_agent = validation_helpers._build_validation_action_plot_rows(
+        seed_action_traces,
+        seed_action_space_sizes,
+        window_size=validation_helpers._validation_action_window_steps(cfg),
+        max_agents=validation_helpers._validation_action_plot_max_agents(cfg.logging),
+    )
+    action_timeline_by_agent = validation_helpers._build_validation_action_timeline_rows(
+        seed_action_traces,
+        seed_action_space_sizes,
+        max_agents=validation_helpers._validation_action_plot_max_agents(cfg.logging),
+    )
+    phase_queue_rows_by_agent = validation_helpers._build_validation_phase_queue_rows(
+        seed_phase_queue_traces,
+        max_agents=validation_helpers._validation_action_plot_max_agents(cfg.logging),
+    )
+    tripinfo_distributions = validation_helpers._aggregate_validation_tripinfo_distributions(seed_artifacts)
+
+    stride = _baseline_line_episode_stride(cfg)
+    template_validation_row = _static_validation_summary_row(
+        summary,
+        step=stride * _episode_steps_from_cfg(cfg),
+        episode_index=stride,
+        policy_name=policy_name,
+        pass_index=1,
+    )
+    _emit_baseline_reference_validation_rows(cfg, wandb_run, csv_run, template_validation_row)
+    validation_helpers._log_validation_action_plot_images(
+        wandb_run,
+        action_plot_rows_by_agent,
+        action_timeline_by_agent,
+        phase_queue_rows_by_agent,
+        pass_index=1,
+        env_step=int(template_validation_row["validation/env_step"]),
+        episode_index=int(template_validation_row["validation/episode_index"]),
+        decision_seconds=validation_helpers.decision_interval_seconds(cfg),
+    )
+    validation_helpers._log_validation_tripinfo_distribution_images(
+        wandb_run,
+        tripinfo_distributions,
+        pass_index=1,
+        env_step=int(template_validation_row["validation/env_step"]),
+        episode_index=int(template_validation_row["validation/episode_index"]),
+    )
+    if wandb_run is not None:
+        _update_wandb_summary(wandb_run, template_validation_row)
+
+
 def _build_ql_agents_direct(env, cfg: DictConfig, initial_states: Dict[str, Any]):
     from sumo_rl.agents import QLAgent
     from sumo_rl.exploration import EpsilonGreedy
@@ -1212,7 +1580,9 @@ def _run_direct_q_learning(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -
 
             for episode_idx in range(1, total_episodes + 1):
                 if episode_idx > 1:
-                    previous_summary = _build_resco_summary_row(env, extra={"episode/reward": previous_episode_reward})
+                    previous_summary = _build_episode_benchmark_summary_row(
+                        env, extra={"episode/reward": previous_episode_reward}
+                    )
                     previous_summary["train/episode_reward"] = previous_episode_reward
                     previous_summary["train/td_error_mean"] = previous_td_error_mean
                     previous_summary["train/td_error_abs_mean"] = previous_td_error_abs_mean
@@ -1305,7 +1675,9 @@ def _run_aec_q_learning(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> N
 
             for episode_idx in range(1, total_episodes + 1):
                 if episode_idx > 1:
-                    previous_summary = _build_resco_summary_row(env, extra={"episode/reward": previous_episode_reward})
+                    previous_summary = _build_episode_benchmark_summary_row(
+                        env, extra={"episode/reward": previous_episode_reward}
+                    )
                     previous_summary["train/episode_reward"] = previous_episode_reward
                     previous_summary["train/td_error_mean"] = previous_td_error_mean
                     previous_summary["train/td_error_abs_mean"] = previous_td_error_abs_mean
@@ -1381,142 +1753,32 @@ def _run_aec_q_learning(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> N
 
 
 def _run_fixed_time(cfg: DictConfig, run_dir: Path, wandb_run, csv_run) -> None:
-    csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
-    total_episodes = int(cfg.experiment.episodes)
-    seeds = _get_run_seeds(cfg)
-    run_metrics: list[Dict[str, Any]] = []
-    final_step = 0
-
-    for run_idx, seed in enumerate(seeds, start=1):
-        env = _build_env(cfg, run_dir, seed=seed)
-        try:
-            for episode_idx in range(1, total_episodes + 1):
-                base_env = _get_base_env(env)
-                if hasattr(env, "agent_iter"):
-                    env.reset(seed=seed)
-                    for agent in env.agent_iter():
-                        _obs, _reward, terminated, truncated, _info = env.last()
-                        done = bool(terminated or truncated)
-                        action = None if done else env.action_space(agent).sample()
-                        env.step(action)
-                else:
-                    reset_result = env.reset(seed=seed)
-                    if isinstance(reset_result, tuple):
-                        _obs, _info = reset_result
-                    done = False
-                    while not done:
-                        actions = {ts_id: base_env.action_spaces(ts_id).sample() for ts_id in base_env.ts_ids}
-                        next_step = env.step(actions)
-                        if len(next_step) == 5:
-                            _obs, reward, terminated, truncated, info = next_step
-                            done = bool(terminated or truncated)
-                        else:
-                            _obs, reward, dones, info = next_step
-                            done = bool(dones["__all__"])
-                save_env = base_env if hasattr(base_env, "save_csv") else env
-                save_env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
-                if episode_idx == total_episodes:
-                    last_step = _get_env_step(base_env)
-                    final_step = max(final_step, last_step)
-                    save_env.close()
-                    episode_summary = _build_resco_summary_row(base_env, extra={"static/policy": "fixed_time"})
-                    row_step = run_idx
-                    _log_episode_summary(
-                        wandb_run,
-                        csv_run,
-                        episode_summary,
-                        step=row_step,
-                        logging_cfg=cfg.logging,
-                    )
-                    run_metrics.append(episode_summary)
-        finally:
-            env.close()
-
-    wandb_summary = _aggregate_numeric_row_values(run_metrics)
-    csv_summary = _aggregate_numeric_row_values(run_metrics)
-    wandb_summary["static/policy"] = "fixed_time"
-    csv_summary["static/policy"] = "fixed_time"
-    if wandb_run is not None:
-        wandb_run.log(wandb_summary, step=final_step or None)
-        _update_wandb_summary(wandb_run, wandb_summary)
-    if csv_run is not None:
-        csv_run.log(csv_summary, step=final_step or None)
+    _run_validation_only_static_baseline(
+        cfg,
+        run_dir,
+        wandb_run,
+        csv_run,
+        algorithm_kind="fixed_time",
+        policy_name="fixed_time",
+        policy=None,
+    )
 
 
 def _run_static_policy(cfg: DictConfig, run_dir: Path, wandb_run, csv_run, policy_name: str) -> None:
-    from sumo_rl.agents.static import GreedyPolicy, MaxPressurePolicy
+    from sumo_rl.agents.static import MaxPressurePolicy
 
-    policy = MaxPressurePolicy() if policy_name == "max_pressure" else GreedyPolicy()
-    seeds = _get_run_seeds(cfg)
-    total_episodes = int(cfg.experiment.episodes)
-    csv_prefix = Path(_prepare_env_kwargs(cfg, run_dir)["out_csv_name"])
-    run_metrics: list[Dict[str, Any]] = []
-    final_step = 0
-
-    for run_idx, seed in enumerate(seeds, start=1):
-        env = _build_env(cfg, run_dir, seed=seed)
-        try:
-            for episode_idx in range(1, total_episodes + 1):
-                reset_result = env.reset(seed=seed)
-                if isinstance(reset_result, tuple):
-                    _obs = reset_result[0]
-
-                base_env = _get_base_env(env)
-                if hasattr(env, "agent_iter"):
-                    done = {"__all__": False}
-                    info: Dict[str, Any] = {}
-
-                    while not done["__all__"]:
-                        actions = {
-                            ts_id: policy.select_action(base_env.traffic_signals[ts_id]) for ts_id in base_env.ts_ids
-                        }
-                        _, reward, done, info = env.step(action=actions)
-                else:
-                    done = False
-                    while not done:
-                        actions = {
-                            ts_id: policy.select_action(base_env.traffic_signals[ts_id]) for ts_id in base_env.ts_ids
-                        }
-                        next_step = env.step(actions)
-                        if len(next_step) == 5:
-                            _obs, reward, terminated, truncated, info = next_step
-                            if isinstance(terminated, dict):
-                                terminated_all = bool(terminated.get("__all__", False))
-                                truncated_all = bool(truncated.get("__all__", False))
-                                done = terminated_all or truncated_all
-                            else:
-                                done = bool(terminated or truncated)
-                        else:
-                            _obs, reward, dones, info = next_step
-                            done = bool(dones["__all__"])
-                save_env = base_env if hasattr(base_env, "save_csv") else env
-                save_env.save_csv(str(csv_prefix), (run_idx - 1) * total_episodes + episode_idx)
-                if episode_idx == total_episodes:
-                    last_step = _get_env_step(base_env)
-                    final_step = max(final_step, last_step)
-                    save_env.close()
-                    episode_summary = _build_resco_summary_row(base_env, extra={"static/policy": policy_name})
-                    row_step = run_idx
-                    _log_episode_summary(
-                        wandb_run,
-                        csv_run,
-                        episode_summary,
-                        step=row_step,
-                        logging_cfg=cfg.logging,
-                    )
-                    run_metrics.append(episode_summary)
-        finally:
-            env.close()
-
-    wandb_summary = _aggregate_numeric_row_values(run_metrics)
-    csv_summary = _aggregate_numeric_row_values(run_metrics)
-    wandb_summary["static/policy"] = policy_name
-    csv_summary["static/policy"] = policy_name
-    if wandb_run is not None:
-        wandb_run.log(wandb_summary, step=final_step or None)
-        _update_wandb_summary(wandb_run, wandb_summary)
-    if csv_run is not None:
-        csv_run.log(csv_summary, step=final_step or None)
+    if policy_name != "max_pressure":
+        raise ValueError(f"Unsupported static policy: {policy_name}")
+    policy = MaxPressurePolicy()
+    _run_validation_only_static_baseline(
+        cfg,
+        run_dir,
+        wandb_run,
+        csv_run,
+        algorithm_kind="static_max_pressure",
+        policy_name=policy_name,
+        policy=policy,
+    )
 
 
 def run(cfg: DictConfig) -> None:
@@ -1528,7 +1790,8 @@ def run(cfg: DictConfig) -> None:
 
     algorithm_kind = cfg.algorithm.kind
 
-    wandb_run = _init_wandb(cfg, run_dir)
+    include_final_metrics = algorithm_kind not in {"fixed_time", "static_max_pressure"}
+    wandb_run = _init_wandb(cfg, run_dir, include_final_metrics=include_final_metrics)
     csv_run = _LocalMetricsCsvLogger(run_dir / "logs" / "metrics.csv")
     try:
         if algorithm_kind == "fixed_time":

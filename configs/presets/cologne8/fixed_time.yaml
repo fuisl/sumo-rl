@@ -1,0 +1,4 @@
+# @package _global_
+defaults:
+  - /presets/resco_cologne8/fixed_time
+  - _self_

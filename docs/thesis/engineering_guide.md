@@ -160,7 +160,7 @@ At episode end, `finalize_episode_summary()` builds the benchmark summary from:
 
 The runner then converts that cached episode state into the final summary row with:
 
-- `_build_resco_summary_row(...)`
+- `_build_episode_benchmark_summary_row(...)`
 
 ### W&B and CSV
 
@@ -185,7 +185,7 @@ This is the simplest path.
 
 Use this path as the easiest reference when learning the codebase.
 
-### DQN and PPO through RLlib
+### DQN, FRAP, and PPO through RLlib
 
 These methods use the PettingZoo parallel env and then hand it to RLlib as a shared-policy multi-agent environment.
 In the current thesis config, PPO and DQN default to independent policies, so each
@@ -205,6 +205,8 @@ Key files:
 - `sumo_rl/experiments/rllib_runner.py`
 - `sumo_rl/agents/ppo/ppo.py`
 - `sumo_rl/agents/dqn/dqn.py`
+- `sumo_rl/agents/frap/frap.py`
+- `sumo_rl/agents/frap/model.py`
 - `sumo_rl/agents/rllib_common.py`
 
 The algorithm modules log training metrics:
@@ -212,7 +214,7 @@ The algorithm modules log training metrics:
 - `train/*`
 - training uses `experiment.episodes` as the episode budget
 - training rows use completed training episodes as the W&B/CSV step axis and are emitted every episode by default via `logging.train_log_freq_episodes=1`
-- `train/resco/*` is emitted on the same episode cadence as the rest of the training trace
+- shared `train/*` metrics, `debug/reward/<agent_id>`, and any retained `debug/*` episode-end diagnostics all follow that same episode cadence
 
 The runner keeps validation and benchmark metrics shared:
 
@@ -225,6 +227,20 @@ For thesis-style runs, evaluation should use a reproducible seed schedule rather
 The final benchmark row is not created by the callback.
 It is created by the runner after a dedicated final evaluation pass.
 
+### FRAP through RLlib
+
+FRAP is implemented as a DQN-family algorithm under `sumo_rl/agents/frap/`.
+RLlib owns replay, target-network updates, epsilon-greedy exploration, and
+multi-agent policy mapping. The project-owned part is the Q-function: it embeds
+the current phase and movement demand, builds phase-pair embeddings, applies the
+competition mask, and sums pairwise competition scores into one Q-value per
+action.
+
+The default Hydra config is `configs/algorithm/frap.yaml`. If a road network's
+movement order differs from the built-in FRAP defaults, set
+`algorithm.params.model_config.phase_pairs` in the scenario or launch override
+so the phase-pair list matches the observation's lane-demand order.
+
 ### SAC through RLlib
 
 RLlib SAC now runs natively on the repo's discrete traffic-light action spaces.
@@ -234,7 +250,7 @@ DQN, and the SAC module owns SAC-specific config and training metrics.
 
 ### Custom SAC module
 
-`sac_builtin` is the reference RLlib SAC baseline. `sac_custom` keeps the same
+`sac_builtin` is the reference RLlib SAC baseline. `sac_mlp` keeps the same
 native discrete multi-agent SAC setup, but swaps in project-owned single-agent
 and multi-agent RLModule boundaries.
 
@@ -246,7 +262,7 @@ This is the right place to change:
 - future GAT or message-passing blocks among agents
 
 The custom path is configured through `algorithm.params.model_config` in
-`configs/algorithm/sac_custom.yaml`. Actor and critic MLP sizes, head sizes,
+`configs/algorithm/sac_mlp.yaml`. Actor and critic MLP sizes, head sizes,
 the `twin_q` setting, and the communication hook metadata are exposed there.
 Training still uses RLlib's SAC learner, replay buffer, target updates, and
 optimizer ownership; the repo only owns the module architecture boundary.
@@ -314,7 +330,7 @@ Use this recipe if the library can already consume a Gym, VecEnv, or PettingZoo-
 4. Add an algorithm module under `sumo_rl/agents/<algorithm>/`.
 5. Keep algorithm-specific training metrics inside that module.
 6. Register the module in `sumo_rl/experiments/rllib_runner.py` if it is an RLlib method.
-7. Reuse `_build_resco_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
+7. Reuse `_build_episode_benchmark_summary_row(...)` and `_log_episode_summary(...)` for the final benchmark row.
 8. Make sure the method logs final summaries from the completed episode cache, not from the post-reset env state.
 9. Add the launcher script.
 10. Add the algorithm config.
@@ -335,7 +351,7 @@ Use this recipe if the model should stay in its original repository.
 3. Export one normalized summary artifact from the external run.
 4. Convert that artifact into the shared thesis row shape.
 5. Copy the raw upstream logs into the Hydra run directory for auditability.
-6. Log one per-seed row and one final aggregate row if the run is seed-based.
+6. Log one per-seed row and one final aggregate row if the run is seed-based, unless the method intentionally exposes only a validation-style aggregate trace like the static baselines.
 7. Document clearly which metrics are native upstream fields and which are thesis-side proxies.
 
 Good fit for this path:
@@ -358,7 +374,7 @@ Confirm all of the following:
 2. `efficiency_*` and `safety_*` are present when the env logged system info.
 3. the final W&B summary matches the final CSV summary row
 4. the reward curves and the benchmark metrics tell a consistent story
-5. multi-seed methods keep one per-seed row plus one final aggregate row
+5. multi-seed methods either keep one per-seed row plus one final aggregate row, or clearly document a validation-only aggregate surface
 
 If the final summary row is zero again, debug in this order:
 

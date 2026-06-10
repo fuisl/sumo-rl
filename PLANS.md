@@ -22,11 +22,26 @@ This project will be organized in phases so the thesis work stays incremental an
 
 ### Phase 4: Benchmark Comparison Cleanup
 - Status: in progress; the logging path is in place, but the benchmark audit and comparison write-up still need to be finished.
-- Compare the handwritten max-pressure and greedy baselines against RESCO's benchmark definitions.
+- Compare the handwritten max-pressure baseline against RESCO's benchmark definitions.
 - Keep the RESCO comparison fields documented and easy to verify against the raw tripinfo XML.
 - Keep W&B and CSV schemas narrow for benchmark runs, while preserving enough system metrics for debugging.
 - Add a short benchmark comparison note or table that states which fields are canonical for thesis reporting and how they map to the raw RESCO tripinfo values.
-- Verify the max-pressure and greedy presets still produce the intended five-seed summary behavior on the RESCO scenarios.
+- Verify the max-pressure presets still produce the intended five-seed summary behavior on the RESCO scenarios.
+
+### Phase 5: Runner-Native Graph Models
+- Status: initial DCRNN path implemented; runtime smoke tests still depend on SUMO, Ray/RLlib, and PyTorch.
+- Add reusable traffic-signal graph topology and density/queue graph observation utilities.
+- Add a graph-observation wrapper for RLlib runners without changing existing PPO, DQN, FRAP, SAC, or static paths.
+- Add the first graph algorithm as `algorithm=dqn_dcrnn`, using a DCRNN Q-network through the current runner, W&B, CSV, evaluation, and checkpoint flow.
+- Keep v1 restricted to independent policies; shared graph data passing into current models is a future extension.
+
+### Phase 5: FGS FRAP-GNN-SAC
+- Status: implemented as a project-owned, third-party-inspired RLlib integration.
+- FGS combines FRAP-style local phase competition, CoLight-style GAT communication, and discrete SAC.
+- It is not a handwritten baseline; it is a modular learning method whose components can be ablated through Hydra config.
+- The v1 critic defaults to a joint-action CTDE form over graph embeddings and same-transition joint action context, while execution remains decentralized through a shared policy.
+- The default reward remains SUMO-RL's existing `diff-waiting-time`.
+- Cologne8 FGS presets include PyG `GATv2Conv` communication ablations for both FRAP and MLP local encoders.
 
 ## Assumptions
 - `SUMO_HOME` remains required for all simulation runs.

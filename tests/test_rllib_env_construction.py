@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
+from gymnasium.spaces import Box, Discrete
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -55,10 +57,51 @@ def test_build_sumo_parallel_env_calls_parallel_env_with_configured_kwargs(monke
     assert env is expected_env
     assert len(calls) == 1
     kwargs = calls[0]
-    assert kwargs["net_file"].endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4.net.xml")
-    assert kwargs["route_file"].endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4_1.rou.xml")
+    assert Path(kwargs["net_file"]).as_posix().endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4.net.xml")
+    assert Path(kwargs["route_file"]).as_posix().endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4_1.rou.xml")
     assert kwargs["out_csv_name"] == "outputs/4x4grid/ppo"
     assert kwargs["use_gui"] is False
     assert kwargs["num_seconds"] == 3600
     assert kwargs["sumo_seed"] == 11
     assert kwargs["single_agent"] is False
+    assert "use_libsumo" not in kwargs
+
+
+def test_build_multi_agent_policies_uses_post_reset_spaces(monkeypatch, tmp_path):
+    class DummyParallelEnv:
+        possible_agents = ["tls_0", "tls_1"]
+
+        def __init__(self):
+            self.reset_called = False
+            self.closed = False
+
+        def reset(self, seed=None):
+            del seed
+            self.reset_called = True
+            return {}, {}
+
+        def observation_space(self, agent_id):
+            if agent_id == "tls_0":
+                size = 16 if self.reset_called else 21
+            else:
+                size = 12
+            return Box(low=0.0, high=1.0, shape=(size,), dtype=np.float32)
+
+        def action_space(self, agent_id):
+            size = 4 if agent_id == "tls_0" else 3
+            return Discrete(size)
+
+        def close(self):
+            self.closed = True
+
+    env = DummyParallelEnv()
+    monkeypatch.setattr(rllib_common, "build_sumo_parallel_env", lambda cfg, run_dir, seed: env)
+
+    policies = rllib_common.build_multi_agent_policies(_cfg(), tmp_path, pad_spaces=False)
+
+    assert env.reset_called is True
+    assert env.closed is True
+    assert policies["tls_0"].observation_space.shape == (16,)
+    assert policies["tls_0"].action_space.n == 4
+    assert policies["tls_1"].observation_space.shape == (12,)
+    assert policies["tls_1"].action_space.n == 3

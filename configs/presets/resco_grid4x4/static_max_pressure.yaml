@@ -6,12 +6,13 @@ defaults:
   - _self_
 
 experiment:
-  name: resco_grid4x4__static_max_pressure
+  name: ${scenario.name}__static_max_pressure
   seeds: [1, 2, 3, 4, 5]
   runs: 5
   episodes: 1
+  eval_episodes: 5
+  eval_seeds: ${experiment.seeds}
   fixed_ts: false
-  eval_episodes: 0
 
 env:
   factory: sumo_env

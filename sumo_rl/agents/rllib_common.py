@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
+from sumo_rl.experiments.metric_utils import map_system_metrics_to_namespaces
 from sumo_rl.experiments.runner import _prepare_env_kwargs, _resolve_num_gpus
 
 
@@ -77,7 +78,7 @@ def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None)
 
     kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed)
     factory = _env_factory_name(cfg)
-    if factory == "parallel_env":
+    if factory in {"parallel_env", "sumo_env", "env"}:
         return sumo_rl.parallel_env(**kwargs)
 
     constructor = getattr(sumo_rl, factory, None)
@@ -213,14 +214,26 @@ def _completed_episode_summary(env: Any) -> Dict[str, Any]:
     return {}
 
 
+def _is_nonempty_episode_summary(summary: Dict[str, Any]) -> bool:
+    elapsed = summary.get("episode/elapsed_seconds")
+    if isinstance(elapsed, (int, float, np.integer, np.floating)) and float(elapsed) <= 0.0:
+        return False
+    return True
+
+
 def _completed_episode_summary_history(env: Any) -> list[Dict[str, Any]]:
     base_env = _resolve_base_env(env)
     summaries = []
     for summary in getattr(base_env, "completed_episode_summaries", []) or []:
-        if isinstance(summary, dict) and summary and not summary.get("tripinfo/parse_pending"):
+        if (
+            isinstance(summary, dict)
+            and summary
+            and not summary.get("tripinfo/parse_pending")
+            and _is_nonempty_episode_summary(summary)
+        ):
             summaries.append(dict(summary))
     latest_summary = _completed_episode_summary(base_env)
-    if latest_summary:
+    if latest_summary and _is_nonempty_episode_summary(latest_summary):
         latest_episode = latest_summary.get("episode/index")
         if not any(summary.get("episode/index") == latest_episode for summary in summaries):
             summaries.append(latest_summary)
@@ -317,6 +330,15 @@ def training_episode_target(cfg: Any) -> int:
     return max(1, int(getattr(getattr(cfg, "experiment", None), "episodes", 1) or 1))
 
 
+def trace_mode(cfg: Any) -> str:
+    logging_cfg = getattr(cfg, "logging", None)
+    value = getattr(logging_cfg, "trace_mode", "training") if logging_cfg is not None else "training"
+    mode = str(value or "training").strip().lower()
+    if mode not in {"training", "debug"}:
+        return "training"
+    return mode
+
+
 def train_log_freq_steps(cfg: Any) -> int:
     logging_cfg = getattr(cfg, "logging", None)
     explicit = getattr(logging_cfg, "train_log_freq_steps", None) if logging_cfg is not None else None
@@ -402,6 +424,13 @@ def build_multi_agent_policies(cfg: Any, run_dir: Path, *, pad_spaces: bool):
     if pad_spaces:
         sample_env = _maybe_pad_pettingzoo_env(sample_env)
     try:
+        reset_env = getattr(sample_env, "reset", None)
+        if callable(reset_env):
+            seed = int(getattr(experiment, "seed", 0) or 0)
+            try:
+                reset_env(seed=seed)
+            except TypeError:
+                reset_env()
         policies = {}
         for agent_id in _possible_agents(sample_env):
             policies[str(agent_id)] = PolicySpec(
@@ -413,9 +442,62 @@ def build_multi_agent_policies(cfg: Any, run_dir: Path, *, pad_spaces: bool):
         sample_env.close()
 
 
-def build_shared_policy_dict(policies: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_box_spaces(spaces: list[Any]):
+    first = spaces[0]
+    rank = len(tuple(first.shape or ()))
+    if any(len(tuple(space.shape or ())) != rank for space in spaces):
+        raise ValueError("Shared policy mode requires Box spaces with the same rank.")
+    shape = tuple(max(int(space.shape[index]) for space in spaces) for index in range(rank))
+    dtype = first.dtype
+    merged_low = np.full(shape, -np.inf, dtype=dtype)
+    merged_high = np.full(shape, np.inf, dtype=dtype)
+    for space in spaces:
+        current_low = np.asarray(space.low, dtype=dtype)
+        current_high = np.asarray(space.high, dtype=dtype)
+        padded_low = np.full(shape, np.min(current_low), dtype=dtype)
+        padded_high = np.full(shape, np.max(current_high), dtype=dtype)
+        slices = tuple(slice(0, int(dim)) for dim in tuple(space.shape or ()))
+        padded_low[slices] = current_low
+        padded_high[slices] = current_high
+        merged_low = np.minimum(merged_low, padded_low)
+        merged_high = np.maximum(merged_high, padded_high)
+    from gymnasium import spaces as gym_spaces
+
+    return gym_spaces.Box(low=merged_low, high=merged_high, dtype=dtype)
+
+
+def _merge_discrete_spaces(spaces: list[Any]):
+    from gymnasium import spaces as gym_spaces
+
+    return gym_spaces.Discrete(max(int(space.n) for space in spaces))
+
+
+def _build_shared_policy_spec(policies: Dict[str, Any]):
+    from ray.rllib.policy.policy import PolicySpec
+
     first_spec = next(iter(policies.values()))
-    return {"shared_policy": first_spec}
+    observation_spaces = [spec.observation_space for spec in policies.values()]
+    action_spaces = [spec.action_space for spec in policies.values()]
+
+    shared_observation_space = first_spec.observation_space
+    if any(space != shared_observation_space for space in observation_spaces[1:]):
+        if hasattr(shared_observation_space, "shape") and all(hasattr(space, "shape") for space in observation_spaces):
+            shared_observation_space = _merge_box_spaces(observation_spaces)
+        else:
+            raise ValueError("Shared policy mode requires identical observation spaces or mergeable Box spaces.")
+
+    shared_action_space = first_spec.action_space
+    if any(space != shared_action_space for space in action_spaces[1:]):
+        if hasattr(shared_action_space, "n") and all(hasattr(space, "n") for space in action_spaces):
+            shared_action_space = _merge_discrete_spaces(action_spaces)
+        else:
+            raise ValueError("Shared policy mode requires identical action spaces or mergeable Discrete spaces.")
+
+    return {"shared_policy": PolicySpec(observation_space=shared_observation_space, action_space=shared_action_space)}
+
+
+def build_shared_policy_dict(policies: Dict[str, Any]) -> Dict[str, Any]:
+    return _build_shared_policy_spec(policies)
 
 
 def build_algorithm_context(cfg: Any, run_dir: Path, algorithm_kind: str) -> RllibAlgorithmContext:
@@ -447,6 +529,10 @@ def apply_env_runner_settings(config, params: Dict[str, Any]):
             "num_env_runners": num_env_runners,
             "num_envs_per_env_runner": num_envs_per_runner,
         }
+        if params.get("num_cpus_per_env_runner") is not None:
+            runner_kwargs["num_cpus_per_env_runner"] = int(params["num_cpus_per_env_runner"])
+        if params.get("num_gpus_per_env_runner") is not None:
+            runner_kwargs["num_gpus_per_env_runner"] = float(params["num_gpus_per_env_runner"])
         if rollout_fragment_length is not None:
             runner_kwargs["rollout_fragment_length"] = int(rollout_fragment_length)
         config = config.env_runners(**runner_kwargs)
@@ -537,12 +623,16 @@ def apply_multi_agent_settings(config, context: RllibAlgorithmContext):
     )
 
 
-def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
-    reported_episodes = metrics.get("train/episodes_total")
-    if reported_episodes is not None:
-        return int(reported_episodes)
+def authoritative_rollout_index(metrics: Dict[str, Any], cfg: Any) -> int:
+    reported_episodes = metrics.get("train/rollout_index", metrics.get("train/episodes_total"))
+    if isinstance(reported_episodes, (int, float, np.integer, np.floating)) and not isinstance(reported_episodes, bool):
+        return int(float(reported_episodes))
     sampled_steps = int(metrics.get("train/env_steps_sampled") or 0)
     return sampled_steps // episode_steps(cfg)
+
+
+def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
+    return authoritative_rollout_index(metrics, cfg)
 
 
 def training_should_stop(metrics: Dict[str, Any], cfg: Any) -> bool:
@@ -597,7 +687,9 @@ def emit_training_metrics_by_step(
     return logged_step
 
 
-def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
+def extract_rllib_result_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
+    """Collect raw RLlib iteration outputs before the trace-mode namespace split."""
+
     metrics: Dict[str, Any] = {
         "algorithm/kind": algorithm_kind,
         "train/iteration": iteration,
@@ -628,14 +720,10 @@ def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iterat
             value = env_runner_metrics.get(source_key)
             if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
                 metrics[target_key] = float(value)
+    if "train/episodes_total" in metrics:
+        metrics["train/rollout_index"] = float(metrics["train/episodes_total"])
     if "train/env_steps_sampled" in metrics:
         metrics["train/env_step"] = metrics["train/env_steps_sampled"]
-    if "train/episode_return_mean" in metrics:
-        metrics.setdefault("train/reward_mean", metrics["train/episode_return_mean"])
-    if "train/episode_return_min" in metrics:
-        metrics.setdefault("train/reward_min", metrics["train/episode_return_min"])
-    if "train/episode_return_max" in metrics:
-        metrics.setdefault("train/reward_max", metrics["train/episode_return_max"])
     evaluation_metrics = result.get("evaluation")
     if isinstance(evaluation_metrics, dict):
         env_runner_eval = evaluation_metrics.get("env_runners")
@@ -655,41 +743,188 @@ def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iterat
     return metrics
 
 
+def rllib_counter_metrics(result: Dict[str, Any], *, algorithm_kind: str, iteration: int) -> Dict[str, Any]:
+    """Compatibility alias for algorithm modules that only need RLlib counters."""
+
+    return extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
+
+
+def extract_entropy_mean(value: Any) -> Optional[float]:
+    candidates: list[tuple[int, float]] = []
+
+    def _walk(node: Any, path: str = "") -> None:
+        if isinstance(node, (int, float, np.integer, np.floating)) and not isinstance(node, bool):
+            numeric_value = float(node)
+            if not np.isfinite(numeric_value):
+                return
+            lower_path = path.lower()
+            if "entropy" not in lower_path:
+                return
+            if any(token in lower_path for token in ("target_entropy", "entropy_coeff", "curr_kl_coeff")):
+                return
+            # RLlib learner outputs are not perfectly stable across algorithms and
+            # versions, so prefer keys that explicitly look like entropy means
+            # before falling back to other entropy-like diagnostics.
+            score = 0
+            if lower_path.endswith("entropy_mean"):
+                score += 4
+            if lower_path.endswith("curr_entropy"):
+                score += 3
+            if "mean" in lower_path:
+                score += 2
+            candidates.append((score, numeric_value))
+            return
+        if not isinstance(node, dict):
+            return
+        for key, item in node.items():
+            next_path = f"{path}/{key}" if path else str(key)
+            _walk(item, next_path)
+
+    _walk(value)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return float(candidates[0][1])
+
+
+def _copy_numeric_metric(row: Dict[str, Any], key: str, value: Any) -> None:
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+        row[key] = float(value)
+
+
+def _summary_value(summary: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in summary:
+            return summary[key]
+    return None
+
+
+TRAIN_EPISODE_SYSTEM_METRIC_KEYS = {
+    "efficiency_total_arrived",
+    "efficiency_total_departed",
+    "safety_total_teleported",
+    "safety_total_emergency_brake",
+    "safety_total_collisions",
+}
+
+DEBUG_EPISODE_END_SYSTEM_METRIC_KEYS = {
+    "efficiency_total_running",
+    "efficiency_total_backlogged",
+    "efficiency_total_stopped",
+    "efficiency_total_queued",
+    "efficiency_total_waiting_time",
+    "efficiency_mean_speed",
+    "efficiency_mean_average_speed",
+    "efficiency_mean_pressure",
+}
+
+
+def _append_common_training_metrics(row: Dict[str, Any], episode_summary: Dict[str, Any]) -> None:
+    reward_key_map = {
+        "train/reward_mean": "reward/mean",
+        "train/reward_max": "reward/max",
+        "train/reward_std": "reward/std",
+    }
+    for row_key, summary_key in reward_key_map.items():
+        _copy_numeric_metric(row, row_key, episode_summary.get(summary_key))
+
+    resco_key_map = {
+        "train/resco_delay_mean": ("resco_delay_mean", "resco_avg_delay"),
+        "train/resco_delay_max": ("resco_delay_max",),
+        "train/resco_delay_std": ("resco_delay_std", "resco_avg_delay_std"),
+        "train/resco_wait_mean": ("resco_wait_mean", "resco_wait"),
+        "train/resco_wait_max": ("resco_wait_max",),
+        "train/resco_wait_std": ("resco_wait_std",),
+        "train/resco_trip_time_mean": ("resco_trip_time_mean", "resco_trip_time"),
+        "train/resco_queue_mean": ("resco_queue_mean", "resco_queue"),
+        "train/resco_queue_max": ("resco_queue_max", "resco_max_queue"),
+        "train/resco_tripinfo_count": ("resco_tripinfo_count",),
+    }
+    for row_key, summary_keys in resco_key_map.items():
+        _copy_numeric_metric(row, row_key, _summary_value(episode_summary, *summary_keys))
+
+    # The cached episode summary mixes true episode aggregates (for example
+    # RESCO delay/wait/queue) with the final live `system_*` snapshot. Keep
+    # only episode-facing totals in `train/*` and move the final snapshot
+    # diagnostics into `debug/*` so the training namespace stays comparable.
+    namespaced_metrics = map_system_metrics_to_namespaces(
+        {key: value for key, value in episode_summary.items() if key.startswith("system_")}
+    )
+    for key, value in namespaced_metrics.items():
+        if key in TRAIN_EPISODE_SYSTEM_METRIC_KEYS:
+            _copy_numeric_metric(row, f"train/{key}", value)
+        elif key in DEBUG_EPISODE_END_SYSTEM_METRIC_KEYS:
+            _copy_numeric_metric(row, f"debug/{key}", value)
+
+    for key, value in episode_summary.items():
+        if key.startswith("reward/agent/"):
+            row[f"debug/reward/{key[len('reward/agent/'):]}"] = float(value)
+
+
+def _append_debug_metrics(row: Dict[str, Any], metrics: Dict[str, Any]) -> None:
+    exact_map = {
+        "train/rllib/training_iteration": "debug/rllib/training_iteration",
+        "train/rllib/time_total_s": "debug/rllib/time_total_s",
+        "train/rllib/time_this_iter_s": "debug/rllib/time_this_iter_s",
+        "train/env_steps_sampled": "debug/env_steps_sampled",
+        "train/agent_steps_sampled": "debug/agent_steps_sampled",
+        "train/episodes_total": "debug/episodes_total",
+        "train/episode_return_mean": "debug/episode_return_mean",
+        "train/episode_return_min": "debug/episode_return_min",
+        "train/episode_return_max": "debug/episode_return_max",
+        "train/episode_len_mean": "debug/episode_len_mean",
+        "train/ppo/entropy_mean": "debug/ppo/entropy_mean",
+        "train/sac/entropy_mean": "debug/sac/entropy_mean",
+        "train/td_error_mean": "debug/td_error_mean",
+        "train/td_error_abs_mean": "debug/td_error_abs_mean",
+    }
+    prefix_map = {
+        "train/ppo/learners/": "debug/ppo/learners/",
+        "train/dqn/learners/": "debug/dqn/learners/",
+        "train/dqn/replay/": "debug/dqn/replay/",
+        "train/dqn_dcrnn/learners/": "debug/dqn_dcrnn/learners/",
+        "train/dqn_dcrnn/replay/": "debug/dqn_dcrnn/replay/",
+        "train/dcrnn/learners/": "debug/dqn_dcrnn/learners/",
+        "train/dcrnn/replay/": "debug/dqn_dcrnn/replay/",
+        "train/sac/learners/": "debug/sac/learners/",
+        "train/sac/replay/": "debug/sac/replay/",
+    }
+    for source_key, target_key in exact_map.items():
+        _copy_numeric_metric(row, target_key, metrics.get(source_key))
+    for source_key, value in metrics.items():
+        for prefix, replacement in prefix_map.items():
+            if source_key.startswith(prefix):
+                _copy_numeric_metric(row, source_key.replace(prefix, replacement, 1), value)
+                break
+
+
 def build_training_episode_row(
     metrics: Dict[str, Any],
     episode_summary: Dict[str, Any],
     *,
     algorithm_kind: str,
+    cfg: Any,
+    rollout_index: Optional[int] = None,
 ) -> Dict[str, Any]:
-    row = dict(metrics)
-    row["algorithm/kind"] = algorithm_kind
-    row["train/episode_summary_available"] = 1.0 if episode_summary else 0.0
+    row: Dict[str, Any] = {"algorithm/kind": algorithm_kind}
 
-    episode_index = episode_summary.get("episode/index")
-    if isinstance(episode_index, (int, float, np.integer, np.floating)):
-        row["train/episode_index"] = float(episode_index)
-    else:
-        fallback_episode = row.get("train/episodes_total")
-        if isinstance(fallback_episode, (int, float, np.integer, np.floating)):
-            row["train/episode_index"] = float(fallback_episode)
+    effective_rollout_index = authoritative_rollout_index(metrics, cfg) if rollout_index is None else int(rollout_index)
+    if effective_rollout_index > 0:
+        row["train/rollout_index"] = float(effective_rollout_index)
+        row["train/episode_index"] = float(effective_rollout_index)
 
-    reward_mean = row.get("train/reward_mean", row.get("train/episode_return_mean"))
-    if isinstance(reward_mean, (int, float, np.integer, np.floating)) and not isinstance(reward_mean, bool):
-        row["train/reward_mean"] = float(reward_mean)
-        row["train/episode_reward"] = float(reward_mean)
+    fallback_env_step = metrics.get("train/env_step", metrics.get("train/env_steps_sampled"))
+    if isinstance(fallback_env_step, (int, float, np.integer, np.floating)) and not isinstance(fallback_env_step, bool):
+        row["train/env_step"] = float(fallback_env_step)
 
     if isinstance(episode_summary, dict):
-        for key, value in episode_summary.items():
-            if key.startswith("resco_"):
-                row_key = f"train/resco/{key[len('resco_'):]}"
-            elif key.startswith("tripinfo/"):
-                row_key = f"train/{key}"
-            else:
-                continue
-            if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
-                row[row_key] = float(value)
-            else:
-                row[row_key] = value
+        _append_common_training_metrics(row, episode_summary)
+
+    if trace_mode(cfg) == "debug":
+        episode_index = episode_summary.get("episode/index")
+        if isinstance(episode_index, (int, float, np.integer, np.floating)) and not isinstance(episode_index, bool):
+            row["debug/env_episode_index"] = float(episode_index)
+        _append_debug_metrics(row, metrics)
     return row
 
 
@@ -706,18 +941,35 @@ def emit_training_episode_rows(
     if emit_metrics is None:
         return int(last_logged_episode)
 
-    rows_by_step: Dict[int, Dict[str, Any]] = {}
-    for episode_summary in episode_summaries:
-        row = build_training_episode_row(metrics, episode_summary, algorithm_kind=algorithm_kind)
-        row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
-        if row_step > int(last_logged_episode):
-            rows_by_step[row_step] = row
-
     completed_episodes = completed_training_episodes(metrics, cfg)
+    rows_by_step: Dict[int, Dict[str, Any]] = {}
+    remaining_slots = max(0, completed_episodes - int(last_logged_episode))
+    selected_summaries = list(episode_summaries[-remaining_slots:]) if remaining_slots > 0 else []
+    if selected_summaries:
+        start_rollout_index = max(int(last_logged_episode) + 1, completed_episodes - len(selected_summaries) + 1)
+        for offset, episode_summary in enumerate(selected_summaries):
+            rollout_value = start_rollout_index + offset
+            row = build_training_episode_row(
+                metrics,
+                episode_summary,
+                algorithm_kind=algorithm_kind,
+                cfg=cfg,
+                rollout_index=rollout_value,
+            )
+            if rollout_value > int(last_logged_episode):
+                rows_by_step[rollout_value] = row
+
     for episode_index in range(int(last_logged_episode) + 1, completed_episodes + 1):
         if episode_index not in rows_by_step:
-            row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind)
+            row = build_training_episode_row(
+                metrics,
+                {},
+                algorithm_kind=algorithm_kind,
+                cfg=cfg,
+                rollout_index=episode_index,
+            )
             row["train/episode_index"] = float(episode_index)
+            row["train/rollout_index"] = float(episode_index)
             rows_by_step[episode_index] = row
 
     current_last = int(last_logged_episode)
@@ -730,7 +982,7 @@ def emit_training_episode_rows(
         current_last = row_step
 
     if force and current_last == int(last_logged_episode) and not rows_by_step:
-        row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind)
+        row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind, cfg=cfg)
         row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
         if row_step > 0:
             emit_metrics(row, row_step)

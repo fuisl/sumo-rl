@@ -203,28 +203,128 @@ WANDB_ENTITY=your-entity
 ### Fixed-time control in a RESCO scenario:
 ```bash
 python experiments/fixed_time.py scenario=resco_grid4x4
+python experiments/fixed_time.py scenario=resco_cologne1
+python experiments/fixed_time.py -m scenario=resco_cologne1,resco_cologne3,resco_cologne8,resco_ingolstadt1,resco_ingolstadt7,resco_ingolstadt21
 ```
 
 ### Max-pressure control in a RESCO scenario:
 ```bash
 python experiments/static_max_pressure.py scenario=resco_cologne1
+python experiments/static_max_pressure.py scenario=resco_ingolstadt7
+python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_cologne3,resco_cologne8,resco_ingolstadt1,resco_ingolstadt7,resco_ingolstadt21
 ```
 
-### RLlib PPO, DQN, and SAC:
+### RLlib PPO, DQN, FRAP, DQN+DCRNN, CoLight, and SAC:
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
+python experiments/rllib.py algorithm=ppo_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
+python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
+python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=dqn_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
-python experiments/rllib.py algorithm=sac_custom scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
+python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_actor_mlp scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_full_mlp scenario=resco_grid4x4 experiment.episodes=1
 ```
+
+Scenario-first RLlib presets are launched by keeping the config root at
+`configs/` and passing the preset path as the config name:
+
+```bash
+python experiments/rllib.py --config-name presets/resco_cologne8/fgs_mlp_gat_sac
+python experiments/rllib.py --config-name presets/resco_cologne8/sac_builtin
+```
+
+To manually restore a saved RLlib checkpoint and run the repo's current
+evaluation helper from a notebook, open
+`experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
+`CHECKPOINT_PATH`.
+
+RLlib runs default to `resources.ray_address=auto`, so start one shared Ray head
+first, for example
+`CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`, then
+launch one or more jobs. In this mode the head's resources come from `ray start`,
+not from `resources.ray_num_cpus` or `algorithm.params.ray_num_gpus`. For quick
+standalone local debugging, override with `resources.ray_address=null`; local
+runs default to a small CPU budget where `resources.ray_num_cpus=2` advertises
+two logical CPUs to Ray and `resources.native_num_threads=1` caps
+OpenMP/BLAS/Torch-style thread pools.
+The shared config keeps sampling in the local process by default
+(`algorithm.params.num_env_runners=0`) and uses one learner actor so `ray status`
+still reports reserved learner resources. The default learner reservation is
+fractional (`algorithm.params.num_gpus_per_learner=0.1`) so several runs can
+share the selected GPU when memory headroom is available; override it to `1`
+for exclusive GPU use.
+GPU selection should be pinned with `resources.cuda_visible_devices`; for example
+`resources.cuda_visible_devices=1` exposes physical GPU 1 as local CUDA index 0,
+so keep `algorithm.params.local_gpu_idx=0`.
+For RLlib W&B titles, set `logging.name` for an explicit display name, or set a
+non-default `experiment.name`; the default `experiment.name=rllib` keeps the
+generated `scenario__algorithm__time` title.
+
+`ppo_dcrnn_mlp` uses the same graph-history wrapper as the DCRNN DQN/SAC
+variants, then feeds each agent through a shared MLP+DCRNN backbone with
+separate PPO policy and value heads. This graph PPO variant supports
+independent policies only.
+
+FRAP is implemented as a DQN-family RLlib module with the phase-competition
+Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
+uses the SUMO-RL observation tail as per-movement demand features
+`[density_i, queue_i]` from the default split observation layout; override
+`algorithm.params.model_config.phase_pairs` when a network needs custom
+movement-pair ordering.
+
+DQN+DCRNN is implemented as a DQN-family RLlib module with a graph-observation
+wrapper. It builds a traffic-signal graph from incoming/outgoing lanes and feeds
+rolling density/queue histories to a diffusion-convolutional recurrent
+Q-network. Use `algorithm=dqn_dcrnn` as the canonical name; `algorithm=dcrnn`
+is kept as a backward-compatible alias. The first version supports independent
+policies.
+
+`dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one node-wise
+MLP layer before the DCRNN stack.
+
+CoLight is available as `algorithm=colight`. It is a DQN-family RLlib method
+with one shared graph-attention Q-network over all controlled intersections.
+The wrapper gives each traffic signal the full node-feature graph plus an ego
+index and action mask, so the shared policy remains faithful to the CoLight
+paper's network-level cooperation rather than independent per-agent DQN.
+Each CoLight run writes `topology/colight_topology.svg` and
+`topology/colight_topology_edges.json` under the Hydra output directory; set
+`algorithm.params.render_topology=false` to skip this artifact.
+
+FGS Cologne8 presets include both the original CoLight-style custom GAT
+communication and PyTorch Geometric `GATv2Conv` ablations:
+`configs/presets/resco_cologne8/fgs_frap_gatv2_sac.yaml` and
+`configs/presets/resco_cologne8/fgs_mlp_gatv2_sac.yaml`.
 
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
 adapter anymore.
 Use `algorithm=sac_builtin` as the reference RLlib baseline. Use
-`algorithm=sac_custom` when you want to expose and modify the SAC RLModule
+`algorithm=sac_mlp` when you want to expose and modify the SAC RLModule
 architecture through `algorithm.params.model_config`, including actor, twin
-critic, and future message-passing/GAT hook settings.
+critic, and future message-passing/GAT hook settings. `algorithm=sac_custom`
+is kept as a backward-compatible alias so older launch commands still work.
+The default SAC config sets `algorithm.params.training_intensity=1.0` and
+`algorithm.params.train_batch_size_per_learner=64` because RLlib's natural
+off-policy replay ratio can make Cologne-sized multi-agent discrete SAC spend
+most of its wall time in learner/replay updates. Keep `twin_q` enabled for
+`sac_builtin`; RLlib's discrete SAC learner expects twin-Q outputs on this path.
+Use `algorithm=sac_dcrnn_actor` when you want the graph-history DCRNN encoder
+on the SAC actor while keeping the SAC critics on the current MLP path. The
+first version supports independent policies only. Use
+`algorithm=sac_dcrnn_full` when you want separate DCRNN encoders on the SAC
+actor, `qf`, and `qf_twin` branches while keeping the standard SAC target-copy
+behavior for the critic targets. This variant also supports independent
+policies only.
+`algorithm=sac_dcrnn_actor_mlp` and `algorithm=sac_dcrnn_full_mlp` keep those
+same branch layouts, but add one node-wise MLP layer before each enabled DCRNN
+encoder.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash

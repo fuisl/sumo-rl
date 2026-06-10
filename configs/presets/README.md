@@ -17,8 +17,10 @@ The target RESCO scenarios are:
 
 - `resco_cologne1`
 - `resco_cologne3`
+- `resco_cologne8`
 - `resco_ingolstadt1`
 - `resco_ingolstadt7`
+- `resco_ingolstadt21`
 
 Each target scenario folder is meant to contain the same method names, so the layout is easy to scan:
 
@@ -28,15 +30,42 @@ configs/presets/<scenario>/
   static_max_pressure.yaml
 ```
 
+FGS RLlib presets are available for the grid and Cologne8 benchmarks:
+
+```text
+configs/presets/resco_grid4x4/
+  fgs_frap_gat_sac.yaml
+  fgs_mlp_gat_sac.yaml
+configs/presets/resco_cologne8/
+  sac_builtin.yaml
+  fgs_frap_gat_sac.yaml
+  fgs_mlp_gat_sac.yaml
+  fgs_frap_gatv2_sac.yaml
+  fgs_mlp_gatv2_sac.yaml
+```
+
+The static baseline presets now follow the RLlib validation seed layout:
+
+- `experiment.eval_seeds` is used when present
+- the thesis presets pin `eval_seeds: [1, 2, 3, 4, 5]`
+- the baseline logs only the averaged `validation/*` result, replayed every 5 episodes through episode 500 by default
+
 RLlib methods are named in `configs/algorithm/` instead:
 
 ```text
 configs/algorithm/
   ppo.yaml
   dqn.yaml
+  dqn_dcrnn.yaml
+  fgs.yaml
   sac_builtin.yaml
-  sac_custom.yaml
+  sac_mlp.yaml
+  sac_dcrnn_actor.yaml
+  sac_dcrnn_full.yaml
 ```
+
+The older `dcrnn.yaml` and `sac_custom.yaml` files are kept as compatibility
+aliases, but the canonical public names are `dqn_dcrnn` and `sac_mlp`.
 
 How to read one preset:
 
@@ -45,6 +74,14 @@ How to read one preset:
 3. Follow the `defaults` chain into `configs/scenario/` and `configs/algorithm/`.
 
 For RLlib runs, open `configs/rllib.yaml` together with the algorithm file you want.
+Launch RLlib presets from the repository config root by passing the preset path
+as the Hydra config name, for example:
+
+```bash
+python experiments/rllib.py --config-name presets/resco_cologne8/fgs_mlp_gat_sac
+python experiments/rllib.py --config-name presets/resco_cologne8/sac_builtin
+```
+
 RLlib training length is controlled by `experiment.episodes`. The episode horizon
 is configured in seconds with `experiment.episode_seconds`, and the decision-step
 horizon is derived from the environment `delta_time` when needed. For example,
@@ -52,7 +89,29 @@ horizon is derived from the environment `delta_time` when needed. For example,
 steps. Training logs use sampled env steps (`logging.train_log_freq_steps`), while
 RLlib validation cadence is controlled by `experiment.validation_interval_episodes`
 by default. The step-based `logging.eval_freq` remains a fallback when the episode
-interval is not set.
+interval is not set. The shared RLlib config also caps local CPU use with
+`resources.ray_num_cpus=2` and `resources.native_num_threads=1`, but RLlib
+presets default to `resources.ray_address=auto`; this first tries to join a
+shared Ray head and falls back to a local Ray instance when none is running.
+To use a shared cluster, start one head with the desired CPU/GPU capacity
+before launching jobs. To pin the shared head to physical GPU 1, start it with
+`CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`. Override
+`resources.ray_address=null` to always skip cluster discovery. The shared default
+keeps EnvRunner sampling in-process with `algorithm.params.num_env_runners=0`
+and uses one learner actor per experiment so Ray can account for CPU/GPU
+reservations; the default `algorithm.params.num_gpus_per_learner=0.1` lets
+several learner actors share one selected GPU, while `1` reserves it
+exclusively. Set
+`resources.cuda_visible_devices` in `configs/rllib.yaml`
+or on the command line to choose the physical GPU; the selected GPU is exposed
+inside the run as local CUDA index 0, so `algorithm.params.local_gpu_idx` should
+usually stay `0`.
+
+SAC presets inherit `algorithm.params.training_intensity=1.0` and
+`algorithm.params.train_batch_size_per_learner=64` from `sac_builtin`. This
+keeps RLlib's off-policy replay/learner work bounded on Cologne-sized
+multi-agent runs; raise these values only when you intentionally want more
+gradient work per collected sample.
 
 The launcher name tells you the method family.
 The folder name tells you the scenario.
