@@ -77,6 +77,7 @@ def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None)
     import sumo_rl
 
     kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed)
+    kwargs["use_libsumo"] = False
     factory = _env_factory_name(cfg)
     if factory in {"parallel_env", "sumo_env", "env"}:
         return sumo_rl.parallel_env(**kwargs)

@@ -45,6 +45,14 @@ def _is_ghost_vehicle(vehicle_id: str) -> bool:
     return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
 
 
+def _env_var_truthy(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() not in {"", "0", "false", "no"}
+
+
+def default_use_libsumo() -> bool:
+    return _env_var_truthy(os.environ.get("LIBSUMO_AS_TRACI"))
+
+
 def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
     last_error = None
     for attempt in range(TRACI_START_RETRIES):
@@ -151,6 +159,7 @@ class SumoEnvironment(gym.Env):
         add_per_agent_info: bool = False,
         tripinfo_output_name: Optional[str] = None,
         keep_tripinfo_output: bool = False,
+        use_libsumo: Optional[bool] = None,
         sumo_seed: Union[str, int] = "random",
         ts_ids: Optional[List[str]] = None,
         fixed_ts: bool = False,
@@ -199,6 +208,7 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.keep_tripinfo_output = keep_tripinfo_output
+        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo)
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
@@ -208,7 +218,7 @@ class SumoEnvironment(gym.Env):
         SumoEnvironment.CONNECTION_LABEL += 1
         self.sumo = None
 
-        if LIBSUMO:
+        if self.use_libsumo:
             conn = _start_traci_with_retries([sumolib.checkBinary("sumo"), "-n", self._net])
         else:
             conn = _start_traci_with_retries(
@@ -315,7 +325,7 @@ class SumoEnvironment(gym.Env):
                 self.disp.start()
                 print("Virtual display started.")
 
-        if LIBSUMO:
+        if self.use_libsumo:
             self.sumo = _start_traci_with_retries(sumo_cmd)
         else:
             self.sumo = _start_traci_with_retries(sumo_cmd, label=self.label)
@@ -581,7 +591,7 @@ class SumoEnvironment(gym.Env):
         if getattr(self, "sumo", None) is None:
             return
 
-        if not LIBSUMO:
+        if not self.use_libsumo:
             traci.switch(self.label)
         traci.close()
 
