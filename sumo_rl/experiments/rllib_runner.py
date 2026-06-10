@@ -1688,7 +1688,12 @@ def _optional_positive_int(value: Any, *, setting_name: str) -> Optional[int]:
 
 def _rllib_runtime_params(cfg: DictConfig) -> Dict[str, Any]:
     raw_resources = getattr(cfg, "resources", {}) or {}
-    resources = vars(raw_resources) if hasattr(raw_resources, "__dict__") else _plain_dict(raw_resources)
+    if isinstance(raw_resources, DictConfig) or hasattr(raw_resources, "items"):
+        resources = _plain_dict(raw_resources)
+    elif hasattr(raw_resources, "__dict__"):
+        resources = vars(raw_resources)
+    else:
+        resources = _plain_dict(raw_resources)
     params = _plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
     merged = dict(resources)
     merged.update(params)
@@ -1710,6 +1715,59 @@ def _cuda_visible_devices_env(value: Any) -> Dict[str, str]:
     if raw_value.lower() in {"", "none", "null"}:
         return {}
     return {"CUDA_VISIBLE_DEVICES": raw_value}
+
+
+def _ray_address(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    raw_value = str(value).strip()
+    if raw_value.lower() in {"", "none", "null"}:
+        return None
+    return raw_value
+
+
+def _is_existing_ray_address(address: Optional[str]) -> bool:
+    if address is None:
+        return False
+    return str(address).strip().lower() not in {"", "local", "none", "null"}
+
+
+def _format_ray_resource_value(resources: Dict[str, Any], key: str) -> str:
+    value = resources.get(key, 0.0)
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _ray_resource_summary(ray_module: Any) -> Dict[str, Dict[str, Any]]:
+    cluster_resources = {}
+    available_resources = {}
+    try:
+        cluster_resources = dict(ray_module.cluster_resources())
+    except Exception:
+        pass
+    try:
+        available_resources = dict(ray_module.available_resources())
+    except Exception:
+        pass
+    return {
+        "cluster": cluster_resources,
+        "available": available_resources,
+    }
+
+
+def _print_ray_resource_summary(ray_module: Any) -> None:
+    summary = _ray_resource_summary(ray_module)
+    cluster = summary["cluster"]
+    available = summary["available"]
+    print(
+        "RLlib Ray resources: "
+        f"cluster_cpu={_format_ray_resource_value(cluster, 'CPU')}, "
+        f"cluster_gpu={_format_ray_resource_value(cluster, 'GPU')}, "
+        f"available_cpu={_format_ray_resource_value(available, 'CPU')}, "
+        f"available_gpu={_format_ray_resource_value(available, 'GPU')}."
+    )
 
 
 def _apply_cpu_thread_limit(num_threads: Optional[int]) -> Dict[str, str]:
@@ -1751,6 +1809,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         runtime_params.get("native_num_threads", 1),
         setting_name="native_num_threads",
     )
+    ray_address = _ray_address(runtime_params.get("ray_address", os.environ.get("RAY_ADDRESS")))
     cpu_thread_env = _apply_cpu_thread_limit(native_num_threads)
     cuda_env = _cuda_visible_devices_env(runtime_params.get("cuda_visible_devices"))
     for env_var, value in cuda_env.items():
@@ -1760,12 +1819,15 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     runtime_env_vars.update(cuda_env)
     ray_init_kwargs: Dict[str, Any] = {
         "ignore_reinit_error": True,
-        "include_dashboard": False,
         "log_to_driver": False,
-        "num_gpus": ray_num_gpus,
     }
-    if ray_num_cpus is not None:
-        ray_init_kwargs["num_cpus"] = ray_num_cpus
+    if ray_address is not None:
+        ray_init_kwargs["address"] = ray_address
+    if not _is_existing_ray_address(ray_address):
+        ray_init_kwargs["include_dashboard"] = False
+        ray_init_kwargs["num_gpus"] = ray_num_gpus
+        if ray_num_cpus is not None:
+            ray_init_kwargs["num_cpus"] = ray_num_cpus
     if runtime_env_vars:
         ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
     ray.init(**ray_init_kwargs)
@@ -1774,6 +1836,15 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
         f"native_num_threads={native_num_threads if native_num_threads is not None else 'preserve-env'}."
     )
+    if _is_existing_ray_address(ray_address):
+        print(
+            "RLlib Ray connection: "
+            f"address={ray_address}; using existing cluster resources "
+            "instead of local ray_num_cpus/ray_num_gpus startup values."
+        )
+    else:
+        print(f"RLlib Ray connection: address={ray_address or 'local'}; local Ray instance is managed by this process.")
+    _print_ray_resource_summary(ray)
     if cuda_env:
         print(f"RLlib CUDA_VISIBLE_DEVICES={cuda_env['CUDA_VISIBLE_DEVICES']}.")
     algo = None

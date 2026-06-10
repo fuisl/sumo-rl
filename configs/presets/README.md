@@ -83,7 +83,10 @@ RLlib validation cadence is controlled by `experiment.validation_interval_episod
 by default. The step-based `logging.eval_freq` remains a fallback when the episode
 interval is not set. The shared RLlib config also caps local CPU use with
 `resources.ray_num_cpus=2` and `resources.native_num_threads=1`; override those
-for larger runs. Set `resources.cuda_visible_devices` in `configs/rllib.yaml`
+for larger standalone runs. For parallel RLlib sweeps, start one shared Ray head
+with the desired CPU/GPU capacity and set `resources.ray_address=auto` on each
+job so they connect to that head instead of each process starting its own local
+Ray instance. Set `resources.cuda_visible_devices` in `configs/rllib.yaml`
 or on the command line to choose the physical GPU; the selected GPU is exposed
 inside the run as local CUDA index 0, so `algorithm.params.local_gpu_idx` should
 usually stay `0`.

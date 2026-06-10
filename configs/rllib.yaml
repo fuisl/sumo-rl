@@ -22,6 +22,9 @@ experiment:
 resources:
   # Ray CPU resources are logical scheduler slots; native thread caps keep
   # Torch/NumPy/BLAS-style libraries from oversubscribing those slots.
+  # Set ray_address=auto to join a pre-started Ray head instead of starting a
+  # new local Ray instance for this process.
+  ray_address: null
   ray_num_cpus: 2
   native_num_threads: 1
   # Physical CUDA device ids to expose to this run. With "1", the selected GPU

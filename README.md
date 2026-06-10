@@ -236,6 +236,11 @@ RLlib runs default to a small local CPU budget: `resources.ray_num_cpus=2`
 advertises two logical CPUs to Ray, and `resources.native_num_threads=1` caps
 OpenMP/BLAS/Torch-style thread pools. To use more CPU, override these values on
 the command line, for example `resources.ray_num_cpus=8 resources.native_num_threads=2`.
+Standalone commands start and shut down their own local Ray instance. For a
+parallel sweep, start one shared Ray head first, for example
+`ray start --head --num-cpus=8 --num-gpus=1`, then launch jobs with
+`resources.ray_address=auto`; in that mode the head's resources come from
+`ray start`, not from `resources.ray_num_cpus` or `algorithm.params.ray_num_gpus`.
 GPU selection should be pinned with `resources.cuda_visible_devices`; for example
 `resources.cuda_visible_devices=1` exposes physical GPU 1 as local CUDA index 0,
 so keep `algorithm.params.local_gpu_idx=0`.
