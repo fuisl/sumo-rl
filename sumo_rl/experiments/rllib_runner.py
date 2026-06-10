@@ -48,6 +48,7 @@ from sumo_rl.experiments.runner import (
 from sumo_rl.agents.colight import colight as colight_agent
 from sumo_rl.agents.dqn import dqn as dqn_agent
 from sumo_rl.agents.fgs import fgs as fgs_agent
+from sumo_rl.agents.fgsv2 import fgsv2 as fgsv2_agent
 from sumo_rl.experiments.metric_utils import map_system_metrics_to_namespaces
 from sumo_rl.agents.dqn import dqn as dqn_agent
 from sumo_rl.agents.dcrnn import dcrnn as dcrnn_agent
@@ -72,6 +73,7 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     frap_agent.KIND,
     colight_agent.KIND,
     fgs_agent.KIND,
+    fgsv2_agent.KIND,
     *sac_agent.KINDS,
     *dcrnn_agent.ALL_KINDS,
     *sac_agent.ALL_KINDS,
@@ -145,6 +147,8 @@ def _algorithm_module(algorithm_kind: str):
         return colight_agent
     if algorithm_kind == fgs_agent.KIND:
         return fgs_agent
+    if algorithm_kind == fgsv2_agent.KIND:
+        return fgsv2_agent
     if algorithm_kind in sac_agent.KINDS:
         return sac_agent
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
