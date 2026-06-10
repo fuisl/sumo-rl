@@ -23,8 +23,8 @@ resources:
   # Ray CPU resources are logical scheduler slots; native thread caps keep
   # Torch/NumPy/BLAS-style libraries from oversubscribing those slots.
   # Prefer joining a pre-started Ray head so parallel jobs can share one
-  # cluster. If none is running, "auto" falls back to a local Ray instance.
-  # Override with ray_address=null to always skip cluster discovery.
+  # cluster. "auto" now fails clearly if no head is running; override with
+  # ray_address=null for an explicit standalone local debug run.
   ray_address: auto
   ray_num_cpus: 16
   native_num_threads: 1

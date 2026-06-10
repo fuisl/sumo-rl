@@ -86,19 +86,22 @@ RLlib training length is controlled by `experiment.episodes`. The episode horizo
 is configured in seconds with `experiment.episode_seconds`, and the decision-step
 horizon is derived from the environment `delta_time` when needed. For example,
 `3600` episode seconds with `delta_time=5` gives about `3600 / 5 = 720` decision
-steps. Training logs use sampled env steps (`logging.train_log_freq_steps`), while
-RLlib validation cadence is controlled by `experiment.validation_interval_episodes`
-by default. The step-based `logging.eval_freq` remains a fallback when the episode
-interval is not set. The shared RLlib config also caps local CPU use with
+steps. RLlib training rows are emitted by episode cadence
+(`logging.train_log_freq_episodes`) and keep sampled env steps as a recorded
+field, while validation cadence is controlled by
+`experiment.validation_interval_episodes` by default. The step-based
+`logging.eval_freq` remains a fallback when the episode interval is not set. The shared RLlib config also caps local CPU use with
 `resources.ray_num_cpus=2` and `resources.native_num_threads=1`, but RLlib
-presets default to `resources.ray_address=auto`; this first tries to join a
-shared Ray head and falls back to a local Ray instance when none is running.
-To use a shared cluster, start one head with the desired CPU/GPU capacity
-before launching jobs. To pin the shared head to physical GPU 1, start it with
+presets default to `resources.ray_address=auto`; this joins a shared Ray head and
+fails clearly if none is running, so sweep jobs do not accidentally create
+multiple private Ray clusters. To use a shared cluster, start one head with the
+desired CPU/GPU capacity before launching jobs. To pin the shared head to
+physical GPU 1, start it with
 `CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`. Override
-`resources.ray_address=null` to always skip cluster discovery. The shared default
-keeps EnvRunner sampling in-process with `algorithm.params.num_env_runners=0`
-and uses one learner actor per experiment so Ray can account for CPU/GPU
+`resources.ray_address=null` for an explicit standalone local debug run. The
+shared default keeps EnvRunner sampling in-process with
+`algorithm.params.num_env_runners=0` and uses one learner actor per experiment
+so Ray can account for CPU/GPU
 reservations; the default `algorithm.params.num_gpus_per_learner=0.1` lets
 several learner actors share one selected GPU, while `1` reserves it
 exclusively. Set

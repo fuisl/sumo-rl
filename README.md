@@ -247,12 +247,13 @@ evaluation helper from a notebook, open
 RLlib runs default to `resources.ray_address=auto`, so start one shared Ray head
 first, for example
 `CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`, then
-launch one or more jobs. In this mode the head's resources come from `ray start`,
-not from `resources.ray_num_cpus` or `algorithm.params.ray_num_gpus`. For quick
-standalone local debugging, override with `resources.ray_address=null`; local
-runs default to a small CPU budget where `resources.ray_num_cpus=2` advertises
-two logical CPUs to Ray and `resources.native_num_threads=1` caps
-OpenMP/BLAS/Torch-style thread pools.
+launch one or more jobs. If no head is running, `auto` now fails instead of
+silently starting a second private Ray instance. In this mode the head's
+resources come from `ray start`, not from `resources.ray_num_cpus` or
+`algorithm.params.ray_num_gpus`. For quick standalone local debugging, override
+with `resources.ray_address=null`; local runs default to a small CPU budget where
+`resources.ray_num_cpus=2` advertises two logical CPUs to Ray and
+`resources.native_num_threads=1` caps OpenMP/BLAS/Torch-style thread pools.
 The shared config keeps sampling in the local process by default
 (`algorithm.params.num_env_runners=0`) and uses one learner actor so `ray status`
 still reports reserved learner resources. The default learner reservation is

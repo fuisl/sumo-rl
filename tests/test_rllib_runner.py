@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -188,6 +190,44 @@ def test_train_rllib_existing_ray_address_does_not_pass_local_startup_resources(
     assert "num_gpus" not in ray_init_kwargs
     assert "include_dashboard" not in ray_init_kwargs
     assert ray_init_kwargs["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
+
+
+def test_train_rllib_auto_ray_address_fails_instead_of_starting_private_cluster(monkeypatch, tmp_path):
+    ray_init_calls = []
+
+    class DummyRay:
+        @staticmethod
+        def init(**kwargs):
+            ray_init_calls.append(kwargs)
+            raise ConnectionError("no ray head")
+
+        @staticmethod
+        def shutdown():
+            return None
+
+    monkeypatch.setitem(sys.modules, "ray", DummyRay)
+    monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=False,
+            save_best_validation_checkpoints=False,
+            save_final_model=False,
+        ),
+        experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),
+        resources=SimpleNamespace(ray_address="auto", ray_num_cpus=7, cuda_visible_devices="1"),
+        algorithm=SimpleNamespace(
+            kind="ppo",
+            params={"ray_num_gpus": 1, "num_gpus_per_learner": 1},
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="requires an already running Ray head"):
+        rllib_runner.train_rllib(cfg)
+
+    assert len(ray_init_calls) == 1
+    assert ray_init_calls[0]["address"] == "auto"
+    assert "include_dashboard" not in ray_init_calls[0]
 
 
 def test_dqn_uses_multi_agent_episode_replay_buffer_by_default():
@@ -447,10 +487,67 @@ def test_sync_env_runner_weights_for_evaluation_returns_false_without_sync_api()
     assert synced is False
 
 
-def test_compute_single_action_prefers_algo_compute_single_action_over_module_forward():
+def test_compute_single_action_prefers_module_forward_over_algo_compute_single_action():
+    class DummyColumns:
+        ACTIONS = "actions"
+        OBS = "obs"
+
+    class DummyTensor:
+        def __init__(self, values):
+            self._values = values
+
+        def unsqueeze(self, dim):
+            del dim
+            return self
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return self._values
+
+    class DummyTorch:
+        float32 = "float32"
+
+        @staticmethod
+        def as_tensor(values, dtype=None, device=None):
+            del dtype, device
+            return DummyTensor(values)
+
+        @staticmethod
+        def device(name):
+            return name
+
+        @staticmethod
+        def no_grad():
+            class _NoGrad:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, exc_type, exc, tb):
+                    del exc_type, exc, tb
+                    return False
+
+            return _NoGrad()
+
+    class DummyRayColumnsModule:
+        Columns = DummyColumns
+
+    class DummyModule:
+        def __init__(self):
+            self.calls = []
+
+        def forward_inference(self, batch):
+            self.calls.append(batch)
+            return {DummyColumns.ACTIONS: DummyTensor([2])}
+
     class DummyAlgo:
         def __init__(self):
             self.calls = []
+            self.module = DummyModule()
 
         def compute_single_action(self, obs, policy_id=None, explore=None):
             self.calls.append(
@@ -463,23 +560,42 @@ def test_compute_single_action_prefers_algo_compute_single_action_over_module_fo
             return 3
 
         def get_module(self, policy_id=None):
-            raise AssertionError("module.forward_inference should not be used when compute_single_action exists")
+            self.calls.append({"get_module_policy_id": policy_id})
+            return self.module
 
     algo = DummyAlgo()
 
-    action = rllib_runner._compute_single_action(algo, {"graph": [1, 2, 3]}, policy_id="tls_1")
+    original_torch = sys.modules.get("torch")
+    original_ray = sys.modules.get("ray")
+    original_ray_rllib = sys.modules.get("ray.rllib")
+    original_ray_rllib_core = sys.modules.get("ray.rllib.core")
+    original_ray_rllib_core_columns = sys.modules.get("ray.rllib.core.columns")
+    try:
+        sys.modules["torch"] = DummyTorch
+        sys.modules["ray"] = SimpleNamespace()
+        sys.modules["ray.rllib"] = SimpleNamespace()
+        sys.modules["ray.rllib.core"] = SimpleNamespace()
+        sys.modules["ray.rllib.core.columns"] = DummyRayColumnsModule
 
-    assert action == 3
-    assert algo.calls == [
-        {
-            "obs": {"graph": [1, 2, 3]},
-            "policy_id": "tls_1",
-            "explore": False,
-        }
-    ]
+        action = rllib_runner._compute_single_action(algo, {"graph": [1, 2, 3]}, policy_id="tls_1")
+    finally:
+        for name, original in (
+            ("torch", original_torch),
+            ("ray", original_ray),
+            ("ray.rllib", original_ray_rllib),
+            ("ray.rllib.core", original_ray_rllib_core),
+            ("ray.rllib.core.columns", original_ray_rllib_core_columns),
+        ):
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+    assert action == 2
+    assert algo.calls == [{"get_module_policy_id": "tls_1"}]
 
 
-def test_compute_single_action_falls_back_to_module_when_rllib_compute_single_action_hits_env_runner_gap():
+def test_compute_single_action_uses_module_forward_when_rllib_compute_single_action_hits_env_runner_gap():
     class DummyColumns:
         ACTIONS = "actions"
         OBS = "obs"
@@ -569,6 +685,39 @@ def test_compute_single_action_falls_back_to_module_when_rllib_compute_single_ac
                 sys.modules[name] = original
 
     assert action == 2
+
+
+def test_compute_single_action_falls_back_to_algo_compute_single_action_without_module():
+    class DummyAlgo:
+        def __init__(self):
+            self.calls = []
+
+        def get_module(self, policy_id=None):
+            del policy_id
+            raise RuntimeError("module is unavailable")
+
+        def compute_single_action(self, obs, policy_id=None, explore=None):
+            self.calls.append(
+                {
+                    "obs": obs,
+                    "policy_id": policy_id,
+                    "explore": explore,
+                }
+            )
+            return 3
+
+    algo = DummyAlgo()
+
+    action = rllib_runner._compute_single_action(algo, {"graph": [1, 2, 3]}, policy_id="tls_1")
+
+    assert action == 3
+    assert algo.calls == [
+        {
+            "obs": {"graph": [1, 2, 3]},
+            "policy_id": "tls_1",
+            "explore": False,
+        }
+    ]
 
 
 def test_evaluate_validation_metrics_use_episode_summary_and_average_across_eval_seeds(monkeypatch, tmp_path):
@@ -1570,6 +1719,7 @@ def test_restore_checkpoint_loads_saved_weights_and_reproduces_metric(tmp_path):
 
 def test_training_episode_row_uses_episode_cadence_and_resco_metrics():
     cfg = SimpleNamespace(
+        experiment=SimpleNamespace(episode_seconds=100),
         logging=SimpleNamespace(train_log_freq_episodes=2, train_log_freq_steps=1, log_freq=1000, trace_mode="training")
     )
     metrics = {
@@ -1763,6 +1913,32 @@ def test_debug_trace_mode_moves_internal_metrics_under_debug_namespace():
     assert "train/episode_return_mean" not in row
 
 
+def test_debug_episode_counter_tracks_emitted_episode_rows():
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(episodes=30, episode_seconds=100),
+        logging=SimpleNamespace(train_log_freq_episodes=1, train_log_freq_steps=1, log_freq=1000, trace_mode="debug"),
+    )
+    metrics = {
+        "train/env_steps_sampled": 600.0,
+        "train/episodes_total": 30.0,
+        "train/episode_return_mean": 4.5,
+    }
+    emitted = []
+
+    emit_training_episode_rows(
+        metrics,
+        [],
+        cfg,
+        algorithm_kind="dqn",
+        last_logged_episode=19,
+        emit_metrics=lambda row, step: emitted.append((step, row)),
+    )
+
+    assert [step for step, _ in emitted] == list(range(20, 31))
+    assert [row["train/episode_index"] for _, row in emitted] == [float(index) for index in range(20, 31)]
+    assert [row["debug/episodes_total"] for _, row in emitted] == [float(index) for index in range(20, 31)]
+
+
 def test_ppo_extract_training_metrics_adds_entropy_mean():
     metrics = extract_ppo_training_metrics(
         {
@@ -1935,6 +2111,8 @@ def test_validation_summary_row_maps_final_metrics_to_validation_namespace():
             "algorithm/kind": "ppo",
             "validation/reward_mean": 12.0,
             "validation/resco_delay_mean": 4.0,
+            "validation/env_step": 3600.0,
+            "validation/episode_index": 99.0,
             "validation/efficiency_total_arrived": 8.0,
             "validation/safety_total_collisions": 0.0,
             "warnings/missing_tripinfo": 0.0,
@@ -2293,7 +2471,7 @@ def test_log_outputs_lets_wandb_custom_step_axes_control_train_and_validation_st
     ]
 
 
-def test_init_wandb_binds_debug_metrics_to_train_episode_index(monkeypatch, tmp_path):
+def test_init_wandb_binds_train_debug_and_validation_metrics_to_episode_index(monkeypatch, tmp_path):
     class DummyRun:
         def __init__(self):
             self.metric_calls = []
@@ -2330,6 +2508,7 @@ def test_init_wandb_binds_debug_metrics_to_train_episode_index(monkeypatch, tmp_
     assert result is run
     assert (("train/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
     assert (("debug/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
+    assert (("validation/*",), {"step_metric": "validation/episode_index"}) in run.metric_calls
 
 
 def test_init_wandb_uses_experiment_name_as_run_name(monkeypatch, tmp_path):

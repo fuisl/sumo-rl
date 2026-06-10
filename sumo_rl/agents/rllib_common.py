@@ -918,6 +918,8 @@ def build_training_episode_row(
 
     if trace_mode(cfg) == "debug":
         _append_debug_metrics(row, metrics)
+        if "train/episode_index" in row:
+            row["debug/episodes_total"] = row["train/episode_index"]
     return row
 
 
@@ -946,6 +948,8 @@ def emit_training_episode_rows(
         if episode_index not in rows_by_step:
             row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind, cfg=cfg)
             row["train/episode_index"] = float(episode_index)
+            if trace_mode(cfg) == "debug":
+                row["debug/episodes_total"] = float(episode_index)
             rows_by_step[episode_index] = row
 
     current_last = int(last_logged_episode)

@@ -197,32 +197,12 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
 
 
 def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
-    compute_single_action = getattr(algo, "compute_single_action", None)
-    if callable(compute_single_action):
-        try:
-            if policy_id is None:
-                action = compute_single_action(obs, explore=False)
-            else:
-                action = compute_single_action(obs, policy_id=policy_id, explore=False)
-            return action[0] if isinstance(action, tuple) else action
-        except AttributeError:
-            # Some RLlib API-stack combinations route through env runners that
-            # do not expose `get_policy` for `compute_single_action()`.
-            pass
-
-    get_policy = getattr(algo, "get_policy", None)
-    if callable(get_policy):
-        try:
-            policy = get_policy(policy_id) if policy_id else get_policy()
-        except Exception:
-            policy = None
-        if policy is not None and hasattr(policy, "compute_single_action"):
-            action = policy.compute_single_action(obs, explore=False)
-            return action[0] if isinstance(action, tuple) else action
-
     get_module = getattr(algo, "get_module", None)
     if callable(get_module):
-        module = get_module(policy_id) if policy_id is not None else get_module()
+        try:
+            module = get_module(policy_id) if policy_id is not None else get_module()
+        except Exception:
+            module = None
         if module is not None and hasattr(module, "forward_inference"):
             import torch
             from ray.rllib.core.columns import Columns
@@ -249,6 +229,30 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             if hasattr(action, "detach"):
                 action = action.detach().cpu().numpy()
             return np.asarray(action).reshape(-1)[0].item()
+
+    compute_single_action = getattr(algo, "compute_single_action", None)
+    if callable(compute_single_action):
+        try:
+            if policy_id is None:
+                action = compute_single_action(obs, explore=False)
+            else:
+                action = compute_single_action(obs, policy_id=policy_id, explore=False)
+            return action[0] if isinstance(action, tuple) else action
+        except AttributeError:
+            # Some RLlib API-stack combinations route through env runners that
+            # do not expose `get_policy` for `compute_single_action()`.
+            pass
+
+    get_policy = getattr(algo, "get_policy", None)
+    if callable(get_policy):
+        try:
+            policy = get_policy(policy_id) if policy_id else get_policy()
+        except Exception:
+            policy = None
+        if policy is not None and hasattr(policy, "compute_single_action"):
+            action = policy.compute_single_action(obs, explore=False)
+            return action[0] if isinstance(action, tuple) else action
+
     raise AttributeError("Algorithm does not expose a usable validation inference interface.")
 
 
@@ -1772,6 +1776,8 @@ def _validation_summary_row(summary: Dict[str, Any], *, step: int, episode_index
     for key, value in summary.items():
         if key == "algorithm/kind":
             row[key] = value
+        elif key in {"validation/env_step", "validation/episode_index"}:
+            continue
         elif key.startswith("validation/"):
             row[key] = value
         elif key.startswith("warnings/"):
@@ -1965,20 +1971,10 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     except ConnectionError:
         if not _is_auto_ray_address(ray_address):
             raise
-        fallback_ray_init_kwargs: Dict[str, Any] = {
-            "ignore_reinit_error": True,
-            "log_to_driver": False,
-            "include_dashboard": False,
-            "num_gpus": ray_num_gpus,
-        }
-        if ray_num_cpus is not None:
-            fallback_ray_init_kwargs["num_cpus"] = ray_num_cpus
-        if runtime_env_vars:
-            fallback_ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
-        print("RLlib Ray connection: address=auto but no running Ray cluster was found; starting a local Ray instance.")
-        ray.init(**fallback_ray_init_kwargs)
-        ray_address = None
-        connected_to_existing_cluster = False
+        raise RuntimeError(
+            "resources.ray_address=auto requires an already running Ray head. "
+            "Start one shared cluster first, or set resources.ray_address=null for an explicit local debug run."
+        )
     print(
         "RLlib CPU allocation: "
         f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
