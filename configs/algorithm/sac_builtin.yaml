@@ -7,5 +7,9 @@ algorithm:
     critic_lr: 0.0003
     alpha_lr: 0.0003
     tau: 0.005
-    train_batch_size_per_learner: 256
+    # RLlib's default "natural" replay ratio can make discrete multi-agent SAC
+    # much slower than PPO on larger SUMO scenarios. Keep the learner update
+    # ratio explicit so SAC does not spend most wall time in replay/critic work.
+    train_batch_size_per_learner: 64
+    training_intensity: 1.0
     num_steps_sampled_before_learning_starts: 1000

@@ -38,3 +38,11 @@ def test_rllib_preset_uses_shared_ray_defaults_after_algorithm_override():
     assert cfg.algorithm.kind == "fgs"
     assert cfg.scenario.name == "resco_cologne8"
     _assert_shared_ray_defaults(cfg)
+
+
+def test_sac_builtin_uses_bounded_replay_training_intensity():
+    cfg = _compose("rllib", ["algorithm=sac_builtin", "scenario=resco_cologne8"])
+
+    assert cfg.algorithm.kind == "sac_builtin"
+    assert cfg.algorithm.params.train_batch_size_per_learner == 64
+    assert cfg.algorithm.params.training_intensity == 1.0

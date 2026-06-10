@@ -298,6 +298,11 @@ Use `algorithm=sac_builtin` as the reference RLlib baseline. Use
 architecture through `algorithm.params.model_config`, including actor, twin
 critic, and future message-passing/GAT hook settings. `algorithm=sac_custom`
 is kept as a backward-compatible alias so older launch commands still work.
+The default SAC config sets `algorithm.params.training_intensity=1.0` and
+`algorithm.params.train_batch_size_per_learner=64` because RLlib's natural
+off-policy replay ratio can make Cologne-sized multi-agent discrete SAC spend
+most of its wall time in learner/replay updates. Keep `twin_q` enabled for
+`sac_builtin`; RLlib's discrete SAC learner expects twin-Q outputs on this path.
 Use `algorithm=sac_dcrnn_actor` when you want the graph-history DCRNN encoder
 on the SAC actor while keeping the SAC critics on the current MLP path. The
 first version supports independent policies only. Use

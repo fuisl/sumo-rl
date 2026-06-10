@@ -105,6 +105,12 @@ or on the command line to choose the physical GPU; the selected GPU is exposed
 inside the run as local CUDA index 0, so `algorithm.params.local_gpu_idx` should
 usually stay `0`.
 
+SAC presets inherit `algorithm.params.training_intensity=1.0` and
+`algorithm.params.train_batch_size_per_learner=64` from `sac_builtin`. This
+keeps RLlib's off-policy replay/learner work bounded on Cologne-sized
+multi-agent runs; raise these values only when you intentionally want more
+gradient work per collected sample.
+
 The launcher name tells you the method family.
 The folder name tells you the scenario.
 The file name tells you the exact recipe.
