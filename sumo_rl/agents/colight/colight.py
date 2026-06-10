@@ -56,7 +56,14 @@ def _colight_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
     return model_config
 
 
-def _with_colight_observation(cfg: Any, run_dir: Path, model_config: Dict[str, Any], seed: Optional[int] = None):
+def _with_colight_observation(
+    cfg: Any,
+    run_dir: Path,
+    model_config: Dict[str, Any],
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
     import sumo_rl
 
     kwargs = _prepare_env_kwargs(cfg, run_dir)
@@ -65,6 +72,8 @@ def _with_colight_observation(cfg: Any, run_dir: Path, model_config: Dict[str, A
         kwargs["num_seconds"] = seconds
     if seed is not None:
         kwargs["sumo_seed"] = int(seed)
+    if use_libsumo is not None:
+        kwargs["use_libsumo"] = bool(use_libsumo)
     kwargs["single_agent"] = False
     kwargs["observation_class"] = make_colight_observation_class(
         include_phase=bool(model_config.get("include_phase", True)),
@@ -84,8 +93,17 @@ def _with_colight_observation(cfg: Any, run_dir: Path, model_config: Dict[str, A
     return constructor(parallel=True, **kwargs)
 
 
-def build_colight_parallel_env(cfg: Any, run_dir: Path, model_config: Dict[str, Any], seed: Optional[int] = None):
-    return CoLightGraphParallelEnv(_with_colight_observation(cfg, run_dir, model_config, seed=seed))
+def build_colight_parallel_env(
+    cfg: Any,
+    run_dir: Path,
+    model_config: Dict[str, Any],
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
+    return CoLightGraphParallelEnv(
+        _with_colight_observation(cfg, run_dir, model_config, seed=seed, use_libsumo=use_libsumo)
+    )
 
 
 def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
@@ -93,7 +111,7 @@ def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
     model_config = _colight_model_config(params)
-    return ParallelPettingZooEnv(build_colight_parallel_env(cfg, run_dir, model_config, seed=seed))
+    return ParallelPettingZooEnv(build_colight_parallel_env(cfg, run_dir, model_config, seed=seed, use_libsumo=False))
 
 
 def _build_colight_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> RllibAlgorithmContext:

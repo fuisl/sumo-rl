@@ -209,7 +209,7 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.keep_tripinfo_output = keep_tripinfo_output
-        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo) or default_use_libsumo()
+        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo)
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}

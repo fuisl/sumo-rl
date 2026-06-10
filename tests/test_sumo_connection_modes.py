@@ -83,7 +83,7 @@ def test_sumo_environment_defaults_to_env_var_for_libsumo(monkeypatch):
     assert env_mod.default_use_libsumo() is True
 
 
-def test_sumo_environment_env_var_overrides_explicit_traci_mode(monkeypatch):
+def test_sumo_environment_explicit_traci_mode_overrides_libsumo_env_var(monkeypatch):
     start_calls = []
 
     monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
@@ -104,8 +104,8 @@ def test_sumo_environment_env_var_overrides_explicit_traci_mode(monkeypatch):
         use_libsumo=False,
     )
 
-    assert env.use_libsumo is True
-    assert start_calls[0]["label"] is None
+    assert env.use_libsumo is False
+    assert start_calls[0]["label"].startswith("init_connection")
     env.close()
 
 

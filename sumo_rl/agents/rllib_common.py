@@ -60,23 +60,37 @@ def _env_factory_name(cfg: Any) -> str:
     return str(getattr(env_cfg, "factory", "parallel_env") or "parallel_env")
 
 
-def _rllib_env_kwargs(cfg: Any, run_dir: Path, seed: Optional[int] = None) -> Dict[str, Any]:
+def _rllib_env_kwargs(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+) -> Dict[str, Any]:
     kwargs = _prepare_env_kwargs(cfg, run_dir)
     seconds = _episode_seconds(cfg)
     if seconds > 0 and "num_seconds" not in kwargs:
         kwargs["num_seconds"] = seconds
     if seed is not None:
         kwargs["sumo_seed"] = int(seed)
+    if use_libsumo is not None:
+        kwargs["use_libsumo"] = bool(use_libsumo)
     kwargs.setdefault("single_agent", False)
     return kwargs
 
 
-def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def build_sumo_parallel_env(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
     """Build the PettingZoo parallel env in the same shape as the RLlib example."""
 
     import sumo_rl
 
-    kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed)
+    kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
     factory = _env_factory_name(cfg)
     if factory in {"parallel_env", "sumo_env", "env"}:
         return sumo_rl.parallel_env(**kwargs)
@@ -107,10 +121,11 @@ def build_rllib_parallel_env(
     seed: Optional[int] = None,
     *,
     pad_spaces: bool = False,
+    use_libsumo: Optional[bool] = None,
 ):
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
-    base_env = build_sumo_parallel_env(cfg, run_dir, seed=seed)
+    base_env = build_sumo_parallel_env(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
     if pad_spaces:
         base_env = _maybe_pad_pettingzoo_env(base_env)
     return ParallelPettingZooEnv(base_env)

@@ -282,6 +282,7 @@ def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind
         run_dir,
         seed=seed,
         pad_spaces=(policy_mode == "shared"),
+        use_libsumo=False,
     )
 
 

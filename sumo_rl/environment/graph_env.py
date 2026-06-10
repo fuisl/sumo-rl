@@ -122,9 +122,16 @@ class GraphParallelEnv:
             save_csv(out_csv_name, episode)
 
 
-def build_graph_parallel_env(cfg: Any, run_dir, seed=None, *, params: dict[str, Any] | None = None) -> GraphParallelEnv:
+def build_graph_parallel_env(
+    cfg: Any,
+    run_dir,
+    seed=None,
+    *,
+    params: dict[str, Any] | None = None,
+    use_libsumo: bool | None = None,
+) -> GraphParallelEnv:
     params = dict(params or {})
-    base_env = build_sumo_parallel_env(cfg, run_dir, seed=seed)
+    base_env = build_sumo_parallel_env(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
     return GraphParallelEnv(
         base_env,
         history_len=int(params.get("history_len", 5)),
@@ -133,6 +140,15 @@ def build_graph_parallel_env(cfg: Any, run_dir, seed=None, *, params: dict[str, 
     )
 
 
-def build_rllib_graph_parallel_env(cfg: Any, run_dir, seed=None, *, params: dict[str, Any] | None = None):
-    return ParallelPettingZooEnv(build_graph_parallel_env(cfg, run_dir, seed=seed, params=params))
+def build_rllib_graph_parallel_env(
+    cfg: Any,
+    run_dir,
+    seed=None,
+    *,
+    params: dict[str, Any] | None = None,
+    use_libsumo: bool | None = None,
+):
+    return ParallelPettingZooEnv(
+        build_graph_parallel_env(cfg, run_dir, seed=seed, params=params, use_libsumo=use_libsumo)
+    )
 

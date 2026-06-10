@@ -77,7 +77,7 @@ def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
-    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params))
+    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params), use_libsumo=False)
 
 
 def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algorithm_kind: str) -> str:
