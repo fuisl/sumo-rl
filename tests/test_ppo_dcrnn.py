@@ -16,12 +16,33 @@ if str(ROOT) not in sys.path:
 import sumo_rl
 
 
+class _FakeGraphTrafficSignal:
+    def __init__(self, ts_id, lanes, out_lanes, density, queue):
+        self.id = ts_id
+        self.lanes = list(lanes)
+        self.out_lanes = list(out_lanes)
+        self._density = list(density)
+        self._queue = list(queue)
+
+    def get_lanes_density(self):
+        return self._density
+
+    def get_lanes_queue(self):
+        return self._queue
+
+
 class _DummyGraphParallelEnv:
     possible_agents = ["tls_0", "tls_1"]
     agents = ["tls_0", "tls_1"]
 
     def __init__(self, **kwargs):
         self.kwargs = dict(kwargs)
+        signals = [
+            _FakeGraphTrafficSignal("tls_0", ["in_0"], ["lane_0_1"], [0.25], [0.5]),
+            _FakeGraphTrafficSignal("tls_1", ["lane_0_1", "in_1"], ["out_1"], [0.75, 0.1], [0.2, 0.3]),
+        ]
+        self.ts_ids = [signal.id for signal in signals]
+        self.traffic_signals = {signal.id: signal for signal in signals}
         self.graph = SimpleNamespace(
             model_config=lambda agent_id: {
                 "agent_id": str(agent_id),

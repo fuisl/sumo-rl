@@ -57,8 +57,8 @@ def test_build_sumo_parallel_env_calls_parallel_env_with_configured_kwargs(monke
     assert env is expected_env
     assert len(calls) == 1
     kwargs = calls[0]
-    assert kwargs["net_file"].endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4.net.xml")
-    assert kwargs["route_file"].endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4_1.rou.xml")
+    assert Path(kwargs["net_file"]).as_posix().endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4.net.xml")
+    assert Path(kwargs["route_file"]).as_posix().endswith("sumo_rl/nets/RESCO/grid4x4/grid4x4_1.rou.xml")
     assert kwargs["out_csv_name"] == "outputs/4x4grid/ppo"
     assert kwargs["use_gui"] is False
     assert kwargs["num_seconds"] == 3600
