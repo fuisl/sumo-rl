@@ -78,7 +78,7 @@ def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None)
 
     kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed)
     factory = _env_factory_name(cfg)
-    if factory == "parallel_env":
+    if factory in {"parallel_env", "sumo_env", "env"}:
         return sumo_rl.parallel_env(**kwargs)
 
     constructor = getattr(sumo_rl, factory, None)
