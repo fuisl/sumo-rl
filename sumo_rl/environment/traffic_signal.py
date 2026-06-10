@@ -61,6 +61,7 @@ class TrafficSignal:
         begin_time: int,
         reward_fn: Union[str, Callable, List],
         reward_weights: List[float],
+        reward_penalty_lambda: float,
         sumo,
     ):
         """Initializes a TrafficSignal object.
@@ -76,6 +77,7 @@ class TrafficSignal:
             begin_time (int): The time in seconds when the traffic signal starts operating.
             reward_fn (Union[str, Callable]): The reward function. Can be a string with the name of the reward function or a callable function.
             reward_weights (List[float]): The weights of the reward function.
+            reward_penalty_lambda (float): Coefficient for penalty-based reward functions.
             sumo (Sumo): The Sumo instance.
         """
         self.id = ts_id
@@ -93,6 +95,7 @@ class TrafficSignal:
         self.last_reward = None
         self.reward_fn = reward_fn
         self.reward_weights = reward_weights
+        self.reward_penalty_lambda = float(reward_penalty_lambda)
         self.sumo = sumo
         self._last_fixed_cycle_phase_index = None
 
@@ -304,6 +307,35 @@ class TrafficSignal:
         self.last_ts_waiting_time = ts_wait
         return reward
 
+    def _diff_waiting_time_with_unchosen_phase_penalty_reward(self):
+        lane_waiting_times = self.get_accumulated_waiting_time_per_lane()
+        ts_wait = sum(lane_waiting_times) / 100.0
+        reward = self.last_ts_waiting_time - ts_wait
+        penalty = self._get_max_unchosen_phase_wait_penalty(lane_waiting_times)
+        self.last_ts_waiting_time = ts_wait
+        return reward - (self.reward_penalty_lambda * penalty)
+
+    def _get_max_unchosen_phase_wait_penalty(self, lane_waiting_times: List[float]) -> float:
+        if not self.phase_lanes:
+            return 0.0
+
+        lane_wait_map = {lane: wait for lane, wait in zip(self.lanes, lane_waiting_times)}
+        phase_queued_counts = self.get_phase_queued_counts()
+        phase_penalties = []
+
+        for phase_index, phase_lanes in enumerate(self.phase_lanes):
+            if phase_index == self.green_phase:
+                continue
+
+            queue_length = phase_queued_counts[phase_index] if phase_index < len(phase_queued_counts) else 0
+            if queue_length <= 0:
+                continue
+
+            cumulative_wait = sum(lane_wait_map.get(lane, 0.0) for lane in phase_lanes)
+            phase_penalties.append(cumulative_wait / float(queue_length))
+
+        return max(phase_penalties, default=0.0)
+
     def _observation_fn_default(self):
         phase_id = [1 if self.green_phase == i else 0 for i in range(self.num_green_phases)]  # one-hot encoding
         min_green = [0 if self.time_since_last_phase_change < self.min_green + self.yellow_time else 1]
@@ -440,6 +472,7 @@ class TrafficSignal:
 
     reward_fns = {
         "diff-waiting-time": _diff_waiting_time_reward,
+        "diff-waiting-time-with-unchosen-phase-penalty": _diff_waiting_time_with_unchosen_phase_penalty_reward,
         "average-speed": _average_speed_reward,
         "queue": _queue_reward,
         "normalized-queue": _normalized_queue_reward,

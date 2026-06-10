@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -181,7 +180,11 @@ def test_build_eval_env_does_not_mutate_tripinfo_retention(monkeypatch, tmp_path
 def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp_path):
     graph_eval_env = object()
 
-    monkeypatch.setattr(rllib_runner.sac_agent, "build_graph_eval_env", lambda *args, **kwargs: graph_eval_env)
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+    )
     monkeypatch.setattr(
         rllib_runner,
         "build_rllib_parallel_env",
@@ -198,6 +201,215 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp
     )
 
     assert built_env is graph_eval_env
+
+
+def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_full(monkeypatch, tmp_path):
+    graph_eval_env = object()
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+    )
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="sac_dcrnn_full",
+        policy_mode="independent",
+    )
+
+    assert built_env is graph_eval_env
+
+
+def test_build_eval_env_uses_flat_env_for_sac_builtin(monkeypatch, tmp_path):
+    flat_eval_env = object()
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("graph eval env should not be used"))),
+    )
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: flat_eval_env,
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="sac_builtin",
+        policy_mode="independent",
+    )
+
+    assert built_env is flat_eval_env
+
+
+def test_sync_env_runner_weights_for_evaluation_uses_learner_weights():
+    calls = []
+
+    class DummyLearnerGroup:
+        def get_weights(self):
+            return {"module": {"weight": 123}}
+
+    class DummyEnvRunner:
+        def set_weights(self, weights):
+            calls.append(weights)
+
+    algo = SimpleNamespace(
+        learner_group=DummyLearnerGroup(),
+        env_runner=DummyEnvRunner(),
+    )
+
+    synced = rllib_runner._sync_env_runner_weights_for_evaluation(algo)
+
+    assert synced is True
+    assert calls == [{"module": {"weight": 123}}]
+
+
+def test_sync_env_runner_weights_for_evaluation_returns_false_without_sync_api():
+    algo = SimpleNamespace(
+        learner_group=object(),
+        env_runner=object(),
+    )
+
+    synced = rllib_runner._sync_env_runner_weights_for_evaluation(algo)
+
+    assert synced is False
+
+
+def test_compute_single_action_prefers_algo_compute_single_action_over_module_forward():
+    class DummyAlgo:
+        def __init__(self):
+            self.calls = []
+
+        def compute_single_action(self, obs, policy_id=None, explore=None):
+            self.calls.append(
+                {
+                    "obs": obs,
+                    "policy_id": policy_id,
+                    "explore": explore,
+                }
+            )
+            return 3
+
+        def get_module(self, policy_id=None):
+            raise AssertionError("module.forward_inference should not be used when compute_single_action exists")
+
+    algo = DummyAlgo()
+
+    action = rllib_runner._compute_single_action(algo, {"graph": [1, 2, 3]}, policy_id="tls_1")
+
+    assert action == 3
+    assert algo.calls == [
+        {
+            "obs": {"graph": [1, 2, 3]},
+            "policy_id": "tls_1",
+            "explore": False,
+        }
+    ]
+
+
+def test_compute_single_action_falls_back_to_module_when_rllib_compute_single_action_hits_env_runner_gap():
+    class DummyColumns:
+        ACTIONS = "actions"
+        OBS = "obs"
+
+    class DummyTensor:
+        def __init__(self, values):
+            self._values = values
+
+        def unsqueeze(self, dim):
+            del dim
+            return self
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return self._values
+
+    class DummyTorch:
+        float32 = "float32"
+
+        @staticmethod
+        def as_tensor(values, dtype=None, device=None):
+            del dtype, device
+            return DummyTensor(values)
+
+        @staticmethod
+        def device(name):
+            return name
+
+        @staticmethod
+        def no_grad():
+            class _NoGrad:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, exc_type, exc, tb):
+                    del exc_type, exc, tb
+                    return False
+
+            return _NoGrad()
+
+    class DummyRayColumnsModule:
+        Columns = DummyColumns
+
+    class DummyModule:
+        def forward_inference(self, batch):
+            del batch
+            return {DummyColumns.ACTIONS: DummyTensor([2])}
+
+    class DummyAlgo:
+        def compute_single_action(self, obs, policy_id=None, explore=None):
+            del obs, policy_id, explore
+            raise AttributeError("'MultiAgentEnvRunner' object has no attribute 'get_policy'")
+
+        def get_module(self, policy_id=None):
+            del policy_id
+            return DummyModule()
+
+    original_torch = sys.modules.get("torch")
+    original_ray = sys.modules.get("ray")
+    original_ray_rllib = sys.modules.get("ray.rllib")
+    original_ray_rllib_core = sys.modules.get("ray.rllib.core")
+    original_ray_rllib_core_columns = sys.modules.get("ray.rllib.core.columns")
+    try:
+        sys.modules["torch"] = DummyTorch
+        sys.modules["ray"] = SimpleNamespace()
+        sys.modules["ray.rllib"] = SimpleNamespace()
+        sys.modules["ray.rllib.core"] = SimpleNamespace()
+        sys.modules["ray.rllib.core.columns"] = DummyRayColumnsModule
+
+        action = rllib_runner._compute_single_action(DummyAlgo(), {"graph": [1, 2, 3]}, policy_id="tls_1")
+    finally:
+        for name, original in (
+            ("torch", original_torch),
+            ("ray", original_ray),
+            ("ray.rllib", original_ray_rllib),
+            ("ray.rllib.core", original_ray_rllib_core),
+            ("ray.rllib.core.columns", original_ray_rllib_core_columns),
+        ):
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+    assert action == 2
 
 
 def test_evaluate_validation_metrics_use_episode_summary_and_average_across_eval_seeds(monkeypatch, tmp_path):
@@ -1542,11 +1754,11 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
 
     metadata_path = tmp_path / "checkpoints" / "ppo" / "best_validation" / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    assert [item["metric_value"] for item in metadata["retained"]] == [7.0, 8.0, 9.0]
+    assert [item["metric_value"] for item in metadata["retained"]] == [8.0, 9.0, 11.0]
     assert len(metadata["retained"][0]["evaluation_seed_rows"]) == 1
-    assert len(algo.saved_paths) == 6
+    assert len(algo.saved_paths) == 5
     assert any(Path(path).name == "ppo" for path in algo.saved_paths)
-    assert [entry["pass_index"] for entry in action_plot_logs] == [1, 2, 3, 4, 5]
+    assert [entry["pass_index"] for entry in action_plot_logs] == [1, 2, 3, 4]
     assert all(entry["episode_index"] == 4 for entry in action_plot_logs)
     assert all(entry["plot_rows_by_agent"]["tls_1"][0]["step"] == 1.0 for entry in action_plot_logs)
     assert all("tls_1" in entry["action_timeline_by_agent"] for entry in action_plot_logs)
@@ -1557,12 +1769,12 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert ray_init_calls[0]["runtime_env"]["env_vars"]["OMP_NUM_THREADS"] == "1"
     assert ray_init_calls[0]["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
     validation_rows = [args[2] for args, kwargs in logged_rows if isinstance(args[2], dict) and "validation/env_step" in args[2]]
-    assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0]
     assert all(row["validation/episode_index"] == 4.0 for row in validation_rows)
-    assert result["validation/resco_delay_mean"] == 7.0
+    assert result["validation/resco_delay_mean"] == 8.0
     assert result["validation/env_step"] == 40.0
     assert result["validation/episode_index"] == 4.0
-    assert result["validation/pass_index"] == 5.0
+    assert result["validation/pass_index"] == 4.0
 
 
 def test_standard_evaluation_settings_use_rllib_algorithm_config_api():

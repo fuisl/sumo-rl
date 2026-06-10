@@ -4,13 +4,13 @@ defaults:
   - _self_
 
 algorithm:
-  kind: sac_dcrnn_actor
+  kind: sac_dcrnn_full
   params:
     history_len: 5
     include_virtual_nodes: true
     add_self_loops: true
     model_config:
-      architecture_tag: sac_dcrnn_actor
+      architecture_tag: sac_dcrnn_full
       actor:
         encoder:
           type: dcrnn
@@ -23,9 +23,11 @@ algorithm:
           activation: relu
       critic:
         encoder:
-          type: mlp
-          hidden_dims: [256, 256]
-          activation: tanh
+          type: dcrnn
+          hidden_dim: 128
+          max_diffusion_step: 2
+          num_rnn_layers: 1
+          filter_type: dual_random_walk
         head:
           hidden_dims: []
           activation: relu

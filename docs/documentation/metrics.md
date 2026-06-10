@@ -63,6 +63,7 @@ The runner also logs reward metadata in the final episode summary:
 | Reward | Formula in code | Inputs | Output meaning |
 | --- | --- | --- | --- |
 | `diff-waiting-time` | `last_ts_waiting_time - current_ts_waiting_time` | `current_ts_waiting_time = sum(get_accumulated_waiting_time_per_lane()) / 100` | Positive is better |
+| `diff-waiting-time-with-unchosen-phase-penalty` | `diff_waiting_time - reward_penalty_lambda * max(cumulative_waiting_time_per_unchosen_phase / queue_length_per_unchosen_phase)` | same waiting-time term as `diff-waiting-time`, plus per-phase lane waiting sums and queued-vehicle counts for all unchosen green phases; phases with zero queue contribute `0` | Positive is better |
 | `average-speed` | `TrafficSignal.get_average_speed()` | per-vehicle `speed / allowed_speed` on incoming lanes | Higher is better |
 | `queue` | `-TrafficSignal.get_total_queued()` | halting-vehicle count on incoming lanes | Higher is better because the queue is negated |
 | `normalized-queue` | `-mean(TrafficSignal.get_lanes_queue())` | normalized incoming-lane queue density | CoLight-friendly scale in `[-1, 0]` |

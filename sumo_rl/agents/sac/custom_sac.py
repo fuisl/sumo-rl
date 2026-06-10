@@ -92,8 +92,8 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
     critic_encoder_type = str(critic_encoder.get("type", "mlp")).lower()
     if actor_encoder_type not in {"mlp", "dcrnn"}:
         raise ValueError("custom SAC currently supports actor.encoder.type in {mlp, dcrnn}.")
-    if critic_encoder_type != "mlp":
-        raise ValueError("custom SAC currently supports critic.encoder.type=mlp.")
+    if critic_encoder_type not in {"mlp", "dcrnn"}:
+        raise ValueError("custom SAC currently supports critic.encoder.type in {mlp, dcrnn}.")
     actor_encoder["type"] = actor_encoder_type
     critic_encoder["type"] = critic_encoder_type
 
@@ -122,11 +122,15 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
         merged["fcnet_activation"] = "relu"
     merged["head_fcnet_hiddens"] = _int_list(actor_head.get("hidden_dims"), field_name="actor.head.hidden_dims")
     merged["head_fcnet_activation"] = str(actor_head.get("activation", "relu") or "relu")
-    merged["critic_fcnet_hiddens"] = _int_list(
-        critic_encoder.get("hidden_dims"),
-        field_name="critic.encoder.hidden_dims",
-    )
-    merged["critic_fcnet_activation"] = str(critic_encoder.get("activation", "relu") or "relu")
+    if critic_encoder_type == "mlp":
+        merged["critic_fcnet_hiddens"] = _int_list(
+            critic_encoder.get("hidden_dims"),
+            field_name="critic.encoder.hidden_dims",
+        )
+        merged["critic_fcnet_activation"] = str(critic_encoder.get("activation", "relu") or "relu")
+    else:
+        merged["critic_fcnet_hiddens"] = []
+        merged["critic_fcnet_activation"] = "relu"
     merged["critic_head_fcnet_hiddens"] = _int_list(
         critic_head.get("hidden_dims"),
         field_name="critic.head.hidden_dims",
@@ -180,26 +184,39 @@ def build_custom_sac_catalog_class():
     class CustomSACCatalog(SACCatalog):
         """Catalog that lets actor and discrete twin-Q architectures diverge."""
 
-        def _actor_encoder_type(self) -> str:
+        def _custom_sac_config(self) -> Dict[str, Any]:
             custom_sac = dict(self._model_config_dict.get("custom_sac", {}) or {})
+            return custom_sac
+
+        def _actor_encoder_type(self) -> str:
+            custom_sac = self._custom_sac_config()
             actor_config = dict(custom_sac.get("actor", {}) or {})
             encoder_config = dict(actor_config.get("encoder", {}) or {})
             return str(encoder_config.get("type", "mlp") or "mlp").lower()
 
+        def _critic_encoder_type(self) -> str:
+            custom_sac = self._custom_sac_config()
+            critic_config = dict(custom_sac.get("critic", {}) or {})
+            encoder_config = dict(critic_config.get("encoder", {}) or {})
+            return str(encoder_config.get("type", "mlp") or "mlp").lower()
+
+        def _uses_graph_override(self) -> bool:
+            return self._actor_encoder_type() == "dcrnn" or self._critic_encoder_type() == "dcrnn"
+
         def _determine_components_hook(self):
-            if self._actor_encoder_type() != "dcrnn":
+            if not self._uses_graph_override():
                 return super()._determine_components_hook()
 
             self._action_dist_class_fn = functools.partial(
                 self._get_dist_cls_from_action_space,
                 action_space=self.action_space,
             )
-            critic_hidden = list(self._model_config_dict.get("critic_fcnet_hiddens") or [])
             flat_obs_dim = _flat_dim(self.observation_space.shape)
-            latent_dim = int(critic_hidden[-1]) if critic_hidden else flat_obs_dim
             self._flat_obs_dim = flat_obs_dim
             self._encoder_config = None
-            self.latent_dims = (latent_dim,)
+            actor_hidden = list(self._model_config_dict.get("fcnet_hiddens") or [])
+            actor_latent_dim = int(actor_hidden[-1]) if actor_hidden else flat_obs_dim
+            self.latent_dims = (actor_latent_dim,)
 
         def __init__(self, observation_space, action_space, model_config_dict, view_requirements=None):
             super().__init__(observation_space, action_space, model_config_dict, view_requirements)
@@ -216,20 +233,20 @@ def build_custom_sac_catalog_class():
                 )
 
         def build_encoder(self, framework: str):
-            if self._actor_encoder_type() != "dcrnn":
+            if not self._uses_graph_override():
                 return super().build_encoder(framework=framework)
             actor_hidden = list(self._model_config_dict.get("fcnet_hiddens") or [])
             flat_obs_dim = getattr(self, "_flat_obs_dim", _flat_dim(self.observation_space.shape))
-            latent_dim = int(self.latent_dims[0])
+            latent_dim = int(actor_hidden[-1]) if actor_hidden else flat_obs_dim
             return _TorchFlattenMLPEncoder(
                 flat_obs_dim,
                 actor_hidden[:-1],
                 self._model_config_dict.get("fcnet_activation") or "relu",
-                actor_hidden[-1] if actor_hidden else latent_dim,
+                latent_dim,
             )
 
         def _build_qf_encoder_discrete(self, framework: str):
-            if self._actor_encoder_type() == "dcrnn":
+            if self._uses_graph_override():
                 critic_hidden = list(self._model_config_dict.get("critic_fcnet_hiddens") or [])
                 flat_obs_dim = getattr(self, "_flat_obs_dim", _flat_dim(self.observation_space.shape))
                 latent_dim = int(critic_hidden[-1]) if critic_hidden else flat_obs_dim
@@ -294,6 +311,14 @@ def build_custom_sac_module_class():
         layers.append(nn.Linear(previous_dim, int(output_dim)))
         return nn.Sequential(*layers)
 
+    class _TorchDCRNNEncoder(nn.Module):
+        def __init__(self, backbone: DCRNNBackbone):
+            super().__init__()
+            self.backbone = backbone
+
+        def forward(self, batch):
+            return {ENCODER_OUT: self.backbone(batch[Columns.OBS])}
+
     class CustomSACCommunicationBlock(nn.Module):
         """Swappable latent hook for future graph/message-passing operators."""
 
@@ -324,13 +349,17 @@ def build_custom_sac_module_class():
             self._communication_type = str(communication.get("type", "none") or "none")
             self._communication_apply_to = set(communication.get("apply_to", ["actor", "critic"]) or [])
             self._actor_encoder_type = str(self._actor_config.get("encoder", {}).get("type", "mlp") or "mlp").lower()
+            self._critic_encoder_type = str(self._critic_config.get("encoder", {}).get("type", "mlp") or "mlp").lower()
             self.actor_communication = CustomSACCommunicationBlock(self._communication_type)
             self.critic_communication = CustomSACCommunicationBlock(self._communication_type)
             self.actor_dcrnn_backbone = None
             self.actor_dcrnn_head = None
-            if self._actor_encoder_type == "dcrnn":
+            self.qf_dcrnn_backbone = None
+            self.qf_twin_dcrnn_backbone = None
+            if self._actor_encoder_type == "dcrnn" or self._critic_encoder_type == "dcrnn":
                 if not hasattr(self.action_space, "n"):
-                    raise ValueError("custom SAC DCRNN actor currently supports discrete action spaces only.")
+                    raise ValueError("custom SAC DCRNN encoders currently support discrete action spaces only.")
+            if self._actor_encoder_type == "dcrnn":
                 head_config = dict(self._actor_config.get("head", {}) or {})
                 head_hidden_dims = _int_list(head_config.get("hidden_dims"), field_name="actor.head.hidden_dims")
                 head_activation = str(head_config.get("activation", "relu") or "relu")
@@ -344,6 +373,33 @@ def build_custom_sac_module_class():
                     head_activation,
                     int(self.action_space.n),
                 )
+            if self._critic_encoder_type == "dcrnn":
+                head_config = dict(self._critic_config.get("head", {}) or {})
+                head_hidden_dims = _int_list(head_config.get("hidden_dims"), field_name="critic.head.hidden_dims")
+                head_activation = str(head_config.get("activation", "relu") or "relu")
+                self.qf_dcrnn_backbone = DCRNNBackbone.from_critic_model_config(
+                    self.observation_space,
+                    self.model_config,
+                )
+                self.qf_encoder = _TorchDCRNNEncoder(self.qf_dcrnn_backbone)
+                self.qf = _build_mlp(
+                    self.qf_dcrnn_backbone.output_dim,
+                    head_hidden_dims,
+                    head_activation,
+                    int(self.action_space.n),
+                )
+                if self.twin_q:
+                    self.qf_twin_dcrnn_backbone = DCRNNBackbone.from_critic_model_config(
+                        self.observation_space,
+                        self.model_config,
+                    )
+                    self.qf_twin_encoder = _TorchDCRNNEncoder(self.qf_twin_dcrnn_backbone)
+                    self.qf_twin = _build_mlp(
+                        self.qf_twin_dcrnn_backbone.output_dim,
+                        head_hidden_dims,
+                        head_activation,
+                        int(self.action_space.n),
+                    )
 
         def _apply_actor_communication(self, latent):
             if self._communication_enabled and "actor" in self._communication_apply_to:
@@ -425,10 +481,13 @@ def build_custom_sac_module_class():
                 "_communication_type",
                 "_communication_apply_to",
                 "_actor_encoder_type",
+                "_critic_encoder_type",
                 "actor_communication",
                 "critic_communication",
                 "actor_dcrnn_backbone",
                 "actor_dcrnn_head",
+                "qf_dcrnn_backbone",
+                "qf_twin_dcrnn_backbone",
             ):
                 if attr not in non_inference_attributes:
                     non_inference_attributes.append(attr)

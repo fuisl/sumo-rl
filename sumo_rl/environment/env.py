@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
@@ -36,10 +37,35 @@ from .traffic_signal import TrafficSignal
 
 
 LIBSUMO = "LIBSUMO_AS_TRACI" in os.environ
+TRACI_START_RETRIES = 3
+TRACI_START_RETRY_DELAY_SECONDS = 0.5
 
 
 def _is_ghost_vehicle(vehicle_id: str) -> bool:
     return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
+
+
+def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
+    last_error = None
+    for attempt in range(TRACI_START_RETRIES):
+        try:
+            if label is None:
+                traci.start(cmd)
+                return traci
+            traci.start(cmd, label=label)
+            return traci.getConnection(label)
+        except Exception as exc:
+            last_error = exc
+            if label is not None:
+                try:
+                    traci.switch(label)
+                    traci.close()
+                except Exception:
+                    pass
+            if attempt + 1 >= TRACI_START_RETRIES:
+                break
+            time.sleep(TRACI_START_RETRY_DELAY_SECONDS * (attempt + 1))
+    raise last_error
 
 
 def env(**kwargs):
@@ -79,6 +105,7 @@ class SumoEnvironment(gym.Env):
         single_agent (bool): If true, it behaves like a regular gym.Env. Else, it behaves like a MultiagentEnv (returns dict of observations, rewards, dones, infos).
         reward_fn (str/function/dict/List): String with the name of the reward function used by the agents, a reward function, dictionary with reward functions assigned to individual traffic lights by their keys, or a List of reward functions.
         reward_weights (List[float]/np.ndarray): Weights for linearly combining the reward functions, in case reward_fn is a list. If it is None, the reward returned will be a np.ndarray. Default: None
+        reward_penalty_lambda (float): Coefficient for penalty-based reward functions that subtract an extra queue-aware waiting-time penalty. Default: 0.1
         observation_class (ObservationFunction): Inherited class which has both the observation function and observation space.
         add_system_info (bool): If true, it computes system metrics (total queue, total waiting time, average speed) in the info dictionary.
         add_per_agent_info (bool): If true, it computes per-agent (per-traffic signal) metrics (average accumulated waiting time, average queue) in the info dictionary.
@@ -118,6 +145,7 @@ class SumoEnvironment(gym.Env):
         single_agent: bool = False,
         reward_fn: Union[str, Callable, dict, List] = "diff-waiting-time",
         reward_weights: Optional[List[float]] = None,
+        reward_penalty_lambda: float = 0.1,
         observation_class: type[ObservationFunction] = DefaultObservationFunction,
         add_system_info: bool = True,
         add_per_agent_info: bool = False,
@@ -160,6 +188,7 @@ class SumoEnvironment(gym.Env):
         self.single_agent = single_agent
         self.reward_fn = reward_fn
         self.reward_weights = reward_weights
+        self.reward_penalty_lambda = float(reward_penalty_lambda)
         self.sumo_seed = sumo_seed
         if isinstance(self.sumo_seed, int):
             self.sumo_seed &= 0x7FFFFFFF  # Ensure 32 bit non-negative seed
@@ -180,11 +209,12 @@ class SumoEnvironment(gym.Env):
         self.sumo = None
 
         if LIBSUMO:
-            traci.start([sumolib.checkBinary("sumo"), "-n", self._net])  # Start only to retrieve traffic light information
-            conn = traci
+            conn = _start_traci_with_retries([sumolib.checkBinary("sumo"), "-n", self._net])
         else:
-            traci.start([sumolib.checkBinary("sumo"), "-n", self._net], label="init_connection" + self.label)
-            conn = traci.getConnection("init_connection" + self.label)
+            conn = _start_traci_with_retries(
+                [sumolib.checkBinary("sumo"), "-n", self._net],
+                label="init_connection" + self.label,
+            )
 
         if ts_ids is None:
             self.ts_ids = list(conn.trafficlight.getIDList())
@@ -224,6 +254,7 @@ class SumoEnvironment(gym.Env):
                 self.begin_time,
                 self.reward_fn[ts],
                 self.reward_weights,
+                self.reward_penalty_lambda,
                 conn,
             )
             for ts in self.ts_ids
@@ -285,11 +316,9 @@ class SumoEnvironment(gym.Env):
                 print("Virtual display started.")
 
         if LIBSUMO:
-            traci.start(sumo_cmd)
-            self.sumo = traci
+            self.sumo = _start_traci_with_retries(sumo_cmd)
         else:
-            traci.start(sumo_cmd, label=self.label)
-            self.sumo = traci.getConnection(self.label)
+            self.sumo = _start_traci_with_retries(sumo_cmd, label=self.label)
 
         if self.use_gui or self.render_mode is not None:
             if "DEFAULT_VIEW" not in dir(traci.gui):  # traci.gui.DEFAULT_VIEW is not defined in libsumo
@@ -888,19 +917,21 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
         self.env = SumoEnvironment(**self._kwargs)
         self.render_mode = self.env.render_mode
 
-        self.agents = self.env.ts_ids
-        self.possible_agents = self.env.ts_ids
+        self._refresh_agents_and_spaces()
         self._agent_selector = AgentSelector(self.agents)
         self.agent_selection = self._agent_selector.reset()
-        # spaces
-        self.action_spaces = {a: self.env.action_spaces(a) for a in self.agents}
-        self.observation_spaces = {a: self.env.observation_spaces(a) for a in self.agents}
 
         # dicts
         self.rewards = {a: 0 for a in self.agents}
         self.terminations = {a: False for a in self.agents}
         self.truncations = {a: False for a in self.agents}
         self.infos = {a: {} for a in self.agents}
+
+    def _refresh_agents_and_spaces(self) -> None:
+        self.agents = list(self.env.ts_ids)
+        self.possible_agents = list(self.env.ts_ids)
+        self.action_spaces = {a: self.env.action_spaces(a) for a in self.agents}
+        self.observation_spaces = {a: self.env.observation_spaces(a) for a in self.agents}
 
     def seed(self, seed=None):
         """Set the seed for the environment."""
@@ -909,6 +940,8 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         """Reset the environment."""
         self.env.reset(seed=seed, options=options)
+        self._refresh_agents_and_spaces()
+        self._agent_selector = AgentSelector(self.agents)
         self.agents = self.possible_agents[:]
         self.agent_selection = self._agent_selector.reset()
         self.rewards = {agent: 0 for agent in self.agents}
