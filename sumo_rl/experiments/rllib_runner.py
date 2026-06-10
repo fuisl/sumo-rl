@@ -492,6 +492,10 @@ def _run_multi_agent_episode_trace(
     for agent_id, trace in action_traces.items():
         if trace:
             action_space_sizes[agent_id] = max(int(action_space_sizes.get(agent_id, 0)), max(trace) + 1)
+    for agent_id, rows in phase_queue_traces.items():
+        max_phase_count = max((len(item.get("phase_queues", [])) for item in rows), default=0)
+        if max_phase_count > 0:
+            action_space_sizes[agent_id] = max(int(action_space_sizes.get(agent_id, 0)), max_phase_count)
     return total_reward, action_traces, action_space_sizes, phase_queue_traces
 
 
@@ -900,6 +904,12 @@ def _render_validation_action_plot_image(
     return image
 
 
+def _count_prefixed_series_keys(rows: list[Dict[str, float]], prefix: str) -> int:
+    if not rows:
+        return 0
+    return sum(1 for key in rows[0].keys() if key.startswith(prefix))
+
+
 def _format_env_time_label(seconds_value: float) -> str:
     total_seconds = max(0, int(round(seconds_value)))
     minutes, seconds = divmod(total_seconds, 60)
@@ -1254,6 +1264,10 @@ def _log_validation_action_plot_images(
         rows = plot_rows_by_agent.get(agent_id, [])
         timeline_actions = timeline_actions_by_agent.get(agent_id, [])
         phase_queue_rows = phase_queue_rows_by_agent.get(agent_id, [])
+        num_actions = max(
+            _count_prefixed_series_keys(rows, "action_"),
+            _count_prefixed_series_keys(phase_queue_rows, "phase_"),
+        )
         payload = {
             "validation/episode_index": float(episode_index),
             "validation/pass_index": float(pass_index),
@@ -1272,6 +1286,7 @@ def _log_validation_action_plot_images(
                     agent_id,
                     timeline_actions,
                     decision_seconds=decision_seconds,
+                    num_actions=num_actions,
                 ),
                 caption=f"validation pass {pass_index} at env step {env_step}",
             )

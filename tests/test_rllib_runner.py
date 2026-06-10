@@ -713,6 +713,55 @@ def test_action_distribution_rows_handle_short_episode_window():
     assert all(abs(sum(row[f"action_{index}"] for index in range(3)) - 1.0) <= 1e-9 for row in rows)
 
 
+def test_run_multi_agent_episode_trace_upgrades_action_count_from_phase_queue_snapshot(monkeypatch):
+    class DummyEnv:
+        possible_agents = ["tls_1"]
+
+        def __init__(self):
+            self.step_count = 0
+
+        def reset(self, seed=None):
+            self.step_count = 0
+            return {"tls_1": {"obs": 1}}, {}
+
+        def step(self, actions):
+            del actions
+            self.step_count += 1
+            done = self.step_count >= 1
+            return (
+                {"tls_1": {"obs": 1}},
+                {"tls_1": 0.0},
+                {"tls_1": done, "__all__": done},
+                {"tls_1": False, "__all__": False},
+                {},
+            )
+
+    monkeypatch.setattr(rllib_runner, "_compute_single_action", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(rllib_runner, "_action_space_size", lambda env, agent_id: 3)
+    monkeypatch.setattr(
+        rllib_runner,
+        "_collect_phase_queue_snapshot",
+        lambda env, agent_ids: {
+            "tls_1": {"active_phase": 0, "phase_queues": [5, 2, 0, 0]},
+        },
+    )
+
+    _, action_traces, action_space_sizes, phase_queue_traces = rllib_runner._run_multi_agent_episode_trace(
+        object(),
+        DummyEnv(),
+        seed=7,
+        policy_mode="independent",
+    )
+
+    assert action_traces == {"tls_1": [0]}
+    assert action_space_sizes == {"tls_1": 4}
+    assert phase_queue_traces == {
+        "tls_1": [
+            {"step": 1.0, "active_phase": 0, "phase_queues": [5, 2, 0, 0]},
+        ]
+    }
+
+
 def test_average_action_distribution_rows_aligns_steps_across_seeds():
     averaged = rllib_runner._average_action_distribution_rows(
         [
@@ -801,6 +850,29 @@ def test_build_validation_phase_queue_rows_averages_counts_and_keeps_active_phas
         "tls_a": [
             {"step": 1.0, "active_phase": 0.0, "phase_0": 5.0, "phase_1": 2.0},
             {"step": 2.0, "active_phase": 1.0, "phase_0": 3.0, "phase_1": 4.0},
+        ]
+    }
+
+
+def test_build_validation_phase_queue_rows_keeps_zero_only_phase_columns():
+    rows_by_agent = rllib_runner._build_validation_phase_queue_rows(
+        [
+            {
+                "tls_a": [
+                    {"step": 1.0, "active_phase": 0, "phase_queues": [4, 1, 0]},
+                ]
+            },
+            {
+                "tls_a": [
+                    {"step": 1.0, "active_phase": 0, "phase_queues": [6, 3, 0]},
+                ]
+            },
+        ]
+    )
+
+    assert rows_by_agent == {
+        "tls_a": [
+            {"step": 1.0, "active_phase": 0.0, "phase_0": 5.0, "phase_1": 2.0, "phase_2": 0.0},
         ]
     }
 
@@ -903,6 +975,72 @@ def test_log_validation_action_plot_images_emits_one_image_per_agent(monkeypatch
     assert isinstance(run.calls[1]["validation/actions_share/tls_2"], DummyImage)
     assert isinstance(run.calls[1]["validation/actions_timeline/tls_2"], DummyImage)
     assert isinstance(run.calls[1]["validation/phase_queue/tls_2"], DummyImage)
+
+
+def test_log_validation_action_plot_images_passes_full_phase_count_to_timeline_renderer(monkeypatch):
+    captured = {}
+
+    class DummyImage:
+        def __init__(self, image, caption=None):
+            self.image = image
+            self.caption = caption
+
+    class DummyWandb:
+        Image = DummyImage
+
+    class DummyRun:
+        def __init__(self):
+            self.calls = []
+
+        def log(self, payload):
+            self.calls.append(payload)
+
+    def fake_render_timeline(agent_id, actions, *, decision_seconds, num_actions=None, width=1040, height=420):
+        captured["agent_id"] = agent_id
+        captured["actions"] = list(actions)
+        captured["decision_seconds"] = decision_seconds
+        captured["num_actions"] = num_actions
+        captured["width"] = width
+        captured["height"] = height
+        return object()
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+    monkeypatch.setattr(rllib_runner, "_render_validation_action_plot_image", lambda *args, **kwargs: object())
+    monkeypatch.setattr(rllib_runner, "_render_validation_action_timeline_image", fake_render_timeline)
+    monkeypatch.setattr(rllib_runner, "_render_validation_phase_queue_image", lambda *args, **kwargs: object())
+    run = DummyRun()
+
+    rllib_runner._log_validation_action_plot_images(
+        run,
+        {
+            "tls_1": [
+                {"step": 1.0, "action_0": 1.0, "action_1": 0.0, "action_2": 0.0},
+                {"step": 2.0, "action_0": 0.5, "action_1": 0.5, "action_2": 0.0},
+            ],
+        },
+        {
+            "tls_1": [0, 1, 1, 0],
+        },
+        {
+            "tls_1": [
+                {"step": 1.0, "active_phase": 0.0, "phase_0": 4.0, "phase_1": 2.0, "phase_2": 0.0},
+            ],
+        },
+        pass_index=3,
+        env_step=120,
+        episode_index=18,
+        decision_seconds=5,
+    )
+
+    assert len(run.calls) == 1
+    assert captured == {
+        "agent_id": "tls_1",
+        "actions": [0, 1, 1, 0],
+        "decision_seconds": 5,
+        "num_actions": 3,
+        "width": 1040,
+        "height": 420,
+    }
 
 
 def test_extract_validation_seed_artifacts_parses_tripinfo_and_removes_temp_file(tmp_path):
