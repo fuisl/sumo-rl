@@ -1849,6 +1849,12 @@ def _ray_address(value: Any) -> Optional[str]:
     return raw_value
 
 
+def _is_auto_ray_address(address: Optional[str]) -> bool:
+    if address is None:
+        return False
+    return str(address).strip().lower() == "auto"
+
+
 def _is_existing_ray_address(address: Optional[str]) -> bool:
     if address is None:
         return False
@@ -1953,13 +1959,32 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
             ray_init_kwargs["num_cpus"] = ray_num_cpus
     if runtime_env_vars:
         ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
-    ray.init(**ray_init_kwargs)
+    connected_to_existing_cluster = _is_existing_ray_address(ray_address)
+    try:
+        ray.init(**ray_init_kwargs)
+    except ConnectionError:
+        if not _is_auto_ray_address(ray_address):
+            raise
+        fallback_ray_init_kwargs: Dict[str, Any] = {
+            "ignore_reinit_error": True,
+            "log_to_driver": False,
+            "include_dashboard": False,
+            "num_gpus": ray_num_gpus,
+        }
+        if ray_num_cpus is not None:
+            fallback_ray_init_kwargs["num_cpus"] = ray_num_cpus
+        if runtime_env_vars:
+            fallback_ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
+        print("RLlib Ray connection: address=auto but no running Ray cluster was found; starting a local Ray instance.")
+        ray.init(**fallback_ray_init_kwargs)
+        ray_address = None
+        connected_to_existing_cluster = False
     print(
         "RLlib CPU allocation: "
         f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
         f"native_num_threads={native_num_threads if native_num_threads is not None else 'preserve-env'}."
     )
-    if _is_existing_ray_address(ray_address):
+    if connected_to_existing_cluster:
         print(
             "RLlib Ray connection: "
             f"address={ray_address}; using existing cluster resources "
