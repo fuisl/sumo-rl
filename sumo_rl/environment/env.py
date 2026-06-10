@@ -66,8 +66,9 @@ def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
             last_error = exc
             if label is not None:
                 try:
-                    traci.switch(label)
-                    traci.close()
+                    if hasattr(traci, "switch"):
+                        traci.switch(label)
+                        traci.close()
                 except Exception:
                     pass
             if attempt + 1 >= TRACI_START_RETRIES:
@@ -208,7 +209,7 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.keep_tripinfo_output = keep_tripinfo_output
-        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo)
+        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo) or default_use_libsumo()
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
@@ -591,9 +592,11 @@ class SumoEnvironment(gym.Env):
         if getattr(self, "sumo", None) is None:
             return
 
-        if not self.use_libsumo:
+        if not self.use_libsumo and hasattr(traci, "switch"):
             traci.switch(self.label)
-        traci.close()
+            traci.close()
+        else:
+            self.sumo.close()
 
         if self.metrics and (
             not self.last_episode_summary

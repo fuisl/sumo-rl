@@ -52,7 +52,6 @@ def build_fgs_parallel_env(cfg: Any, run_dir: Path, model_config: Dict[str, Any]
     if seed is not None:
         kwargs["sumo_seed"] = int(seed)
     kwargs["single_agent"] = False
-    kwargs["use_libsumo"] = False
 
     factory = str(getattr(getattr(cfg, "env", None), "factory", "parallel_env") or "parallel_env")
     if factory in {"parallel_env", "env"}:

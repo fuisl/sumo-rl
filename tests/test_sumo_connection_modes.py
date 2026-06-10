@@ -9,7 +9,12 @@ from sumo_rl.environment import env as env_mod
 
 
 class _DummyConnection:
+    def __init__(self, on_close=None):
+        self._on_close = on_close
+
     def close(self):
+        if self._on_close is not None:
+            self._on_close()
         return None
 
 
@@ -21,9 +26,10 @@ class _DummyTrafficSignal:
 def test_sumo_environment_uses_labeled_traci_connections_when_libsumo_is_disabled(monkeypatch):
     start_calls = []
 
+    monkeypatch.delenv("LIBSUMO_AS_TRACI", raising=False)
     monkeypatch.setattr(env_mod.sumolib, "checkBinary", lambda name: name)
     monkeypatch.setattr(env_mod, "TrafficSignal", _DummyTrafficSignal)
-    monkeypatch.setattr(env_mod.traci, "switch", lambda label: None)
+    monkeypatch.setattr(env_mod.traci, "switch", lambda label: None, raising=False)
     monkeypatch.setattr(env_mod.traci, "close", lambda: None)
 
     def fake_start(cmd, *, label=None):
@@ -77,14 +83,41 @@ def test_sumo_environment_defaults_to_env_var_for_libsumo(monkeypatch):
     assert env_mod.default_use_libsumo() is True
 
 
+def test_sumo_environment_env_var_overrides_explicit_traci_mode(monkeypatch):
+    start_calls = []
+
+    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
+    monkeypatch.setattr(env_mod.sumolib, "checkBinary", lambda name: name)
+    monkeypatch.setattr(env_mod, "TrafficSignal", _DummyTrafficSignal)
+    monkeypatch.setattr(env_mod.traci, "close", lambda: None)
+
+    def fake_start(cmd, *, label=None):
+        start_calls.append({"cmd": list(cmd), "label": label})
+        return _DummyConnection()
+
+    monkeypatch.setattr(env_mod, "_start_traci_with_retries", fake_start)
+
+    env = env_mod.SumoEnvironment(
+        net_file="net.xml",
+        route_file="route.xml",
+        ts_ids=["tls_0"],
+        use_libsumo=False,
+    )
+
+    assert env.use_libsumo is True
+    assert start_calls[0]["label"] is None
+    env.close()
+
+
 def test_close_switches_traci_only_for_isolated_connections(monkeypatch):
     switch_calls = []
     close_calls = []
 
+    monkeypatch.delenv("LIBSUMO_AS_TRACI", raising=False)
     monkeypatch.setattr(env_mod.sumolib, "checkBinary", lambda name: name)
     monkeypatch.setattr(env_mod, "TrafficSignal", _DummyTrafficSignal)
     monkeypatch.setattr(env_mod, "_start_traci_with_retries", lambda cmd, *, label=None: _DummyConnection())
-    monkeypatch.setattr(env_mod.traci, "switch", lambda label: switch_calls.append(label))
+    monkeypatch.setattr(env_mod.traci, "switch", lambda label: switch_calls.append(label), raising=False)
     monkeypatch.setattr(env_mod.traci, "close", lambda: close_calls.append("close"))
 
     traci_env = env_mod.SumoEnvironment(
@@ -102,8 +135,8 @@ def test_close_switches_traci_only_for_isolated_connections(monkeypatch):
         ts_ids=["tls_0"],
         use_libsumo=True,
     )
-    libsumo_env.sumo = object()
+    libsumo_env.sumo = _DummyConnection(lambda: close_calls.append("libsumo_close"))
     libsumo_env.close()
 
     assert switch_calls == [traci_env.label]
-    assert close_calls == ["close", "close"]
+    assert close_calls == ["close", "libsumo_close"]

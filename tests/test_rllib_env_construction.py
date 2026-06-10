@@ -64,7 +64,7 @@ def test_build_sumo_parallel_env_calls_parallel_env_with_configured_kwargs(monke
     assert kwargs["num_seconds"] == 3600
     assert kwargs["sumo_seed"] == 11
     assert kwargs["single_agent"] is False
-    assert kwargs["use_libsumo"] is False
+    assert "use_libsumo" not in kwargs
 
 
 def test_build_multi_agent_policies_uses_post_reset_spaces(monkeypatch, tmp_path):

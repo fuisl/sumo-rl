@@ -66,7 +66,6 @@ def _with_colight_observation(cfg: Any, run_dir: Path, model_config: Dict[str, A
     if seed is not None:
         kwargs["sumo_seed"] = int(seed)
     kwargs["single_agent"] = False
-    kwargs["use_libsumo"] = False
     kwargs["observation_class"] = make_colight_observation_class(
         include_phase=bool(model_config.get("include_phase", True)),
         phase_encoding=str(model_config.get("phase_encoding", "one_hot")),

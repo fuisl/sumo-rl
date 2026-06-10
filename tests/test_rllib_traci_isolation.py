@@ -29,7 +29,7 @@ def _cfg():
     )
 
 
-def test_colight_builder_forces_traci_connections(monkeypatch, tmp_path):
+def test_colight_builder_does_not_override_libsumo_mode(monkeypatch, tmp_path):
     calls = []
 
     monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: calls.append(kwargs) or object())
@@ -37,10 +37,10 @@ def test_colight_builder_forces_traci_connections(monkeypatch, tmp_path):
 
     colight.build_colight_parallel_env(_cfg(), tmp_path, {}, seed=5)
 
-    assert calls[0]["use_libsumo"] is False
+    assert "use_libsumo" not in calls[0]
 
 
-def test_fgs_builder_forces_traci_connections(monkeypatch, tmp_path):
+def test_fgs_builder_does_not_override_libsumo_mode(monkeypatch, tmp_path):
     calls = []
 
     monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: calls.append(kwargs) or object())
@@ -48,10 +48,10 @@ def test_fgs_builder_forces_traci_connections(monkeypatch, tmp_path):
 
     fgs.build_fgs_parallel_env(_cfg(), tmp_path, {}, seed=5)
 
-    assert calls[0]["use_libsumo"] is False
+    assert "use_libsumo" not in calls[0]
 
 
-def test_fgsv2_builder_forces_traci_connections(monkeypatch, tmp_path):
+def test_fgsv2_builder_does_not_override_libsumo_mode(monkeypatch, tmp_path):
     calls = []
 
     monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: calls.append(kwargs) or object())
@@ -59,4 +59,4 @@ def test_fgsv2_builder_forces_traci_connections(monkeypatch, tmp_path):
 
     fgsv2.build_fgsv2_parallel_env(_cfg(), tmp_path, {}, seed=5)
 
-    assert calls[0]["use_libsumo"] is False
+    assert "use_libsumo" not in calls[0]
