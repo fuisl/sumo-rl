@@ -62,6 +62,7 @@ configs/algorithm/
   sac_mlp.yaml
   sac_dcrnn_actor.yaml
   sac_dcrnn_full.yaml
+  sac_dcrnn_shared_mlp.yaml
 ```
 
 The older `dcrnn.yaml` and `sac_custom.yaml` files are kept as compatibility

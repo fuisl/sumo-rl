@@ -229,6 +229,7 @@ python experiments/rllib.py algorithm=sac_dcrnn_actor scenario=resco_grid4x4 exp
 python experiments/rllib.py algorithm=sac_dcrnn_actor_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_dcrnn_full_mlp scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=sac_dcrnn_shared_mlp scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 Scenario-first RLlib presets are launched by keeping the config root at
@@ -324,7 +325,10 @@ behavior for the critic targets. This variant also supports independent
 policies only.
 `algorithm=sac_dcrnn_actor_mlp` and `algorithm=sac_dcrnn_full_mlp` keep those
 same branch layouts, but add one node-wise MLP layer before each enabled DCRNN
-encoder.
+encoder. Use `algorithm=sac_dcrnn_shared_mlp` when you want one shared
+DCRNN+MLP backbone across the SAC actor, `qf`, and `qf_twin` while keeping
+separate actor and critic heads. This variant also supports independent
+policies only.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash

@@ -41,8 +41,15 @@ DCRNN_ACTOR_KIND = "sac_dcrnn_actor"
 DCRNN_FULL_KIND = "sac_dcrnn_full"
 DCRNN_ACTOR_MLP_KIND = "sac_dcrnn_actor_mlp"
 DCRNN_FULL_MLP_KIND = "sac_dcrnn_full_mlp"
+DCRNN_SHARED_MLP_KIND = "sac_dcrnn_shared_mlp"
 CUSTOM_ALIASES = {"sac_custom"}
-GRAPH_KINDS = {DCRNN_ACTOR_KIND, DCRNN_FULL_KIND, DCRNN_ACTOR_MLP_KIND, DCRNN_FULL_MLP_KIND}
+GRAPH_KINDS = {
+    DCRNN_ACTOR_KIND,
+    DCRNN_FULL_KIND,
+    DCRNN_ACTOR_MLP_KIND,
+    DCRNN_FULL_MLP_KIND,
+    DCRNN_SHARED_MLP_KIND,
+}
 KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS}
 ALL_KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS, *CUSTOM_ALIASES}
 
@@ -109,6 +116,37 @@ def _with_pre_encoder_defaults(
     return model_config
 
 
+def _with_shared_dcrnn_encoder_defaults(
+    model_config: Dict[str, Any],
+    *,
+    architecture_tag: str,
+) -> Dict[str, Any]:
+    model_config = dict(model_config)
+    model_config.setdefault("architecture_tag", architecture_tag)
+    model_config["encoder_layout"] = "shared"
+    shared_encoder = dict(model_config.get("shared_encoder") or {})
+    shared_encoder.setdefault("type", "dcrnn")
+    shared_encoder.setdefault("hidden_dim", 128)
+    shared_encoder.setdefault("max_diffusion_step", 2)
+    shared_encoder.setdefault("num_rnn_layers", 1)
+    shared_encoder.setdefault("filter_type", "dual_random_walk")
+    model_config["shared_encoder"] = shared_encoder
+    return model_config
+
+
+def _with_shared_pre_encoder_defaults(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = dict(model_config)
+    shared_encoder = dict(model_config.get("shared_encoder") or {})
+    hidden_dim = int(shared_encoder.get("hidden_dim", shared_encoder.get("hid_dim", 128)))
+    pre_encoder = dict(shared_encoder.get("pre_encoder") or {})
+    pre_encoder.setdefault("enabled", True)
+    pre_encoder.setdefault("hidden_dim", hidden_dim)
+    pre_encoder.setdefault("activation", "relu")
+    shared_encoder["pre_encoder"] = pre_encoder
+    model_config["shared_encoder"] = shared_encoder
+    return model_config
+
+
 def _dcrnn_actor_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config = _with_dcrnn_encoder_defaults(
@@ -150,6 +188,17 @@ def _dcrnn_full_mlp_model_config(params: Dict[str, Any], graph_model_config: Dic
     return model_config
 
 
+def _dcrnn_shared_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = dict(params.get("model_config") or {})
+    model_config = _with_shared_dcrnn_encoder_defaults(
+        model_config,
+        architecture_tag=DCRNN_SHARED_MLP_KIND,
+    )
+    model_config = _with_shared_pre_encoder_defaults(model_config)
+    model_config.update(graph_model_config)
+    return model_config
+
+
 def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
@@ -168,6 +217,8 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
             model_config_builder = _dcrnn_actor_mlp_model_config
         elif algorithm_kind == DCRNN_FULL_KIND:
             model_config_builder = _dcrnn_full_model_config
+        elif algorithm_kind == DCRNN_SHARED_MLP_KIND:
+            model_config_builder = _dcrnn_shared_mlp_model_config
         else:
             model_config_builder = _dcrnn_full_mlp_model_config
         context, policy_model_configs = build_graph_algorithm_context(
@@ -190,6 +241,8 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
             if algorithm_kind == DCRNN_ACTOR_MLP_KIND
             else _dcrnn_full_model_config(params, {})
             if algorithm_kind == DCRNN_FULL_KIND
+            else _dcrnn_shared_mlp_model_config(params, {})
+            if algorithm_kind == DCRNN_SHARED_MLP_KIND
             else _dcrnn_full_mlp_model_config(params, {})
         )
         if algorithm_kind in GRAPH_KINDS

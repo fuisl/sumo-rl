@@ -340,6 +340,30 @@ class DCRNNBackbone(nn.Module):
     def from_critic_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
         return cls._from_custom_sac_encoder_config(observation_space, model_config, branch="critic")
 
+    @classmethod
+    def from_shared_sac_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+        custom_sac = dict(model_config.get("custom_sac", {}) or {}) if isinstance(model_config.get("custom_sac"), dict) else {}
+        encoder_config = dict(custom_sac.get("shared_encoder", {}) or {})
+        history_len, num_nodes, input_dim = observation_space.shape
+        del history_len
+        adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
+        hidden_dim = int(encoder_config.get("hidden_dim", encoder_config.get("hid_dim", 128)))
+        return cls(
+            input_dim=int(model_config.get("input_dim", input_dim)),
+            adjacency=adjacency,
+            num_nodes=int(model_config.get("num_nodes", num_nodes)),
+            agent_index=int(model_config["agent_index"]),
+            hidden_dim=hidden_dim,
+            max_diffusion_step=int(encoder_config.get("max_diffusion_step", 2)),
+            num_rnn_layers=int(encoder_config.get("num_rnn_layers", 1)),
+            filter_type=str(encoder_config.get("filter_type", "dual_random_walk")),
+            **cls._resolve_pre_encoder_kwargs(
+                encoder_config,
+                hidden_dim=hidden_dim,
+                fallback_enabled=False,
+            ),
+        )
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         obs = obs.float()
         if obs.ndim != 4:
