@@ -569,9 +569,11 @@ def _init_wandb(
         run.define_metric("train/*", step_metric="train/episode_index")
         run.define_metric("debug/*", step_metric="train/episode_index")
         run.define_metric("train/episode_index")
+        run.define_metric("train/rollout_index")
         run.define_metric("train/env_step")
         run.define_metric("validation/*", step_metric="validation/episode_index")
         run.define_metric("validation/episode_index")
+        run.define_metric("validation/rollout_index")
         run.define_metric("validation/env_step")
         if include_final_metrics:
             run.define_metric("eval/episode")
@@ -1167,6 +1169,7 @@ def _emit_baseline_reference_validation_rows(
     steps_per_episode = _episode_steps_from_cfg(cfg)
     for episode_index in range(stride, max_episode_index + 1, stride):
         row = dict(validation_row)
+        row["validation/rollout_index"] = float(episode_index)
         row["validation/episode_index"] = float(episode_index)
         row["validation/env_step"] = float(episode_index * steps_per_episode)
         row["validation/reference_line"] = True
@@ -1185,6 +1188,7 @@ def _static_validation_summary_row(
         "algorithm/kind": summary.get("algorithm/kind"),
         "static/policy": policy_name,
         "validation/env_step": float(step),
+        "validation/rollout_index": float(episode_index),
         "validation/episode_index": float(episode_index),
         "validation/pass_index": float(pass_index),
     }

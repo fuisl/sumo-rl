@@ -624,12 +624,16 @@ def apply_multi_agent_settings(config, context: RllibAlgorithmContext):
     )
 
 
-def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
-    reported_episodes = metrics.get("train/episodes_total")
-    if reported_episodes is not None:
-        return int(reported_episodes)
+def authoritative_rollout_index(metrics: Dict[str, Any], cfg: Any) -> int:
+    reported_episodes = metrics.get("train/rollout_index", metrics.get("train/episodes_total"))
+    if isinstance(reported_episodes, (int, float, np.integer, np.floating)) and not isinstance(reported_episodes, bool):
+        return int(float(reported_episodes))
     sampled_steps = int(metrics.get("train/env_steps_sampled") or 0)
     return sampled_steps // episode_steps(cfg)
+
+
+def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
+    return authoritative_rollout_index(metrics, cfg)
 
 
 def training_should_stop(metrics: Dict[str, Any], cfg: Any) -> bool:
@@ -717,6 +721,8 @@ def extract_rllib_result_metrics(result: Dict[str, Any], *, algorithm_kind: str,
             value = env_runner_metrics.get(source_key)
             if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
                 metrics[target_key] = float(value)
+    if "train/episodes_total" in metrics:
+        metrics["train/rollout_index"] = float(metrics["train/episodes_total"])
     if "train/env_steps_sampled" in metrics:
         metrics["train/env_step"] = metrics["train/env_steps_sampled"]
     evaluation_metrics = result.get("evaluation")
@@ -899,16 +905,14 @@ def build_training_episode_row(
     *,
     algorithm_kind: str,
     cfg: Any,
+    rollout_index: Optional[int] = None,
 ) -> Dict[str, Any]:
     row: Dict[str, Any] = {"algorithm/kind": algorithm_kind}
 
-    episode_index = episode_summary.get("episode/index")
-    if isinstance(episode_index, (int, float, np.integer, np.floating)):
-        row["train/episode_index"] = float(episode_index)
-    else:
-        fallback_episode = metrics.get("train/episodes_total")
-        if isinstance(fallback_episode, (int, float, np.integer, np.floating)):
-            row["train/episode_index"] = float(fallback_episode)
+    effective_rollout_index = authoritative_rollout_index(metrics, cfg) if rollout_index is None else int(rollout_index)
+    if effective_rollout_index > 0:
+        row["train/rollout_index"] = float(effective_rollout_index)
+        row["train/episode_index"] = float(effective_rollout_index)
 
     fallback_env_step = metrics.get("train/env_step", metrics.get("train/env_steps_sampled"))
     if isinstance(fallback_env_step, (int, float, np.integer, np.floating)) and not isinstance(fallback_env_step, bool):
@@ -918,6 +922,9 @@ def build_training_episode_row(
         _append_common_training_metrics(row, episode_summary)
 
     if trace_mode(cfg) == "debug":
+        episode_index = episode_summary.get("episode/index")
+        if isinstance(episode_index, (int, float, np.integer, np.floating)) and not isinstance(episode_index, bool):
+            row["debug/env_episode_index"] = float(episode_index)
         _append_debug_metrics(row, metrics)
     return row
 
@@ -935,18 +942,35 @@ def emit_training_episode_rows(
     if emit_metrics is None:
         return int(last_logged_episode)
 
-    rows_by_step: Dict[int, Dict[str, Any]] = {}
-    for episode_summary in episode_summaries:
-        row = build_training_episode_row(metrics, episode_summary, algorithm_kind=algorithm_kind, cfg=cfg)
-        row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
-        if row_step > int(last_logged_episode):
-            rows_by_step[row_step] = row
-
     completed_episodes = completed_training_episodes(metrics, cfg)
+    rows_by_step: Dict[int, Dict[str, Any]] = {}
+    remaining_slots = max(0, completed_episodes - int(last_logged_episode))
+    selected_summaries = list(episode_summaries[-remaining_slots:]) if remaining_slots > 0 else []
+    if selected_summaries:
+        start_rollout_index = max(int(last_logged_episode) + 1, completed_episodes - len(selected_summaries) + 1)
+        for offset, episode_summary in enumerate(selected_summaries):
+            rollout_value = start_rollout_index + offset
+            row = build_training_episode_row(
+                metrics,
+                episode_summary,
+                algorithm_kind=algorithm_kind,
+                cfg=cfg,
+                rollout_index=rollout_value,
+            )
+            if rollout_value > int(last_logged_episode):
+                rows_by_step[rollout_value] = row
+
     for episode_index in range(int(last_logged_episode) + 1, completed_episodes + 1):
         if episode_index not in rows_by_step:
-            row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind, cfg=cfg)
+            row = build_training_episode_row(
+                metrics,
+                {},
+                algorithm_kind=algorithm_kind,
+                cfg=cfg,
+                rollout_index=episode_index,
+            )
             row["train/episode_index"] = float(episode_index)
+            row["train/rollout_index"] = float(episode_index)
             rows_by_step[episode_index] = row
 
     current_last = int(last_logged_episode)

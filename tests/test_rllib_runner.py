@@ -388,6 +388,32 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_full(monkeypatch, tmp_
     assert built_env is graph_eval_env
 
 
+def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_shared_mlp(monkeypatch, tmp_path):
+    graph_eval_env = object()
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+    )
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="sac_dcrnn_shared_mlp",
+        policy_mode="independent",
+    )
+
+    assert built_env is graph_eval_env
+
+
 def test_build_eval_env_uses_flat_env_for_sac_builtin(monkeypatch, tmp_path):
     flat_eval_env = object()
 
@@ -447,10 +473,67 @@ def test_sync_env_runner_weights_for_evaluation_returns_false_without_sync_api()
     assert synced is False
 
 
-def test_compute_single_action_prefers_algo_compute_single_action_over_module_forward():
+def test_compute_single_action_prefers_module_forward_over_algo_compute_single_action():
+    class DummyColumns:
+        ACTIONS = "actions"
+        OBS = "obs"
+
+    class DummyTensor:
+        def __init__(self, values):
+            self._values = values
+
+        def unsqueeze(self, dim):
+            del dim
+            return self
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return self._values
+
+    class DummyTorch:
+        float32 = "float32"
+
+        @staticmethod
+        def as_tensor(values, dtype=None, device=None):
+            del dtype, device
+            return DummyTensor(values)
+
+        @staticmethod
+        def device(name):
+            return name
+
+        @staticmethod
+        def no_grad():
+            class _NoGrad:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, exc_type, exc, tb):
+                    del exc_type, exc, tb
+                    return False
+
+            return _NoGrad()
+
+    class DummyRayColumnsModule:
+        Columns = DummyColumns
+
+    class DummyModule:
+        def __init__(self):
+            self.calls = []
+
+        def forward_inference(self, batch):
+            self.calls.append(batch)
+            return {DummyColumns.ACTIONS: DummyTensor([2])}
+
     class DummyAlgo:
         def __init__(self):
             self.calls = []
+            self.module = DummyModule()
 
         def compute_single_action(self, obs, policy_id=None, explore=None):
             self.calls.append(
@@ -463,23 +546,42 @@ def test_compute_single_action_prefers_algo_compute_single_action_over_module_fo
             return 3
 
         def get_module(self, policy_id=None):
-            raise AssertionError("module.forward_inference should not be used when compute_single_action exists")
+            self.calls.append({"get_module_policy_id": policy_id})
+            return self.module
 
     algo = DummyAlgo()
 
-    action = rllib_runner._compute_single_action(algo, {"graph": [1, 2, 3]}, policy_id="tls_1")
+    original_torch = sys.modules.get("torch")
+    original_ray = sys.modules.get("ray")
+    original_ray_rllib = sys.modules.get("ray.rllib")
+    original_ray_rllib_core = sys.modules.get("ray.rllib.core")
+    original_ray_rllib_core_columns = sys.modules.get("ray.rllib.core.columns")
+    try:
+        sys.modules["torch"] = DummyTorch
+        sys.modules["ray"] = SimpleNamespace()
+        sys.modules["ray.rllib"] = SimpleNamespace()
+        sys.modules["ray.rllib.core"] = SimpleNamespace()
+        sys.modules["ray.rllib.core.columns"] = DummyRayColumnsModule
 
-    assert action == 3
-    assert algo.calls == [
-        {
-            "obs": {"graph": [1, 2, 3]},
-            "policy_id": "tls_1",
-            "explore": False,
-        }
-    ]
+        action = rllib_runner._compute_single_action(algo, {"graph": [1, 2, 3]}, policy_id="tls_1")
+    finally:
+        for name, original in (
+            ("torch", original_torch),
+            ("ray", original_ray),
+            ("ray.rllib", original_ray_rllib),
+            ("ray.rllib.core", original_ray_rllib_core),
+            ("ray.rllib.core.columns", original_ray_rllib_core_columns),
+        ):
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+    assert action == 2
+    assert algo.calls == [{"get_module_policy_id": "tls_1"}]
 
 
-def test_compute_single_action_falls_back_to_module_when_rllib_compute_single_action_hits_env_runner_gap():
+def test_compute_single_action_uses_module_forward_when_rllib_compute_single_action_hits_env_runner_gap():
     class DummyColumns:
         ACTIONS = "actions"
         OBS = "obs"
@@ -569,6 +671,39 @@ def test_compute_single_action_falls_back_to_module_when_rllib_compute_single_ac
                 sys.modules[name] = original
 
     assert action == 2
+
+
+def test_compute_single_action_falls_back_to_algo_compute_single_action_without_module():
+    class DummyAlgo:
+        def __init__(self):
+            self.calls = []
+
+        def get_module(self, policy_id=None):
+            del policy_id
+            raise RuntimeError("module is unavailable")
+
+        def compute_single_action(self, obs, policy_id=None, explore=None):
+            self.calls.append(
+                {
+                    "obs": obs,
+                    "policy_id": policy_id,
+                    "explore": explore,
+                }
+            )
+            return 3
+
+    algo = DummyAlgo()
+
+    action = rllib_runner._compute_single_action(algo, {"graph": [1, 2, 3]}, policy_id="tls_1")
+
+    assert action == 3
+    assert algo.calls == [
+        {
+            "obs": {"graph": [1, 2, 3]},
+            "policy_id": "tls_1",
+            "explore": False,
+        }
+    ]
 
 
 def test_evaluate_validation_metrics_use_episode_summary_and_average_across_eval_seeds(monkeypatch, tmp_path):
@@ -962,6 +1097,7 @@ def test_log_validation_action_plot_images_emits_one_image_per_agent(monkeypatch
     )
 
     assert len(run.calls) == 2
+    assert run.calls[0]["validation/rollout_index"] == 18.0
     assert run.calls[0]["validation/episode_index"] == 18.0
     assert run.calls[0]["validation/pass_index"] == 3.0
     assert run.calls[0]["validation/env_step"] == 120.0
@@ -1183,6 +1319,7 @@ def test_log_validation_tripinfo_distribution_images_emits_network_level_media(m
     )
 
     assert len(run.calls) == 1
+    assert run.calls[0]["validation/rollout_index"] == 21.0
     assert run.calls[0]["validation/episode_index"] == 21.0
     assert run.calls[0]["validation/pass_index"] == 4.0
     assert run.calls[0]["validation/env_step"] == 240.0
@@ -1608,6 +1745,7 @@ def test_training_episode_row_uses_episode_cadence_and_resco_metrics():
 
     row = build_training_episode_row(metrics, episode_summary, algorithm_kind="ppo", cfg=cfg)
 
+    assert row["train/rollout_index"] == 2.0
     assert row["train/episode_index"] == 2.0
     assert row["train/env_step"] == 40.0
     assert row["train/reward_mean"] == 4.5
@@ -1660,8 +1798,40 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
 
     assert last_logged == 2
     assert [step for step, _ in emitted] == [1, 2]
+    assert [row["train/rollout_index"] for _, row in emitted] == [1.0, 2.0]
+    assert [row["train/episode_index"] for _, row in emitted] == [1.0, 2.0]
     assert emitted[0][1]["train/resco_wait_mean"] == 5.0
     assert emitted[1][1]["train/resco_wait_mean"] == 6.0
+
+
+def test_rllib_training_episode_emission_clamps_env_local_index_to_rllib_rollout_count():
+    cfg = SimpleNamespace(
+        experiment=SimpleNamespace(episodes=20, episode_seconds=100),
+        logging=SimpleNamespace(train_log_freq_episodes=1, train_log_freq_steps=1, log_freq=1000, trace_mode="debug"),
+    )
+    metrics = {
+        "algorithm/kind": "dqn",
+        "train/episodes_total": 13.0,
+        "train/env_step": 130.0,
+        "train/dqn/replay/num_added": 999.0,
+    }
+    emitted = []
+
+    last_logged = emit_training_episode_rows(
+        metrics,
+        [{"episode/index": 30.0, "resco_wait_mean": 9.0}],
+        cfg,
+        algorithm_kind="dqn",
+        last_logged_episode=12,
+        emit_metrics=lambda row, step: emitted.append((step, row)),
+    )
+
+    assert last_logged == 13
+    assert [step for step, _ in emitted] == [13]
+    assert emitted[0][1]["train/rollout_index"] == 13.0
+    assert emitted[0][1]["train/episode_index"] == 13.0
+    assert emitted[0][1]["debug/env_episode_index"] == 30.0
+    assert emitted[0][1]["train/resco_wait_mean"] == 9.0
 
 
 def test_reset_only_episode_summaries_are_not_logged_as_zero_metrics():
@@ -1714,9 +1884,22 @@ def test_rllib_training_episode_emission_falls_back_to_completed_episode_counter
 
     assert last_logged == 3
     assert [step for step, _ in emitted] == [1, 2, 3]
+    assert [row["train/rollout_index"] for _, row in emitted] == [1.0, 2.0, 3.0]
     assert [row["train/episode_index"] for _, row in emitted] == [1.0, 2.0, 3.0]
     assert all(row["train/env_step"] == 60.0 for _, row in emitted)
     assert all("train/reward_mean" not in row for _, row in emitted)
+
+
+def test_completed_training_episodes_ignores_off_policy_replay_activity_for_rollout_count():
+    cfg = SimpleNamespace(experiment=SimpleNamespace(episode_seconds=100))
+    metrics = {
+        "train/episodes_total": 2.0,
+        "train/env_steps_sampled": 500.0,
+        "train/dqn/replay/num_added": 5000.0,
+        "train/dqn/replay/num_sampled": 9000.0,
+    }
+
+    assert completed_training_episodes(metrics, cfg) == 2
 
 
 def test_trace_mode_defaults_to_training():
@@ -1750,6 +1933,7 @@ def test_debug_trace_mode_moves_internal_metrics_under_debug_namespace():
     row = build_training_episode_row(metrics, episode_summary, algorithm_kind="ppo", cfg=cfg)
 
     assert row["train/efficiency_total_arrived"] == 8.0
+    assert row["debug/env_episode_index"] == 2.0
     assert row["debug/reward/tls_1"] == 2.0
     assert row["debug/efficiency_total_running"] == 5.0
     assert row["debug/episode_return_mean"] == 4.5
@@ -1935,6 +2119,9 @@ def test_validation_summary_row_maps_final_metrics_to_validation_namespace():
             "algorithm/kind": "ppo",
             "validation/reward_mean": 12.0,
             "validation/resco_delay_mean": 4.0,
+            "validation/env_step": 3600.0,
+            "validation/rollout_index": 99.0,
+            "validation/episode_index": 99.0,
             "validation/efficiency_total_arrived": 8.0,
             "validation/safety_total_collisions": 0.0,
             "warnings/missing_tripinfo": 0.0,
@@ -1947,6 +2134,7 @@ def test_validation_summary_row_maps_final_metrics_to_validation_namespace():
 
     assert row["algorithm/kind"] == "ppo"
     assert row["validation/env_step"] == 100.0
+    assert row["validation/rollout_index"] == 5.0
     assert row["validation/episode_index"] == 5.0
     assert row["validation/reward_mean"] == 12.0
     assert row["validation/resco_delay_mean"] == 4.0
@@ -2146,9 +2334,11 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert ray_init_calls[0]["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
     validation_rows = [args[2] for args, kwargs in logged_rows if isinstance(args[2], dict) and "validation/env_step" in args[2]]
     assert [row["validation/pass_index"] for row in validation_rows] == [1.0, 2.0, 3.0, 4.0]
+    assert all(row["validation/rollout_index"] == 4.0 for row in validation_rows)
     assert all(row["validation/episode_index"] == 4.0 for row in validation_rows)
     assert result["validation/resco_delay_mean"] == 13.0
     assert result["validation/env_step"] == 40.0
+    assert result["validation/rollout_index"] == 4.0
     assert result["validation/episode_index"] == 4.0
     assert result["validation/pass_index"] == 4.0
     assert wandb_run.summary["validation/resco_delay_mean"] == 13.0
@@ -2158,6 +2348,16 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert wandb_run.summary["best_validation/resco_delay_mean"] == 9.0
     assert wandb_run.summary["best_validation/pass_index"] == 2.0
     assert wandb_run.finished is True
+
+
+def test_summary_episode_index_prefers_rollout_index():
+    metrics = {
+        "train/rollout_index": 13.0,
+        "train/episode_index": 30.0,
+        "train/episodes_total": 30.0,
+    }
+
+    assert rllib_runner._summary_episode_index_from_metrics(metrics) == 13
 
 
 def test_train_rllib_writes_best_summary_on_interrupt(monkeypatch, tmp_path):
@@ -2330,6 +2530,7 @@ def test_init_wandb_binds_debug_metrics_to_train_episode_index(monkeypatch, tmp_
     assert result is run
     assert (("train/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
     assert (("debug/*",), {"step_metric": "train/episode_index"}) in run.metric_calls
+    assert (("train/rollout_index",), {}) in run.metric_calls
 
 
 def test_init_wandb_uses_experiment_name_as_run_name(monkeypatch, tmp_path):
@@ -2410,5 +2611,6 @@ def test_init_wandb_can_skip_final_metric_definitions(monkeypatch, tmp_path):
 
     assert result is run
     assert (("validation/*",), {"step_metric": "validation/episode_index"}) in run.metric_calls
+    assert (("validation/rollout_index",), {}) in run.metric_calls
     assert all(args != ("final/*",) for args, kwargs in run.metric_calls)
     assert all(args != ("eval/episode",) for args, kwargs in run.metric_calls)

@@ -58,6 +58,7 @@ from sumo_rl.agents.rllib_common import (
     policy_id_for_agent as _policy_id_for_agent,
     policy_mode as _policy_mode,
     scenario_factory_name,
+    validation_interval_episodes,
 )
 SUPPORTED_RLLIB_ALGORITHMS = {
     "ppo",
@@ -76,6 +77,7 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     "sac_dcrnn_actor_mlp",
     "sac_dcrnn_full",
     "sac_dcrnn_full_mlp",
+    "sac_dcrnn_shared_mlp",
     "sac_custom",
 }
 
@@ -156,6 +158,7 @@ def _algorithm_module(algorithm_kind: str):
         "sac_dcrnn_actor_mlp",
         "sac_dcrnn_full",
         "sac_dcrnn_full_mlp",
+        "sac_dcrnn_shared_mlp",
     }:
         return importlib.import_module("sumo_rl.agents.sac.sac")
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
@@ -173,6 +176,7 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
         "sac_dcrnn_actor_mlp",
         "sac_dcrnn_full",
         "sac_dcrnn_full_mlp",
+        "sac_dcrnn_shared_mlp",
     }:
         return module.build_config(cfg, run_dir, algorithm_kind=algorithm_kind)
     return module.build_config(cfg, run_dir)
@@ -190,6 +194,7 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
         "sac_dcrnn_actor_mlp",
         "sac_dcrnn_full",
         "sac_dcrnn_full_mlp",
+        "sac_dcrnn_shared_mlp",
     }:
         module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
     else:
@@ -197,32 +202,12 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
 
 
 def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
-    compute_single_action = getattr(algo, "compute_single_action", None)
-    if callable(compute_single_action):
-        try:
-            if policy_id is None:
-                action = compute_single_action(obs, explore=False)
-            else:
-                action = compute_single_action(obs, policy_id=policy_id, explore=False)
-            return action[0] if isinstance(action, tuple) else action
-        except AttributeError:
-            # Some RLlib API-stack combinations route through env runners that
-            # do not expose `get_policy` for `compute_single_action()`.
-            pass
-
-    get_policy = getattr(algo, "get_policy", None)
-    if callable(get_policy):
-        try:
-            policy = get_policy(policy_id) if policy_id else get_policy()
-        except Exception:
-            policy = None
-        if policy is not None and hasattr(policy, "compute_single_action"):
-            action = policy.compute_single_action(obs, explore=False)
-            return action[0] if isinstance(action, tuple) else action
-
     get_module = getattr(algo, "get_module", None)
     if callable(get_module):
-        module = get_module(policy_id) if policy_id is not None else get_module()
+        try:
+            module = get_module(policy_id) if policy_id is not None else get_module()
+        except Exception:
+            module = None
         if module is not None and hasattr(module, "forward_inference"):
             import torch
             from ray.rllib.core.columns import Columns
@@ -249,6 +234,29 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
             if hasattr(action, "detach"):
                 action = action.detach().cpu().numpy()
             return np.asarray(action).reshape(-1)[0].item()
+
+    compute_single_action = getattr(algo, "compute_single_action", None)
+    if callable(compute_single_action):
+        try:
+            if policy_id is None:
+                action = compute_single_action(obs, explore=False)
+            else:
+                action = compute_single_action(obs, policy_id=policy_id, explore=False)
+            return action[0] if isinstance(action, tuple) else action
+        except AttributeError:
+            # Some RLlib API-stack combinations route through env runners that
+            # do not expose `get_policy` for `compute_single_action()`.
+            pass
+
+    get_policy = getattr(algo, "get_policy", None)
+    if callable(get_policy):
+        try:
+            policy = get_policy(policy_id) if policy_id else get_policy()
+        except Exception:
+            policy = None
+        if policy is not None and hasattr(policy, "compute_single_action"):
+            action = policy.compute_single_action(obs, explore=False)
+            return action[0] if isinstance(action, tuple) else action
     raise AttributeError("Algorithm does not expose a usable validation inference interface.")
 
 
@@ -263,6 +271,7 @@ def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind
         "sac_dcrnn_actor_mlp",
         "sac_dcrnn_full",
         "sac_dcrnn_full_mlp",
+        "sac_dcrnn_shared_mlp",
     }:
         return module.build_graph_eval_env(cfg, run_dir, seed=seed)
     build_eval_env = getattr(module, "build_eval_env", None)
@@ -1269,6 +1278,7 @@ def _log_validation_action_plot_images(
             _count_prefixed_series_keys(phase_queue_rows, "phase_"),
         )
         payload = {
+            "validation/rollout_index": float(episode_index),
             "validation/episode_index": float(episode_index),
             "validation/pass_index": float(pass_index),
             "validation/env_step": float(env_step),
@@ -1326,6 +1336,7 @@ def _log_validation_tripinfo_distribution_images(
     import wandb
 
     payload = {
+        "validation/rollout_index": float(episode_index),
         "validation/episode_index": float(episode_index),
         "validation/pass_index": float(pass_index),
         "validation/env_step": float(env_step),
@@ -1767,11 +1778,14 @@ def _evaluate(
 def _validation_summary_row(summary: Dict[str, Any], *, step: int, episode_index: int) -> Dict[str, Any]:
     row: Dict[str, Any] = {
         "validation/env_step": float(step),
+        "validation/rollout_index": float(episode_index),
         "validation/episode_index": float(episode_index),
     }
     for key, value in summary.items():
         if key == "algorithm/kind":
             row[key] = value
+        elif key in {"validation/env_step", "validation/rollout_index", "validation/episode_index"}:
+            continue
         elif key.startswith("validation/"):
             row[key] = value
         elif key.startswith("warnings/"):
@@ -1792,7 +1806,7 @@ def _summary_step_from_metrics(metrics: Dict[str, Any]) -> int:
 
 
 def _summary_episode_index_from_metrics(metrics: Dict[str, Any]) -> int:
-    candidate = metrics.get("train/episode_index", metrics.get("train/episodes_total"))
+    candidate = metrics.get("train/rollout_index", metrics.get("train/episode_index", metrics.get("train/episodes_total")))
     if isinstance(candidate, (int, float, np.integer, np.floating)) and not isinstance(candidate, bool):
         return int(float(candidate))
     return 0

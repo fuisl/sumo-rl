@@ -368,6 +368,7 @@ def test_emit_baseline_reference_validation_rows_replays_constant_validation_poi
     finally:
         _RUNNER_MODULE._log_outputs = original_log_outputs
 
+    assert [metrics["validation/rollout_index"] for metrics, _step in calls] == [5.0, 10.0, 15.0]
     assert [metrics["validation/episode_index"] for metrics, _step in calls] == [5.0, 10.0, 15.0]
     assert [metrics["validation/env_step"] for metrics, _step in calls] == [3600.0, 7200.0, 10800.0]
     assert all(metrics["validation/resco_delay_mean"] == 12.0 for metrics, _step in calls)
@@ -393,6 +394,7 @@ def test_static_validation_summary_row_keeps_only_validation_and_warning_metrics
     assert row["algorithm/kind"] == "fixed_time"
     assert row["static/policy"] == "fixed_time"
     assert row["validation/env_step"] == 3600.0
+    assert row["validation/rollout_index"] == 5.0
     assert row["validation/episode_index"] == 5.0
     assert row["validation/pass_index"] == 1.0
     assert row["validation/resco_delay_mean"] == 7.5
@@ -733,6 +735,7 @@ def test_run_validation_only_static_baseline_logs_only_repeated_validation_rows_
         _RUNNER_MODULE._log_outputs = original_log_outputs
         _RUNNER_MODULE._prepare_env_kwargs = original_prepare_env_kwargs
 
+    assert [row["validation/rollout_index"] for row, _step in logged_rows] == [5.0, 10.0, 15.0]
     assert [row["validation/episode_index"] for row, _step in logged_rows] == [5.0, 10.0, 15.0]
     assert [row["validation/env_step"] for row, _step in logged_rows] == [100.0, 200.0, 300.0]
     assert all(row["validation/pass_index"] == 1.0 for row, _step in logged_rows)
