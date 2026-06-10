@@ -118,3 +118,6 @@ outputs/
 multirun/
 
 .netrc
+
+# pytest temp
+.pytest_tmp/
