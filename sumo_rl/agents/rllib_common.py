@@ -650,6 +650,11 @@ def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
     return authoritative_rollout_index(metrics, cfg)
 
 
+def training_episode_jump(metrics: Dict[str, Any], cfg: Any, *, last_completed_episode: int) -> int:
+    current_completed_episode = completed_training_episodes(metrics, cfg)
+    return max(0, current_completed_episode - int(last_completed_episode))
+
+
 def training_should_stop(metrics: Dict[str, Any], cfg: Any) -> bool:
     target_episodes = training_episode_target(cfg)
     return completed_training_episodes(metrics, cfg) >= target_episodes
@@ -907,6 +912,9 @@ def _append_debug_metrics(row: Dict[str, Any], metrics: Dict[str, Any]) -> None:
     for source_key, target_key in exact_map.items():
         _copy_numeric_metric(row, target_key, metrics.get(source_key))
     for source_key, value in metrics.items():
+        if source_key.startswith("debug/"):
+            _copy_numeric_metric(row, source_key, value)
+    for source_key, value in metrics.items():
         for prefix, replacement in prefix_map.items():
             if source_key.startswith(prefix):
                 _copy_numeric_metric(row, source_key.replace(prefix, replacement, 1), value)
@@ -931,6 +939,8 @@ def build_training_episode_row(
     fallback_env_step = metrics.get("train/env_step", metrics.get("train/env_steps_sampled"))
     if isinstance(fallback_env_step, (int, float, np.integer, np.floating)) and not isinstance(fallback_env_step, bool):
         row["train/env_step"] = float(fallback_env_step)
+    for source_key in ("train/observed_completed_episodes_total", "train/observed_completed_episodes_jump"):
+        _copy_numeric_metric(row, source_key, metrics.get(source_key))
 
     if isinstance(episode_summary, dict):
         _append_common_training_metrics(row, episode_summary)
@@ -957,53 +967,32 @@ def emit_training_episode_rows(
         return int(last_logged_episode)
 
     completed_episodes = completed_training_episodes(metrics, cfg)
-    rows_by_step: Dict[int, Dict[str, Any]] = {}
-    remaining_slots = max(0, completed_episodes - int(last_logged_episode))
-    selected_summaries = list(episode_summaries[-remaining_slots:]) if remaining_slots > 0 else []
-    if selected_summaries:
-        start_rollout_index = max(int(last_logged_episode) + 1, completed_episodes - len(selected_summaries) + 1)
-        for offset, episode_summary in enumerate(selected_summaries):
-            rollout_value = start_rollout_index + offset
-            row = build_training_episode_row(
-                metrics,
-                episode_summary,
-                algorithm_kind=algorithm_kind,
-                cfg=cfg,
-                rollout_index=rollout_value,
-            )
-            if rollout_value > int(last_logged_episode):
-                rows_by_step[rollout_value] = row
-
-    for episode_index in range(int(last_logged_episode) + 1, completed_episodes + 1):
-        if episode_index not in rows_by_step:
-            row = build_training_episode_row(
-                metrics,
-                {},
-                algorithm_kind=algorithm_kind,
-                cfg=cfg,
-                rollout_index=episode_index,
-            )
-            row["train/episode_index"] = float(episode_index)
-            row["train/rollout_index"] = float(episode_index)
-            rows_by_step[episode_index] = row
-
     current_last = int(last_logged_episode)
-    for row_step in sorted(rows_by_step):
-        if row_step <= current_last:
-            continue
-        if not should_log_training_episode(row_step, cfg, last_logged_episode=current_last, force=force):
-            continue
-        emit_metrics(rows_by_step[row_step], row_step)
-        current_last = row_step
-
-    if force and current_last == int(last_logged_episode) and not rows_by_step:
+    if completed_episodes <= current_last:
+        if not force:
+            return current_last
         row = build_training_episode_row(metrics, {}, algorithm_kind=algorithm_kind, cfg=cfg)
         row_step = int(row.get("train/episode_index") or row.get("train/episodes_total") or 0)
-        if row_step > 0:
+        if row_step > 0 and row_step > current_last:
             emit_metrics(row, row_step)
-            current_last = row_step
+            return row_step
+        return current_last
 
-    return current_last
+    if not should_log_training_episode(completed_episodes, cfg, last_logged_episode=current_last, force=force):
+        return current_last
+
+    latest_summary = episode_summaries[-1] if episode_summaries else {}
+    row = build_training_episode_row(
+        metrics,
+        latest_summary,
+        algorithm_kind=algorithm_kind,
+        cfg=cfg,
+        rollout_index=completed_episodes,
+    )
+    row["train/episode_index"] = float(completed_episodes)
+    row["train/rollout_index"] = float(completed_episodes)
+    emit_metrics(row, completed_episodes)
+    return completed_episodes
 
 
 def emit_validation_if_due(
