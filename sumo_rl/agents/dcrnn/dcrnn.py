@@ -250,6 +250,7 @@ def train(
         result = algo.train()
         metrics = extract_training_metrics(result, iteration)
         progress_jump = training_episode_jump(metrics, cfg, last_completed_episode=last_completed_episode)
+        metrics["train/rllib/rollout_jump"] = float(progress_jump)
         metrics["debug/rllib/rollout_jump"] = float(progress_jump)
         episode_summaries = callbacks_class.drain_pending_episode_summaries()
         observed_completed_episodes += len(episode_summaries)

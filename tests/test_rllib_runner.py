@@ -1813,6 +1813,7 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
         "train/episode_return_mean": 4.5,
         "train/episodes_total": 2.0,
         "train/iteration": 7,
+        "train/rllib/rollout_jump": 2.0,
     }
     emitted = []
 
@@ -1832,6 +1833,7 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
     assert [step for step, _ in emitted] == [1, 2]
     assert [row["train/rollout_index"] for _, row in emitted] == [1.0, 2.0]
     assert [row["train/episode_index"] for _, row in emitted] == [1.0, 2.0]
+    assert all(row["train/rllib/rollout_jump"] == 2.0 for _, row in emitted)
     assert emitted[0][1]["train/resco_wait_mean"] == 5.0
     assert emitted[1][1]["train/resco_wait_mean"] == 6.0
 
