@@ -1,4 +1,4 @@
-"""RLlib SAC module for FGS."""
+"""RLlib RLModules for FGS."""
 
 from __future__ import annotations
 
@@ -317,6 +317,119 @@ def build_fgs_sac_module_spec(
 
 
 def build_fgs_sac_multi_module_spec(
+    rl_module_specs: Dict[str, Any],
+    *,
+    model_config: Optional[Dict[str, Any]] = None,
+):
+    from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+
+    return MultiRLModuleSpec(
+        rl_module_specs=rl_module_specs,
+        model_config=normalize_fgs_model_config(model_config),
+    )
+
+
+def build_fgs_ppo_module_class():
+    import torch
+    from ray.rllib.algorithms.ppo.default_ppo_rl_module import DefaultPPORLModule
+    from ray.rllib.core.columns import Columns
+    from ray.rllib.core.rl_module.torch import TorchRLModule
+
+    class FGSPPOTorchRLModule(TorchRLModule, DefaultPPORLModule):
+        """PPO module with FGS graph encoding and decentralized ego heads."""
+
+        def setup(self):
+            if not isinstance(self.action_space, gym.spaces.Discrete):
+                raise ValueError("FGS PPO requires a discrete traffic-signal action space.")
+            if not isinstance(self.observation_space, gym.spaces.Dict):
+                raise ValueError("FGS PPO requires graph Dict observations from FGSGraphParallelEnv.")
+            spaces = self.observation_space.spaces
+            self.model_config = normalize_fgs_model_config(dict(self.model_config or {}))
+            self.num_nodes = int(spaces["node_features"].shape[0])
+            self.node_feature_dim = int(spaces["node_features"].shape[-1])
+            self.num_actions = int(self.action_space.n)
+            self.invalid_action_value = float(self.model_config.get("invalid_action_value", -1.0e9))
+            value_hidden_dim = int(self.model_config.get("value_hidden_dim", self.model_config.get("hidden_dim", 128)))
+            policy_hidden_dim = int(self.model_config.get("policy_hidden_dim", self.model_config.get("hidden_dim", 128)))
+
+            self.encoder = FGSGraphEncoder(
+                node_feature_dim=self.node_feature_dim,
+                num_nodes=self.num_nodes,
+                num_actions=self.num_actions,
+                model_config=self.model_config,
+            )
+            self.policy_head = torch.nn.Sequential(
+                torch.nn.Linear(self.encoder.output_dim, policy_hidden_dim),
+                torch.nn.ReLU(),
+                torch.nn.Linear(policy_hidden_dim, self.num_actions),
+            )
+            self.value_head = torch.nn.Sequential(
+                torch.nn.Linear(self.encoder.output_dim, value_hidden_dim),
+                torch.nn.ReLU(),
+                torch.nn.Linear(value_hidden_dim, 1),
+            )
+
+        def _masked_logits(self, logits, mask):
+            if mask is None:
+                return logits
+            return logits.masked_fill((mask > 0).logical_not(), self.invalid_action_value)
+
+        def _forward_outputs(self, obs: Dict[str, torch.Tensor], *, include_values: bool) -> Dict[str, torch.Tensor]:
+            encoded = self.encoder(obs)
+            logits = self._masked_logits(self.policy_head(encoded["ego"]), obs.get("action_mask"))
+            output = {Columns.ACTION_DIST_INPUTS: logits}
+            if include_values:
+                output[Columns.VF_PREDS] = self.value_head(encoded["ego"]).squeeze(-1)
+            return output
+
+        def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=False)
+
+        def _forward_inference(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=False)
+
+        def _forward_exploration(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=True)
+
+        def _forward_train(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=True)
+
+        def compute_values(self, batch: Dict[str, Any], embeddings=None):
+            del embeddings
+            encoded = self.encoder(batch[Columns.OBS])
+            return self.value_head(encoded["ego"]).squeeze(-1)
+
+        def get_initial_state(self) -> dict:
+            return {}
+
+        def get_non_inference_attributes(self):
+            return ["value_head"]
+
+    FGSPPOTorchRLModule.__name__ = "FGSPPOTorchRLModule"
+    return FGSPPOTorchRLModule
+
+
+def build_fgs_ppo_module_spec(
+    observation_space,
+    action_space,
+    *,
+    model_config: Optional[Dict[str, Any]] = None,
+):
+    from ray.rllib.core.rl_module.rl_module import RLModuleSpec
+
+    return RLModuleSpec(
+        module_class=build_fgs_ppo_module_class(),
+        observation_space=observation_space,
+        action_space=action_space,
+        model_config=normalize_fgs_model_config(model_config),
+    )
+
+
+def build_fgs_ppo_multi_module_spec(
     rl_module_specs: Dict[str, Any],
     *,
     model_config: Optional[Dict[str, Any]] = None,

@@ -1,0 +1,32 @@
+# @package _global_
+defaults:
+  - /rllib
+  - override /scenario: resco_ingolstadt21
+  - override /algorithm: fgs_ppo
+  - _self_
+
+experiment:
+  name: ${scenario.name}__fgs_frap_gatv2_ppo
+
+algorithm:
+  params:
+    model_config:
+      architecture_tag: fgs_frap_gatv2_ppo
+      local_encoder:
+        type: frap
+        output_dim: 128
+        frap:
+          demand_shape: 2
+          demand_layout: split
+          observation_has_phase: true
+          observation_has_min_green: true
+          conv_units: 32
+      communication:
+        enabled: true
+        type: gatv2
+        num_heads: 5
+        head_dim: 16
+        output_dim: 128
+      topology:
+        source: tls_super_edges
+        render: true

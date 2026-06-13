@@ -42,7 +42,18 @@ configs/presets/resco_cologne8/
   fgs_mlp_gat_sac.yaml
   fgs_frap_gatv2_sac.yaml
   fgs_mlp_gatv2_sac.yaml
+  fgs_frap_gatv2_ppo.yaml
+  fgs_mlp_gat_ppo.yaml
+  fgs_mlp_gatv2_ppo.yaml
+configs/presets/resco_ingolstadt21/
+  fgs_frap_gatv2_ppo.yaml
+  fgs_mlp_gat_ppo.yaml
+  fgs_mlp_gatv2_ppo.yaml
+  fgs_mlp_gatv2_sac.yaml
 ```
+
+The full FGS v1 startup and training pipeline is documented in
+`docs/thesis/fgs_v1_pipeline.md`.
 
 The static baseline presets now follow the RLlib validation seed layout:
 
@@ -58,6 +69,7 @@ configs/algorithm/
   dqn.yaml
   dqn_dcrnn.yaml
   fgs.yaml
+  fgs_ppo.yaml
   sac_builtin.yaml
   sac_mlp.yaml
   sac_dcrnn_actor.yaml

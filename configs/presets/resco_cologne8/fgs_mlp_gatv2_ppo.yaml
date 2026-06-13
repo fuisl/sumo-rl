@@ -1,0 +1,28 @@
+# @package _global_
+defaults:
+  - /rllib
+  - override /scenario: resco_cologne8
+  - override /algorithm: fgs_ppo
+  - _self_
+
+experiment:
+  name: ${scenario.name}__fgs_mlp_gatv2_ppo
+
+algorithm:
+  params:
+    model_config:
+      architecture_tag: fgs_mlp_gatv2_ppo
+      local_encoder:
+        type: mlp
+        output_dim: 128
+        hidden_dims: [256, 256]
+        activation: relu
+      communication:
+        enabled: true
+        type: gatv2
+        num_heads: 5
+        head_dim: 16
+        output_dim: 128
+      topology:
+        source: tls_super_edges
+        render: true

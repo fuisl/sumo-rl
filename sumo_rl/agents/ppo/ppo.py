@@ -107,8 +107,8 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
-    metrics = extract_rllib_result_metrics(result, algorithm_kind=KIND, iteration=iteration)
+def extract_training_metrics(result: Dict[str, Any], iteration: int, *, algorithm_kind: str = KIND) -> Dict[str, Any]:
+    metrics = extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
         flatten_numeric_metrics(learner_metrics, prefix="train/ppo/learners", out=metrics)
@@ -126,7 +126,7 @@ def train(
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
     validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
-    del algorithm_kind
+    algorithm_kind = str(algorithm_kind or KIND).strip()
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params
     callbacks_class = training_episode_summary_callbacks_class()
@@ -137,14 +137,14 @@ def train(
     while True:
         iteration += 1
         result = algo.train()
-        metrics = extract_training_metrics(result, iteration)
+        metrics = extract_training_metrics(result, iteration, algorithm_kind=algorithm_kind)
         episode_summaries = callbacks_class.drain_pending_episode_summaries()
         is_final = training_should_stop(metrics, cfg)
         last_logged_step = emit_training_episode_rows(
             metrics,
             episode_summaries,
             cfg,
-            algorithm_kind=KIND,
+            algorithm_kind=algorithm_kind,
             last_logged_episode=last_logged_step,
             emit_metrics=emit_metrics,
             force=is_final,
@@ -157,7 +157,7 @@ def train(
         )
         completed_episodes = completed_training_episodes(metrics, cfg)
         print(
-            f"[{KIND}] episode={min(completed_episodes, training_episode_target(cfg))}/"
+            f"[{algorithm_kind}] episode={min(completed_episodes, training_episode_target(cfg))}/"
             f"{training_episode_target(cfg)} iteration={iteration} "
             f"result_keys={sorted(result.keys())[:8]}"
         )

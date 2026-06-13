@@ -1,0 +1,37 @@
+# @package _global_
+algorithm:
+  kind: fgs_ppo
+  params:
+    policy_mode: shared
+    lr: 0.0005
+    gamma: 0.99
+    lambda_: 0.95
+    clip_param: 0.2
+    entropy_coeff: 0.0
+    train_batch_size_per_learner: 4000
+    sgd_minibatch_size: 128
+    num_sgd_iter: 10
+    model_config:
+      architecture_tag: fgs_frap_gnn_ppo
+      local_encoder:
+        type: frap
+        output_dim: 128
+        frap:
+          demand_shape: 2
+          demand_layout: split
+          observation_has_phase: true
+          observation_has_min_green: true
+          conv_units: 32
+      communication:
+        enabled: true
+        type: gat
+        num_heads: 5
+        head_dim: 16
+        output_dim: 128
+      topology:
+        source: tls_super_edges
+        render: true
+      hidden_dim: 128
+      policy_hidden_dim: 128
+      value_hidden_dim: 128
+      invalid_action_value: -1000000000.0

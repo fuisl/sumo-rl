@@ -155,6 +155,15 @@ CoLight, so the graph API is shared while the FRAP encoder and SAC heads remain
 FGS-specific. Set `algorithm.params.model_config.communication.type=gatv2` to
 swap that communication block for PyG's `GATv2Conv`; the Cologne8 presets
 include both FRAP+GATv2 and MLP+GATv2 ablations.
+The full FGS v1 startup, environment, topology, RLModule, learner, validation,
+and artifact pipeline is documented in
+[docs/thesis/fgs_v1_pipeline.md](fgs_v1_pipeline.md).
+
+`algorithm=fgs_ppo` keeps the same FGS graph observation wrapper and FRAP/MLP
+plus GAT/GATv2 encoder stack, but replaces the SAC actor/critic/learner with
+standard PPO policy and value heads. The Cologne8 and Ingolstadt21 `fgs_*_ppo`
+presets are intended for FGS final-module ablations against the existing
+`fgs_*_sac` presets.
 
 FGS defaults to the existing `diff-waiting-time` reward. Its graph construction
 defaults to the TLS super-edge parser inspired by HMARL-TSC: it reads the SUMO

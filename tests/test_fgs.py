@@ -20,7 +20,7 @@ import sumo_rl
 from sumo_rl.agents.fgs import fgs
 from sumo_rl.agents.fgs.graph_env import FGSGraphParallelEnv
 from sumo_rl.agents.fgs.model import CentralGraphJointActionCritic, FGSGraphEncoder, FRAPEmbeddingEncoder
-from sumo_rl.agents.fgs.rllib_module import build_fgs_sac_module_spec, normalize_fgs_model_config
+from sumo_rl.agents.fgs.rllib_module import build_fgs_ppo_module_spec, build_fgs_sac_module_spec, normalize_fgs_model_config
 from sumo_rl.agents.fgs.topology import extract_tls_topology, render_fgs_topology
 from sumo_rl.experiments import rllib_runner
 
@@ -387,8 +387,54 @@ def test_fgs_module_gatv2_train_outputs_discrete_sac_tensors():
     assert train_out[QF_PREDS].shape == (2, 4)
 
 
+def test_fgs_ppo_module_train_outputs_logits_and_values():
+    from ray.rllib.core.columns import Columns
+
+    module = build_fgs_ppo_module_spec(
+        _graph_obs_space(),
+        Discrete(4),
+        model_config={
+            "local_encoder": {"type": "mlp", "output_dim": 16, "hidden_dims": [32]},
+            "communication": {"enabled": True, "type": "gatv2", "num_heads": 1, "head_dim": 4, "output_dim": 16},
+            "policy_hidden_dim": 16,
+            "value_hidden_dim": 16,
+        },
+    ).build()
+
+    train_out = module.forward_train({Columns.OBS: _graph_obs(batch_size=2)})
+    inference_out = module.forward_inference({Columns.OBS: _graph_obs(batch_size=2)})
+    values = module.compute_values({Columns.OBS: _graph_obs(batch_size=2)})
+
+    assert train_out[Columns.ACTION_DIST_INPUTS].shape == (2, 4)
+    assert train_out[Columns.VF_PREDS].shape == (2,)
+    assert inference_out[Columns.ACTION_DIST_INPUTS].shape == (2, 4)
+    assert values.shape == (2,)
+    assert torch.isfinite(train_out[Columns.VF_PREDS]).all()
+
+
+def test_fgs_ppo_module_masks_invalid_actions():
+    from ray.rllib.core.columns import Columns
+
+    module = build_fgs_ppo_module_spec(
+        _graph_obs_space(),
+        Discrete(4),
+        model_config={
+            "local_encoder": {"type": "mlp", "output_dim": 16, "hidden_dims": [32]},
+            "communication": {"enabled": False, "type": "identity"},
+            "invalid_action_value": -12345.0,
+        },
+    ).build()
+    obs = _graph_obs(batch_size=2)
+    obs["action_mask"][0, 2] = 0.0
+
+    train_out = module.forward_train({Columns.OBS: obs})
+
+    assert train_out[Columns.ACTION_DIST_INPUTS][0, 2].item() == pytest.approx(-12345.0)
+
+
 def test_rllib_runner_supports_fgs_algorithm_kind():
     assert "fgs" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
+    assert "fgs_ppo" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
 
 
 def test_fgs_build_config_registers_shared_custom_rl_module(monkeypatch, tmp_path):
@@ -419,6 +465,34 @@ def test_fgs_build_config_registers_shared_custom_rl_module(monkeypatch, tmp_pat
     assert spec.module_class.__name__ == "FGSSACTorchRLModule"
     assert spec.model_config["architecture_tag"] == "fgs_frap_gnn_sac"
     assert config.learner_class.__name__ == "FGSSACTorchLearner"
+
+
+def test_fgs_ppo_build_config_registers_shared_custom_rl_module(monkeypatch, tmp_path):
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyParallelEnv())
+    cfg = SimpleNamespace(
+        scenario=SimpleNamespace(name="single_intersection"),
+        experiment=SimpleNamespace(name="fgs_ppo_test", seed=7, episode_seconds=60),
+        env=SimpleNamespace(factory="parallel_env", kwargs={}),
+        algorithm=SimpleNamespace(
+            params={
+                "policy_mode": "shared",
+                "num_env_runners": 0,
+                "num_envs_per_env_runner": 1,
+                "model_config": {
+                    "local_encoder": {"type": "mlp", "output_dim": 16, "hidden_dims": [32]},
+                    "communication": {"enabled": False, "type": "identity"},
+                    "topology": {"source": "direct_lane", "render": False},
+                },
+            }
+        ),
+    )
+
+    config = fgs.build_config(cfg, tmp_path, algorithm_kind=fgs.PPO_KIND)
+
+    assert set(config.rl_module_spec.rl_module_specs.keys()) == {"shared_policy"}
+    spec = config.rl_module_spec.rl_module_specs["shared_policy"]
+    assert spec.module_class.__name__ == "FGSPPOTorchRLModule"
+    assert spec.model_config["local_encoder"]["type"] == "mlp"
 
 
 def test_fgs_rejects_non_one_step_joint_action_training(monkeypatch, tmp_path):

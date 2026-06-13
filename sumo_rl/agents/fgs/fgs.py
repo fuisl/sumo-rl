@@ -9,6 +9,8 @@ from ray.rllib.policy.policy import PolicySpec
 
 from sumo_rl.agents.fgs.graph_env import FGSGraphParallelEnv
 from sumo_rl.agents.fgs.rllib_module import (
+    build_fgs_ppo_module_spec,
+    build_fgs_ppo_multi_module_spec,
     build_fgs_sac_module_spec,
     build_fgs_sac_multi_module_spec,
     normalize_fgs_model_config,
@@ -27,11 +29,13 @@ from sumo_rl.agents.rllib_common import (
     scenario_factory_name,
     training_episode_summary_callbacks_class,
 )
+from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.sac import sac as sac_agent
 from sumo_rl.experiments.runner import _prepare_env_kwargs
 
 
 KIND = "fgs"
+PPO_KIND = "fgs_ppo"
 
 
 def _fgs_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,7 +81,13 @@ def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     return ParallelPettingZooEnv(build_fgs_parallel_env(cfg, run_dir, _fgs_model_config(params), seed=seed))
 
 
-def _build_fgs_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> RllibAlgorithmContext:
+def _build_fgs_context(
+    cfg: Any,
+    run_dir: Path,
+    params: Dict[str, Any],
+    *,
+    algorithm_kind: str = KIND,
+) -> RllibAlgorithmContext:
     mode = str(params.get("policy_mode", "shared") or "shared").strip().lower()
     if mode != "shared":
         raise ValueError("FGS must use algorithm.params.policy_mode=shared for decentralized actor parameter sharing.")
@@ -108,7 +118,7 @@ def _build_fgs_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> Rllib
     from ray.tune.registry import register_env
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
-    env_name = f"sumo_rl_{scenario_factory_name(cfg)}_{KIND}"
+    env_name = f"sumo_rl_{scenario_factory_name(cfg)}_{algorithm_kind}"
 
     def _creator(env_config):
         env_config = dict(env_config or {})
@@ -122,7 +132,7 @@ def _build_fgs_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> Rllib
     return RllibAlgorithmContext(
         cfg=cfg,
         run_dir=run_dir,
-        algorithm_kind=KIND,
+        algorithm_kind=algorithm_kind,
         params=params,
         policy_mode="shared",
         env_name=env_name,
@@ -133,7 +143,16 @@ def _build_fgs_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> Rllib
     )
 
 
-def build_config(cfg: Any, run_dir: Path):
+def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
+    algorithm_kind = str(algorithm_kind or KIND).strip()
+    if algorithm_kind == PPO_KIND:
+        return build_ppo_config(cfg, run_dir)
+    if algorithm_kind != KIND:
+        raise ValueError(f"Unsupported FGS algorithm kind: {algorithm_kind}")
+    return build_sac_config(cfg, run_dir)
+
+
+def build_sac_config(cfg: Any, run_dir: Path):
     from ray.rllib.algorithms.sac import SACConfig
 
     callbacks_class = training_episode_summary_callbacks_class()
@@ -153,7 +172,7 @@ def build_config(cfg: Any, run_dir: Path):
             episode_steps(cfg) + 1,
         )
 
-    context = _build_fgs_context(cfg, run_dir, params)
+    context = _build_fgs_context(cfg, run_dir, params, algorithm_kind=KIND)
     config = SACConfig().framework("torch").environment(env=context.env_name, disable_env_checking=True)
     config = apply_env_runner_settings(config, params)
     config = apply_training_settings(
@@ -200,6 +219,57 @@ def build_config(cfg: Any, run_dir: Path):
     return config.callbacks(callbacks_class)
 
 
+def build_ppo_config(cfg: Any, run_dir: Path):
+    from ray.rllib.algorithms.ppo import PPOConfig
+
+    callbacks_class = training_episode_summary_callbacks_class()
+    params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
+    params = dict(params)
+    params.setdefault("policy_mode", "shared")
+    params["model_config"] = _fgs_model_config(params)
+
+    context = _build_fgs_context(cfg, run_dir, params, algorithm_kind=PPO_KIND)
+    config = PPOConfig().framework("torch").environment(env=context.env_name, disable_env_checking=True)
+    config = apply_env_runner_settings(config, params)
+    config = apply_training_settings(
+        config,
+        params,
+        episode_steps_value=context.episode_steps,
+        allowed_keys=(
+            "lr",
+            "gamma",
+            "lambda_",
+            "clip_param",
+            "entropy_coeff",
+            "grad_clip",
+            "train_batch_size_per_learner",
+            "num_epochs",
+            "minibatch_size",
+            "vf_loss_coeff",
+            "vf_clip_param",
+        ),
+        aliases={
+            "num_sgd_iter": "num_epochs",
+            "sgd_minibatch_size": "minibatch_size",
+        },
+    )
+    config = apply_multi_agent_settings(config, context)
+    config = apply_standard_evaluation_settings(config, params)
+
+    rl_module_specs = {
+        policy_id: build_fgs_ppo_module_spec(
+            policy_spec.observation_space,
+            policy_spec.action_space,
+            model_config=params["model_config"],
+        )
+        for policy_id, policy_spec in context.active_policies.items()
+    }
+    config = config.rl_module(
+        rl_module_spec=build_fgs_ppo_multi_module_spec(rl_module_specs, model_config=params["model_config"])
+    )
+    return config.callbacks(callbacks_class)
+
+
 def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
     return sac_agent.extract_training_metrics(result, iteration, algorithm_kind=KIND)
 
@@ -208,7 +278,11 @@ def train(
     algo,
     cfg: Any,
     *,
+    algorithm_kind: str = KIND,
     emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
     validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
 ) -> None:
+    algorithm_kind = str(algorithm_kind or KIND).strip()
+    if algorithm_kind == PPO_KIND:
+        return ppo_agent.train(algo, cfg, algorithm_kind=PPO_KIND, emit_metrics=emit_metrics, validate=validate)
     return sac_agent.train(algo, cfg, algorithm_kind=KIND, emit_metrics=emit_metrics, validate=validate)

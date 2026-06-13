@@ -300,7 +300,10 @@ Each CoLight run writes `topology/colight_topology.svg` and
 FGS Cologne8 presets include both the original CoLight-style custom GAT
 communication and PyTorch Geometric `GATv2Conv` ablations:
 `configs/presets/resco_cologne8/fgs_frap_gatv2_sac.yaml` and
-`configs/presets/resco_cologne8/fgs_mlp_gatv2_sac.yaml`.
+`configs/presets/resco_cologne8/fgs_mlp_gatv2_sac.yaml`. FGS PPO is available
+as `algorithm=fgs_ppo` and through the `fgs_*_ppo` Cologne8 and Ingolstadt21
+presets; it reuses the FGS FRAP/MLP plus GAT/GATv2 graph encoder with PPO
+policy and value heads.
 
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action

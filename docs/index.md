@@ -64,6 +64,7 @@ examples/publications
 
 thesis/engineering_guide
 thesis/experiments
+thesis/fgs_v1_pipeline
 thesis/manual_control
 thesis/static_baselines
 Github <https://github.com/LucasAlegre/sumo-rl>

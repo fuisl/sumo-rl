@@ -67,6 +67,7 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     "frap",
     "colight",
     "fgs",
+    "fgs_ppo",
     "dqn_dcrnn",
     "dqn_dcrnn_mlp",
     "dcrnn",
@@ -147,7 +148,7 @@ def _algorithm_module(algorithm_kind: str):
         return importlib.import_module("sumo_rl.agents.frap.frap")
     if algorithm_kind == "colight":
         return importlib.import_module("sumo_rl.agents.colight.colight")
-    if algorithm_kind == "fgs":
+    if algorithm_kind in {"fgs", "fgs_ppo"}:
         return importlib.import_module("sumo_rl.agents.fgs.fgs")
     if algorithm_kind == fgsv2_agent.KIND:
         return fgsv2_agent
@@ -170,6 +171,7 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
     if algorithm_kind in {
         "ppo_dcrnn_mlp",
         "dqn_dcrnn_mlp",
+        "fgs_ppo",
         "sac_builtin",
         "sac_mlp",
         "sac_dcrnn_actor",
@@ -188,6 +190,7 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
     if algorithm_kind in {
         "ppo_dcrnn_mlp",
         "dqn_dcrnn_mlp",
+        "fgs_ppo",
         "sac_builtin",
         "sac_mlp",
         "sac_dcrnn_actor",
@@ -1964,8 +1967,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         "ignore_reinit_error": True,
         "log_to_driver": False,
     }
-    if ray_address is not None:
-        ray_init_kwargs["address"] = ray_address
+    ray_init_kwargs["address"] = ray_address if ray_address is not None else "local"
     if not _is_existing_ray_address(ray_address):
         ray_init_kwargs["include_dashboard"] = False
         ray_init_kwargs["num_gpus"] = ray_num_gpus
@@ -1980,6 +1982,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         if not _is_auto_ray_address(ray_address):
             raise
         fallback_ray_init_kwargs: Dict[str, Any] = {
+            "address": "local",
             "ignore_reinit_error": True,
             "log_to_driver": False,
             "include_dashboard": False,

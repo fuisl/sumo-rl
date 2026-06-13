@@ -40,6 +40,37 @@ def test_rllib_preset_uses_shared_ray_defaults_after_algorithm_override():
     _assert_shared_ray_defaults(cfg)
 
 
+def test_fgs_ppo_algorithm_uses_shared_ray_defaults():
+    cfg = _compose("rllib", ["algorithm=fgs_ppo", "scenario=resco_cologne8"])
+
+    assert cfg.algorithm.kind == "fgs_ppo"
+    assert cfg.algorithm.params.policy_mode == "shared"
+    assert cfg.algorithm.params.model_config.architecture_tag == "fgs_frap_gnn_ppo"
+    _assert_shared_ray_defaults(cfg)
+
+
+def test_fgs_ablation_presets_compose():
+    expected = {
+        "presets/resco_cologne8/fgs_frap_gatv2_ppo": ("resco_cologne8", "fgs_ppo", "frap", "gatv2"),
+        "presets/resco_cologne8/fgs_mlp_gat_ppo": ("resco_cologne8", "fgs_ppo", "mlp", "gat"),
+        "presets/resco_cologne8/fgs_mlp_gatv2_ppo": ("resco_cologne8", "fgs_ppo", "mlp", "gatv2"),
+        "presets/resco_cologne8/fgs_mlp_gatv2_sac": ("resco_cologne8", "fgs", "mlp", "gatv2"),
+        "presets/resco_ingolstadt21/fgs_frap_gatv2_ppo": ("resco_ingolstadt21", "fgs_ppo", "frap", "gatv2"),
+        "presets/resco_ingolstadt21/fgs_mlp_gat_ppo": ("resco_ingolstadt21", "fgs_ppo", "mlp", "gat"),
+        "presets/resco_ingolstadt21/fgs_mlp_gatv2_ppo": ("resco_ingolstadt21", "fgs_ppo", "mlp", "gatv2"),
+        "presets/resco_ingolstadt21/fgs_mlp_gatv2_sac": ("resco_ingolstadt21", "fgs", "mlp", "gatv2"),
+    }
+
+    for config_name, (scenario_name, algorithm_kind, local_type, communication_type) in expected.items():
+        cfg = _compose(config_name)
+
+        assert cfg.scenario.name == scenario_name
+        assert cfg.algorithm.kind == algorithm_kind
+        assert cfg.algorithm.params.model_config.local_encoder.type == local_type
+        assert cfg.algorithm.params.model_config.communication.type == communication_type
+        _assert_shared_ray_defaults(cfg)
+
+
 def test_sac_builtin_uses_bounded_replay_training_intensity():
     cfg = _compose("rllib", ["algorithm=sac_builtin", "scenario=resco_cologne8"])
 
