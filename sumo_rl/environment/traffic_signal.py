@@ -99,6 +99,8 @@ class TrafficSignal:
         self.reward_penalty_lambda = float(reward_penalty_lambda)
         self.sumo = sumo
         self._last_fixed_cycle_phase_index = None
+        self._phase_stats_cache_step = None
+        self._phase_stats_cache = None
 
         if type(self.reward_fn) is list:
             self.reward_dim = len(self.reward_fn)
@@ -478,35 +480,11 @@ class TrafficSignal:
 
     def get_phase_average_speeds(self) -> List[float]:
         """Returns mean normalized speed ratios for the vehicles served by each green phase."""
-        phase_average_speeds = []
-        for phase_lanes in self.phase_lanes:
-            phase_vehicles = self._get_unique_phase_vehicle_ids(phase_lanes)
-            if not phase_vehicles:
-                phase_average_speeds.append(1.0)
-                continue
-
-            normalized_speeds = []
-            for veh in phase_vehicles:
-                allowed_speed = self.sumo.vehicle.getAllowedSpeed(veh)
-                if allowed_speed <= 0.0:
-                    normalized_speeds.append(0.0)
-                    continue
-                normalized_speeds.append(self.sumo.vehicle.getSpeed(veh) / allowed_speed)
-            phase_average_speeds.append(float(np.mean(normalized_speeds)))
-        return phase_average_speeds
+        return [stats["average_speed"] for stats in self._get_phase_speed_wait_stats()]
 
     def get_phase_max_waiting_times(self) -> List[float]:
         """Returns the max current waiting time among the vehicles served by each green phase."""
-        phase_max_waiting_times = []
-        for phase_lanes in self.phase_lanes:
-            phase_vehicles = self._get_unique_phase_vehicle_ids(phase_lanes)
-            if not phase_vehicles:
-                phase_max_waiting_times.append(0.0)
-                continue
-            phase_max_waiting_times.append(
-                max(float(self.sumo.vehicle.getWaitingTime(veh)) for veh in phase_vehicles)
-            )
-        return phase_max_waiting_times
+        return [stats["max_waiting_time"] for stats in self._get_phase_speed_wait_stats()]
 
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""
@@ -522,6 +500,45 @@ class TrafficSignal:
                 seen.add(veh)
                 phase_vehicles.append(veh)
         return phase_vehicles
+
+    def _get_phase_speed_wait_stats(self) -> List[dict]:
+        cache_step = self._get_phase_stats_cache_step()
+        cached_stats = getattr(self, "_phase_stats_cache", None)
+        cached_step = getattr(self, "_phase_stats_cache_step", None)
+        if cached_stats is not None and cache_step is not None and cached_step == cache_step:
+            return cached_stats
+
+        phase_stats = []
+        for phase_lanes in self.phase_lanes:
+            phase_vehicles = self._get_unique_phase_vehicle_ids(phase_lanes)
+            if not phase_vehicles:
+                phase_stats.append({"average_speed": 1.0, "max_waiting_time": 0.0})
+                continue
+
+            normalized_speeds = []
+            max_waiting_time = 0.0
+            for veh in phase_vehicles:
+                allowed_speed = self.sumo.vehicle.getAllowedSpeed(veh)
+                normalized_speeds.append(0.0 if allowed_speed <= 0.0 else self.sumo.vehicle.getSpeed(veh) / allowed_speed)
+                max_waiting_time = max(max_waiting_time, float(self.sumo.vehicle.getWaitingTime(veh)))
+            phase_stats.append(
+                {
+                    "average_speed": float(np.mean(normalized_speeds)),
+                    "max_waiting_time": max_waiting_time,
+                }
+            )
+
+        if cache_step is not None:
+            self._phase_stats_cache_step = cache_step
+            self._phase_stats_cache = phase_stats
+        else:
+            self._phase_stats_cache_step = None
+            self._phase_stats_cache = None
+        return phase_stats
+
+    def _get_phase_stats_cache_step(self):
+        env = getattr(self, "env", None)
+        return getattr(env, "sim_step", None)
 
     def _get_veh_list(self):
         veh_list = []
