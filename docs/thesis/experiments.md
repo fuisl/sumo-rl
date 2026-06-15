@@ -24,6 +24,8 @@ Hydra is used as the experiment composition layer.
 - Episode horizon is configured in seconds with `experiment.episode_seconds`. If you need the decision-step horizon, divide by `delta_time`; for example, `3600` seconds with `delta_time=5` is about `720` steps.
 - RLlib validation is episode-based by default with `experiment.validation_interval_episodes=5`; `logging.eval_freq` is only the step-based fallback when the episode interval is unset.
 - Training trace logging defaults to `logging.trace_mode=training`; switch to `logging.trace_mode=debug` to add RLlib learner, replay, return, and entropy diagnostics under `debug/*`.
+- When training with `+env.kwargs.use_libsumo=true`, manual validation and final evaluation stay on TraCI by default via `logging.eval_use_libsumo=false`.
+- Do not combine Libsumo training with RLlib-native evaluation through `algorithm.params.evaluation_interval`; the runner rejects that configuration because it conflicts with the project-side manual validation path.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
   - `resco_avg_delay` from SUMO tripinfo `timeLoss`
   - `resco_trip_time` from SUMO tripinfo `duration`
@@ -33,6 +35,7 @@ Hydra is used as the experiment composition layer.
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
   - the RLlib training trace keeps only the episode-facing throughput totals in `train/*`; the end-of-episode live snapshot diagnostics stay under `debug/*`
   - tripinfo XML is generated to compute metrics and deleted by default; set `logging.save_tripinfo_output=true` to keep the raw XML files under `outputs/<experiment-name>/<timestamp>/tripinfo/`
+  - validation image payloads can be disabled independently with `logging.validation_log_action_shares=false`, `logging.validation_log_action_timelines=false`, `logging.validation_log_phase_queues=false`, and `logging.validation_log_tripinfo_distributions=false`
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup
   - `configs/algorithm/` for the method hyperparameters

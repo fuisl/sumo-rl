@@ -17,7 +17,12 @@ save_checkpoints: true
 save_best_validation_checkpoints: true
 best_validation_checkpoint_count: 3
 best_validation_metric: validation/resco_delay_mean
+eval_use_libsumo: false
 validation_action_plot_max_agents: null
+validation_log_action_shares: true
+validation_log_action_timelines: true
+validation_log_phase_queues: true
+validation_log_tripinfo_distributions: true
 baseline_line_max_episode_index: 500
 baseline_line_episode_stride: 5
 save_final_model: true

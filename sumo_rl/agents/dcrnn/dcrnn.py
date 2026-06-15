@@ -74,11 +74,17 @@ def _dcrnn_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str
     return model_config
 
 
-def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def build_graph_eval_env(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
-    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params), use_libsumo=False)
+    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params), use_libsumo=use_libsumo)
 
 
 def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algorithm_kind: str) -> str:

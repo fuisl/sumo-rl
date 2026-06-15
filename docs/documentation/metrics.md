@@ -78,6 +78,11 @@ The runner also logs reward metadata in the final episode summary:
 Training trace logging is controlled by `logging.trace_mode`.
 The default is `training`.
 
+Manual RLlib validation uses its own backend switch:
+
+- `logging.eval_use_libsumo=false` keeps validation and final evaluation on TraCI even when training uses Libsumo
+- if training uses Libsumo and `algorithm.params.evaluation_interval` enables RLlib-native evaluation, the runner rejects that configuration because it conflicts with the project-side manual TraCI validation path
+
 | Mode | Always logged | Extra logged | Main intent |
 | --- | --- | --- | --- |
 | `training` | shared `train/*` metrics and `debug/reward/<agent_id>` | none | keep the thesis-facing training trace compact |
@@ -260,6 +265,13 @@ So with `delta_time=5`, the plotted share window spans `12` decisions.
 - y-axis: queued halting vehicles
 - one line per green phase, using the incoming lanes served by that phase
 - the background tint marks which phase was active over each interval
+
+The validation image payloads can be disabled independently to reduce overhead:
+
+- `logging.validation_log_action_shares`
+- `logging.validation_log_action_timelines`
+- `logging.validation_log_phase_queues`
+- `logging.validation_log_tripinfo_distributions`
 
 `validation/tripinfo_wait_distribution` and `validation/tripinfo_delay_distribution`
 are network-level fairness diagnostics built directly from the completed vehicles in

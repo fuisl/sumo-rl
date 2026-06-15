@@ -61,7 +61,11 @@ def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
                 traci.start(cmd)
                 return traci
             traci.start(cmd, label=label)
-            return traci.getConnection(label)
+            if hasattr(traci, "getConnection"):
+                return traci.getConnection(label)
+            if hasattr(traci, "switch"):
+                traci.switch(label)
+            return traci
         except Exception as exc:
             last_error = exc
             if label is not None:

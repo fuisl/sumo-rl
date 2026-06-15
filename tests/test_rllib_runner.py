@@ -110,6 +110,119 @@ def test_rllib_runtime_params_reads_hydra_resources_before_algorithm_params():
     assert params["num_env_runners"] == 1
 
 
+def test_build_eval_env_defaults_to_traci_when_training_uses_libsumo(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda cfg, run_dir, seed, pad_spaces, use_libsumo=None: calls.append(
+            {"seed": seed, "pad_spaces": pad_spaces, "use_libsumo": use_libsumo}
+        )
+        or object(),
+    )
+
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+    )
+
+    rllib_runner._build_eval_env(cfg, tmp_path, 11, algorithm_kind="dqn", policy_mode="independent")
+
+    assert calls == [{"seed": 11, "pad_spaces": False, "use_libsumo": False}]
+
+
+def test_build_eval_env_can_explicitly_use_libsumo(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda cfg, run_dir, seed, pad_spaces, use_libsumo=None: calls.append(
+            {"seed": seed, "pad_spaces": pad_spaces, "use_libsumo": use_libsumo}
+        )
+        or object(),
+    )
+
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=True),
+    )
+
+    rllib_runner._build_eval_env(cfg, tmp_path, 13, algorithm_kind="dqn", policy_mode="shared")
+
+    assert calls == [{"seed": 13, "pad_spaces": True, "use_libsumo": True}]
+
+
+def test_validate_manual_evaluation_backend_config_rejects_rllib_native_eval_conflict():
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+        algorithm=SimpleNamespace(params={"evaluation_interval": 3}),
+    )
+
+    try:
+        rllib_runner._validate_manual_evaluation_backend_config(cfg)
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "evaluation_interval" in str(exc)
+
+
+def test_validation_image_loggers_respect_disabled_toggles(monkeypatch):
+    class DummyWandbRun:
+        def __init__(self):
+            self.calls = []
+
+        def log(self, payload):
+            self.calls.append(payload)
+
+    class DummyWandb:
+        @staticmethod
+        def Image(value, caption=None):
+            return {"value": value, "caption": caption}
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+
+    wandb_run = DummyWandbRun()
+    logging_cfg = SimpleNamespace(
+        validation_log_action_shares=False,
+        validation_log_action_timelines=False,
+        validation_log_phase_queues=False,
+        validation_log_tripinfo_distributions=False,
+    )
+
+    rllib_runner._log_validation_action_plot_images(
+        wandb_run,
+        {"tls_0": [{"action_0": 1.0}]},
+        {"tls_0": [0, 1]},
+        {"tls_0": [{"phase_0": 2.0}]},
+        pass_index=1,
+        env_step=10,
+        episode_index=2,
+        decision_seconds=5,
+        logging_cfg=logging_cfg,
+    )
+    rllib_runner._log_validation_tripinfo_distribution_images(
+        wandb_run,
+        {
+            "waiting_time": [[1.0]],
+            "delay": [[2.0]],
+            "pooled_waiting_time": [1.0],
+            "pooled_delay": [2.0],
+            "total_seeds": 1,
+            "seeds_with_completed_trips": 1,
+            "total_completed_trips": 1,
+            "total_unfinished_trips": 0,
+        },
+        pass_index=1,
+        env_step=10,
+        episode_index=2,
+        logging_cfg=logging_cfg,
+    )
+
+    assert wandb_run.calls == []
+
+
 def test_train_rllib_existing_ray_address_does_not_pass_local_startup_resources(monkeypatch, tmp_path):
     ray_init_calls = []
 
