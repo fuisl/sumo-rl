@@ -29,7 +29,16 @@ def test_rllib_direct_algorithm_uses_shared_ray_defaults():
 
     assert cfg.algorithm.kind == "ppo"
     assert cfg.scenario.name == "resco_cologne3"
+    assert cfg.env.kwargs.use_libsumo is True
+    assert cfg.logging.eval_use_libsumo is False
     _assert_shared_ray_defaults(cfg)
+
+
+def test_rllib_base_config_stays_backend_neutral_for_other_algorithms():
+    cfg = _compose("rllib", ["algorithm=colight", "scenario=resco_grid4x4"])
+
+    assert cfg.algorithm.kind == "colight"
+    assert "use_libsumo" not in cfg.env.kwargs
 
 
 def test_rllib_preset_uses_shared_ray_defaults_after_algorithm_override():

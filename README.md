@@ -44,11 +44,7 @@ Don't forget to set SUMO_HOME variable (default sumo installation path is /usr/s
 echo 'export SUMO_HOME="/usr/share/sumo"' >> ~/.bashrc
 source ~/.bashrc
 ```
-Important: for a huge performance boost (~8x) with Libsumo, you can declare the variable:
-```bash
-export LIBSUMO_AS_TRACI=1
-```
-Notice that you will not be able to run with sumo-gui or with multiple simulations in parallel if this is active ([more details](https://sumo.dlr.de/docs/Libsumo.html)).
+Important: for the thesis RLlib experiments, backend selection is controlled through Hydra config instead of the global `LIBSUMO_AS_TRACI` environment variable. The PPO, DQN, and selected SAC algorithm configs enable Libsumo for training with `env.kwargs.use_libsumo=true`, while validation stays on TraCI by default through `logging.eval_use_libsumo=false`.
 
 ### Install SUMO-RL
 

@@ -17,7 +17,14 @@ import gymnasium as gym
 import numpy as np
 import pandas as pd
 import sumolib
+# Backend selection is controlled by explicit use_libsumo flags from Hydra,
+# not by SUMO's process-global LIBSUMO_AS_TRACI import override.
+os.environ.pop("LIBSUMO_AS_TRACI", None)
 import traci
+try:
+    import libsumo
+except ImportError:
+    libsumo = None
 from gymnasium.utils import EzPickle, seeding
 from pettingzoo import AECEnv
 from pettingzoo.utils import wrappers
@@ -36,7 +43,6 @@ from .observations import DefaultObservationFunction, ObservationFunction
 from .traffic_signal import TrafficSignal
 
 
-LIBSUMO = "LIBSUMO_AS_TRACI" in os.environ
 TRACI_START_RETRIES = 3
 TRACI_START_RETRY_DELAY_SECONDS = 0.5
 
@@ -45,34 +51,36 @@ def _is_ghost_vehicle(vehicle_id: str) -> bool:
     return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
 
 
-def _env_var_truthy(value: Optional[str]) -> bool:
-    return str(value or "").strip().lower() not in {"", "0", "false", "no"}
+def _backend_module(use_libsumo: bool):
+    if use_libsumo:
+        if libsumo is None:
+            raise ImportError(
+                "Libsumo backend requested via use_libsumo=True, but the 'libsumo' Python module is not installed."
+            )
+        return libsumo
+    return traci
 
 
-def default_use_libsumo() -> bool:
-    return _env_var_truthy(os.environ.get("LIBSUMO_AS_TRACI"))
-
-
-def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
+def _start_traci_with_retries(backend, cmd, *, label: Optional[str] = None):
     last_error = None
     for attempt in range(TRACI_START_RETRIES):
         try:
             if label is None:
-                traci.start(cmd)
-                return traci
-            traci.start(cmd, label=label)
-            if hasattr(traci, "getConnection"):
-                return traci.getConnection(label)
-            if hasattr(traci, "switch"):
-                traci.switch(label)
-            return traci
+                backend.start(cmd)
+                return backend
+            backend.start(cmd, label=label)
+            if hasattr(backend, "getConnection"):
+                return backend.getConnection(label)
+            if hasattr(backend, "switch"):
+                backend.switch(label)
+            return backend
         except Exception as exc:
             last_error = exc
             if label is not None:
                 try:
-                    if hasattr(traci, "switch"):
-                        traci.switch(label)
-                        traci.close()
+                    if hasattr(backend, "switch"):
+                        backend.switch(label)
+                        backend.close()
                 except Exception:
                     pass
             if attempt + 1 >= TRACI_START_RETRIES:
@@ -213,7 +221,8 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.keep_tripinfo_output = keep_tripinfo_output
-        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo)
+        self.use_libsumo = bool(use_libsumo) if use_libsumo is not None else False
+        self._traci_backend = _backend_module(self.use_libsumo)
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
@@ -224,9 +233,10 @@ class SumoEnvironment(gym.Env):
         self.sumo = None
 
         if self.use_libsumo:
-            conn = _start_traci_with_retries([sumolib.checkBinary("sumo"), "-n", self._net])
+            conn = _start_traci_with_retries(self._traci_backend, [sumolib.checkBinary("sumo"), "-n", self._net])
         else:
             conn = _start_traci_with_retries(
+                self._traci_backend,
                 [sumolib.checkBinary("sumo"), "-n", self._net],
                 label="init_connection" + self.label,
             )
@@ -331,9 +341,9 @@ class SumoEnvironment(gym.Env):
                 print("Virtual display started.")
 
         if self.use_libsumo:
-            self.sumo = _start_traci_with_retries(sumo_cmd)
+            self.sumo = _start_traci_with_retries(self._traci_backend, sumo_cmd)
         else:
-            self.sumo = _start_traci_with_retries(sumo_cmd, label=self.label)
+            self.sumo = _start_traci_with_retries(self._traci_backend, sumo_cmd, label=self.label)
 
         if self.use_gui or self.render_mode is not None:
             if "DEFAULT_VIEW" not in dir(traci.gui):  # traci.gui.DEFAULT_VIEW is not defined in libsumo
@@ -596,9 +606,9 @@ class SumoEnvironment(gym.Env):
         if getattr(self, "sumo", None) is None:
             return
 
-        if not self.use_libsumo and hasattr(traci, "switch"):
-            traci.switch(self.label)
-            traci.close()
+        if not self.use_libsumo and hasattr(self._traci_backend, "switch"):
+            self._traci_backend.switch(self.label)
+            self._traci_backend.close()
         else:
             self.sumo.close()
 

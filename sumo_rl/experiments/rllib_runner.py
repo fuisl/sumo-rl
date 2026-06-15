@@ -114,9 +114,7 @@ class ValidationSeedArtifacts:
 def _training_uses_libsumo(cfg: DictConfig) -> bool:
     env_cfg = getattr(cfg, "env", None)
     kwargs = _plain_dict(getattr(env_cfg, "kwargs", {}) or {})
-    if kwargs.get("use_libsumo") is not None:
-        return bool(kwargs.get("use_libsumo"))
-    return str(os.environ.get("LIBSUMO_AS_TRACI", "")).strip().lower() not in {"", "0", "false", "no"}
+    return bool(kwargs.get("use_libsumo", False))
 
 
 def _manual_eval_uses_libsumo(cfg: DictConfig) -> bool:
@@ -131,14 +129,6 @@ def _rllib_native_evaluation_enabled(cfg: DictConfig) -> bool:
 
 
 def _validate_manual_evaluation_backend_config(cfg: DictConfig) -> None:
-    if _training_uses_libsumo(cfg) and not _manual_eval_uses_libsumo(cfg):
-        libsumo_as_traci = str(os.environ.get("LIBSUMO_AS_TRACI", "")).strip().lower()
-        if libsumo_as_traci not in {"", "0", "false", "no"}:
-            raise ValueError(
-                "Training with Libsumo while validation uses TraCI requires LIBSUMO_AS_TRACI to be unset. "
-                "Use env.kwargs.use_libsumo=true for training backend selection and keep logging.eval_use_libsumo=false "
-                "for validation, instead of relying on the global LIBSUMO_AS_TRACI override."
-            )
     if _training_uses_libsumo(cfg) and not _manual_eval_uses_libsumo(cfg) and _rllib_native_evaluation_enabled(cfg):
         raise ValueError(
             "RLlib native evaluation conflicts with manual TraCI-only evaluation when training uses Libsumo. "

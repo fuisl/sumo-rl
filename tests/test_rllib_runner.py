@@ -3,8 +3,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -134,30 +132,16 @@ def test_build_eval_env_defaults_to_traci_when_training_uses_libsumo(monkeypatch
     assert calls == [{"seed": 11, "pad_spaces": False, "use_libsumo": False}]
 
 
-def test_training_uses_libsumo_falls_back_to_env_var(monkeypatch):
-    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
-
+def test_training_uses_libsumo_reads_hydra_config():
     cfg = SimpleNamespace(env=SimpleNamespace(kwargs={}))
 
+    assert rllib_runner._training_uses_libsumo(cfg) is False
+
+    cfg.env.kwargs["use_libsumo"] = True
     assert rllib_runner._training_uses_libsumo(cfg) is True
 
 
-def test_validate_manual_evaluation_backend_config_rejects_global_libsumo_override(monkeypatch):
-    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
-
-    cfg = SimpleNamespace(
-        env=SimpleNamespace(kwargs={}),
-        logging=SimpleNamespace(eval_use_libsumo=False),
-        algorithm=SimpleNamespace(params={}),
-    )
-
-    with pytest.raises(ValueError, match="LIBSUMO_AS_TRACI"):
-        rllib_runner._validate_manual_evaluation_backend_config(cfg)
-
-
-def test_validate_manual_evaluation_backend_config_allows_explicit_split_backends(monkeypatch):
-    monkeypatch.delenv("LIBSUMO_AS_TRACI", raising=False)
-
+def test_validate_manual_evaluation_backend_config_allows_explicit_split_backends():
     cfg = SimpleNamespace(
         env=SimpleNamespace(kwargs={"use_libsumo": True}),
         logging=SimpleNamespace(eval_use_libsumo=False),

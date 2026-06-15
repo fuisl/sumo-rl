@@ -60,7 +60,6 @@ def test_train_rllib_keeps_periodic_validation_under_libsumo_with_traci_envs(mon
             "total_trips": 0,
         }
 
-    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
     monkeypatch.setitem(sys.modules, "ray", DummyRay)
     monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
     monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
@@ -90,6 +89,7 @@ def test_train_rllib_keeps_periodic_validation_under_libsumo_with_traci_envs(mon
             kind="ppo",
             params={"ray_num_gpus": 0, "num_gpus_per_learner": 0},
         ),
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
     )
 
     rllib_runner.train_rllib(cfg)
@@ -97,10 +97,9 @@ def test_train_rllib_keeps_periodic_validation_under_libsumo_with_traci_envs(mon
     assert callable(validate_holder["callback"])
 
 
-def test_sac_graph_eval_env_uses_isolated_traci_when_libsumo_env_var_is_set(monkeypatch, tmp_path):
+def test_sac_graph_eval_env_uses_isolated_traci_when_training_uses_libsumo(monkeypatch, tmp_path):
     calls = []
 
-    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
     monkeypatch.setattr(
         sac_agent,
         "graph_params",
