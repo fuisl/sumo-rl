@@ -48,6 +48,7 @@ class TrafficSignal:
 
     # Default min gap of SUMO (see https://sumo.dlr.de/docs/Simulation/Safety.html). Should this be parameterized?
     MIN_GAP = 2.5
+    NASH_AVERAGE_SPEED_EPSILON = 0.1
 
     def __init__(
         self,
@@ -282,6 +283,33 @@ class TrafficSignal:
     def _average_speed_reward(self):
         return self.get_average_speed()
 
+    def _nash_average_speed_reward(self):
+        phase_average_speeds = self.get_phase_average_speeds()
+        if not phase_average_speeds:
+            return self.get_average_speed() + self.NASH_AVERAGE_SPEED_EPSILON
+
+        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + self.NASH_AVERAGE_SPEED_EPSILON
+        return float(np.exp(np.mean(np.log(phase_utilities))))
+
+    def _weighted_nash_average_speed_reward(self):
+        phase_average_speeds = self.get_phase_average_speeds()
+        if not phase_average_speeds:
+            return self.get_average_speed() + self.NASH_AVERAGE_SPEED_EPSILON
+
+        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + self.NASH_AVERAGE_SPEED_EPSILON
+        phase_max_waiting_times = np.asarray(self.get_phase_max_waiting_times(), dtype=np.float64)
+
+        if phase_max_waiting_times.size != phase_utilities.size:
+            phase_max_waiting_times = np.zeros_like(phase_utilities)
+
+        total_max_waiting_time = float(np.sum(phase_max_waiting_times))
+        if total_max_waiting_time > 0.0:
+            phase_weights = phase_max_waiting_times / total_max_waiting_time
+        else:
+            phase_weights = np.full_like(phase_utilities, 1.0 / float(phase_utilities.size))
+
+        return float(np.exp(np.sum(phase_weights * np.log(phase_utilities))))
+
     def _queue_reward(self):
         return -self.get_total_queued()
 
@@ -448,9 +476,52 @@ class TrafficSignal:
             for phase_lanes in self.phase_lanes
         ]
 
+    def get_phase_average_speeds(self) -> List[float]:
+        """Returns mean normalized speed ratios for the vehicles served by each green phase."""
+        phase_average_speeds = []
+        for phase_lanes in self.phase_lanes:
+            phase_vehicles = self._get_unique_phase_vehicle_ids(phase_lanes)
+            if not phase_vehicles:
+                phase_average_speeds.append(1.0)
+                continue
+
+            normalized_speeds = []
+            for veh in phase_vehicles:
+                allowed_speed = self.sumo.vehicle.getAllowedSpeed(veh)
+                if allowed_speed <= 0.0:
+                    normalized_speeds.append(0.0)
+                    continue
+                normalized_speeds.append(self.sumo.vehicle.getSpeed(veh) / allowed_speed)
+            phase_average_speeds.append(float(np.mean(normalized_speeds)))
+        return phase_average_speeds
+
+    def get_phase_max_waiting_times(self) -> List[float]:
+        """Returns the max current waiting time among the vehicles served by each green phase."""
+        phase_max_waiting_times = []
+        for phase_lanes in self.phase_lanes:
+            phase_vehicles = self._get_unique_phase_vehicle_ids(phase_lanes)
+            if not phase_vehicles:
+                phase_max_waiting_times.append(0.0)
+                continue
+            phase_max_waiting_times.append(
+                max(float(self.sumo.vehicle.getWaitingTime(veh)) for veh in phase_vehicles)
+            )
+        return phase_max_waiting_times
+
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""
         return sum(self.sumo.vehicle.getCO2Emission(veh) for veh in self._get_veh_list())
+
+    def _get_unique_phase_vehicle_ids(self, phase_lanes: List[str]) -> List[str]:
+        seen = set()
+        phase_vehicles = []
+        for lane in phase_lanes:
+            for veh in self.sumo.lane.getLastStepVehicleIDs(lane):
+                if _is_ghost_vehicle(veh) or veh in seen:
+                    continue
+                seen.add(veh)
+                phase_vehicles.append(veh)
+        return phase_vehicles
 
     def _get_veh_list(self):
         veh_list = []
@@ -474,6 +545,8 @@ class TrafficSignal:
         "diff-waiting-time": _diff_waiting_time_reward,
         "diff-waiting-time-with-unchosen-phase-penalty": _diff_waiting_time_with_unchosen_phase_penalty_reward,
         "average-speed": _average_speed_reward,
+        "nash-average-speed": _nash_average_speed_reward,
+        "weighted-nash-average-speed": _weighted_nash_average_speed_reward,
         "queue": _queue_reward,
         "normalized-queue": _normalized_queue_reward,
         "pressure": _pressure_reward,

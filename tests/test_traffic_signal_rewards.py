@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -42,3 +43,74 @@ def test_diff_waiting_time_with_unchosen_phase_penalty_reward_ignores_zero_queue
 
     assert reward == pytest.approx(4.1)
     assert signal.last_ts_waiting_time == pytest.approx(0.9)
+
+
+def test_nash_average_speed_reward_uses_phase_geometric_mean() -> None:
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.get_phase_average_speeds = lambda: [0.5, 0.5, 0.5]
+
+    reward = signal._nash_average_speed_reward()
+
+    assert reward == pytest.approx(0.6)
+
+
+def test_weighted_nash_average_speed_reward_emphasizes_high_wait_phase() -> None:
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.get_phase_average_speeds = lambda: [0.9, 0.2]
+    signal.get_phase_max_waiting_times = lambda: [2.0, 8.0]
+
+    reward = signal._weighted_nash_average_speed_reward()
+
+    expected = math.exp(0.2 * math.log(1.0) + 0.8 * math.log(0.3))
+    assert reward == pytest.approx(expected)
+
+
+def test_weighted_nash_average_speed_reward_uses_uniform_weights_when_waits_are_zero() -> None:
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.get_phase_average_speeds = lambda: [1.0, 1.0, 1.0]
+    signal.get_phase_max_waiting_times = lambda: [0.0, 0.0, 0.0]
+
+    reward = signal._weighted_nash_average_speed_reward()
+
+    assert reward == pytest.approx(1.1)
+
+
+def test_phase_average_speeds_and_max_waits_handle_empty_phases() -> None:
+    class DummyLaneAPI:
+        @staticmethod
+        def getLastStepVehicleIDs(lane):
+            if lane == "lane_a":
+                return ["veh_1", "veh_2"]
+            return []
+
+        @staticmethod
+        def getLength(_lane):
+            return 100.0
+
+        @staticmethod
+        def getLastStepLength(_lane):
+            return 5.0
+
+    class DummyVehicleAPI:
+        @staticmethod
+        def getSpeed(veh):
+            return {"veh_1": 6.0, "veh_2": 3.0}[veh]
+
+        @staticmethod
+        def getAllowedSpeed(veh):
+            return {"veh_1": 12.0, "veh_2": 6.0}[veh]
+
+        @staticmethod
+        def getWaitingTime(veh):
+            return {"veh_1": 4.0, "veh_2": 9.0}[veh]
+
+    class DummySumo:
+        lane = DummyLaneAPI()
+        vehicle = DummyVehicleAPI()
+
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.sumo = DummySumo()
+    signal.phase_lanes = [["lane_a"], ["lane_b"]]
+
+    assert signal.get_phase_average_speeds() == pytest.approx([0.5, 1.0])
+    assert signal.get_phase_max_waiting_times() == pytest.approx([9.0, 0.0])

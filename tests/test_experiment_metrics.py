@@ -241,6 +241,44 @@ def test_resco_summary_row_includes_unchosen_phase_penalty_formula() -> None:
     )
 
 
+def test_resco_summary_row_includes_weighted_nash_average_speed_formula() -> None:
+    class DummyBaseEnv:
+        def __init__(self) -> None:
+            self.metrics = []
+            self.sumo = None
+            self.reward_fn = "weighted-nash-average-speed"
+            self.reward_weights = None
+            self.reward_penalty_lambda = None
+            self.last_episode_summary = {
+                "episode/index": 3.0,
+                "episode/steps": 3600.0,
+                "sim_step": 3600.0,
+                "resco_avg_delay": 12.0,
+                "resco_avg_delay_std": 1.25,
+                "resco_trip_time": 34.0,
+                "resco_wait": 7.0,
+                "resco_wait_std": 0.5,
+                "resco_queue": 2.5,
+                "resco_max_queue": 9.0,
+            }
+            self.last_episode_final_info = {}
+            self.last_lane_waiting_times = {"agent_a": []}
+            self.last_episode_lane_waiting_times = {"agent_a": [1.0, 3.0]}
+            self.traffic_signals = {"agent_a": object()}
+
+        def finalize_episode_summary(self):
+            return dict(self.last_episode_summary)
+
+    row = _build_episode_benchmark_summary_row(DummyBaseEnv(), extra={"algorithm/kind": "fixed_time"})
+
+    assert row["reward/formula"] == (
+        "exp(sum(phase_weight * log(phase_average_speed + 0.1))) across green phases, "
+        "where phase_weight = phase_max_waiting_time / sum(phase_max_waiting_time), "
+        "empty phases use average_speed = 1.0 and max_waiting_time = 0, "
+        "and zero total max waiting falls back to uniform phase weights"
+    )
+
+
 def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     class DummyBaseEnv:
         def __init__(self) -> None:
