@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -130,6 +132,39 @@ def test_build_eval_env_defaults_to_traci_when_training_uses_libsumo(monkeypatch
     rllib_runner._build_eval_env(cfg, tmp_path, 11, algorithm_kind="dqn", policy_mode="independent")
 
     assert calls == [{"seed": 11, "pad_spaces": False, "use_libsumo": False}]
+
+
+def test_training_uses_libsumo_falls_back_to_env_var(monkeypatch):
+    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
+
+    cfg = SimpleNamespace(env=SimpleNamespace(kwargs={}))
+
+    assert rllib_runner._training_uses_libsumo(cfg) is True
+
+
+def test_validate_manual_evaluation_backend_config_rejects_global_libsumo_override(monkeypatch):
+    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
+
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+        algorithm=SimpleNamespace(params={}),
+    )
+
+    with pytest.raises(ValueError, match="LIBSUMO_AS_TRACI"):
+        rllib_runner._validate_manual_evaluation_backend_config(cfg)
+
+
+def test_validate_manual_evaluation_backend_config_allows_explicit_split_backends(monkeypatch):
+    monkeypatch.delenv("LIBSUMO_AS_TRACI", raising=False)
+
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+        algorithm=SimpleNamespace(params={}),
+    )
+
+    rllib_runner._validate_manual_evaluation_backend_config(cfg)
 
 
 def test_build_eval_env_can_explicitly_use_libsumo(monkeypatch, tmp_path):
@@ -399,11 +434,12 @@ def test_build_eval_env_does_not_mutate_tripinfo_retention(monkeypatch, tmp_path
 
 def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp_path):
     graph_eval_env = object()
+    calls = []
 
     monkeypatch.setattr(
         rllib_runner,
         "_algorithm_module",
-        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: calls.append(kwargs) or graph_eval_env),
     )
     monkeypatch.setattr(
         rllib_runner,
@@ -411,7 +447,10 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
     )
 
-    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    cfg = SimpleNamespace(
+        algorithm=SimpleNamespace(params={"policy_mode": "independent"}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+    )
     built_env = rllib_runner._build_eval_env(
         cfg,
         tmp_path,
@@ -421,6 +460,7 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp
     )
 
     assert built_env is graph_eval_env
+    assert calls == [{"seed": 7, "use_libsumo": False}]
 
 
 def test_build_eval_env_uses_graph_eval_env_for_ppo_dcrnn_mlp(monkeypatch, tmp_path):
