@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 from pathlib import Path
@@ -325,8 +326,15 @@ def test_train_rllib_existing_ray_address_does_not_pass_local_startup_resources(
 def test_train_rllib_auto_ray_address_falls_back_to_explicit_local_startup(monkeypatch, tmp_path):
     ray_init_calls = []
     ray_shutdown_calls = []
+    address_file = tmp_path / "ray_current_cluster"
 
     class DummyRay:
+        class _private:
+            class utils:
+                @staticmethod
+                def get_ray_address_file(_temp_dir=None):
+                    return str(address_file)
+
         @staticmethod
         def init(**kwargs):
             ray_init_calls.append(kwargs)
@@ -376,6 +384,7 @@ def test_train_rllib_auto_ray_address_falls_back_to_explicit_local_startup(monke
 
     monkeypatch.setitem(sys.modules, "ray", DummyRay)
     monkeypatch.setenv("RAY_ADDRESS", "192.168.20.123:6379")
+    address_file.write_text("192.168.20.123:6379", encoding="utf-8")
     monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
     monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
     monkeypatch.setattr(rllib_runner, "_train_algorithm", fake_train_algorithm)
@@ -405,12 +414,13 @@ def test_train_rllib_auto_ray_address_falls_back_to_explicit_local_startup(monke
     assert "num_gpus" not in ray_init_calls[0]
 
     fallback_kwargs = ray_init_calls[1]
-    assert "address" not in fallback_kwargs
+    assert fallback_kwargs["address"] == "local"
     assert fallback_kwargs["num_cpus"] == 7
     assert fallback_kwargs["num_gpus"] == 1
     assert fallback_kwargs["include_dashboard"] is False
     assert fallback_kwargs["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
     assert "RAY_ADDRESS" not in os.environ
+    assert not address_file.exists()
 
 
 def test_dqn_uses_multi_agent_episode_replay_buffer_by_default():

@@ -22,10 +22,10 @@ experiment:
 resources:
   # Ray CPU resources are logical scheduler slots; native thread caps keep
   # Torch/NumPy/BLAS-style libraries from oversubscribing those slots.
-  # Prefer joining a pre-started Ray head so parallel jobs can share one
-  # cluster. If none is running, "auto" falls back to a local Ray instance.
-  # Override with ray_address=null to always skip cluster discovery.
-  ray_address: auto
+  # Default to a local Ray instance for reproducible standalone runs.
+  # Override with ray_address=auto or an explicit Ray head address to join
+  # a shared cluster when you want cluster-managed resources.
+  ray_address: null
   ray_num_cpus: 16
   native_num_threads: 1
   # Physical CUDA device ids to expose to this run. With "1", the selected GPU

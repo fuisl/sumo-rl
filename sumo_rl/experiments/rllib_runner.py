@@ -1928,6 +1928,24 @@ def _is_existing_ray_address(address: Optional[str]) -> bool:
     return str(address).strip().lower() not in {"", "local", "none", "null"}
 
 
+def _clear_ray_auto_discovery_state(ray_module: Any) -> None:
+    os.environ.pop("RAY_ADDRESS", None)
+    ray_utils = getattr(getattr(ray_module, "_private", None), "utils", None)
+    get_ray_address_file = getattr(ray_utils, "get_ray_address_file", None)
+    if not callable(get_ray_address_file):
+        return
+    try:
+        address_file = get_ray_address_file(None)
+    except Exception:
+        return
+    if not address_file:
+        return
+    try:
+        Path(address_file).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _format_ray_resource_value(resources: Dict[str, Any], key: str) -> str:
     value = resources.get(key, 0.0)
     try:
@@ -2034,8 +2052,9 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         if not _is_auto_ray_address(ray_address):
             raise
         ray.shutdown()
-        os.environ.pop("RAY_ADDRESS", None)
+        _clear_ray_auto_discovery_state(ray)
         fallback_ray_init_kwargs: Dict[str, Any] = {
+            "address": "local",
             "ignore_reinit_error": True,
             "log_to_driver": False,
             "include_dashboard": False,
