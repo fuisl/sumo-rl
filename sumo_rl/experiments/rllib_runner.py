@@ -2033,6 +2033,8 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     except ConnectionError:
         if not _is_auto_ray_address(ray_address):
             raise
+        ray.shutdown()
+        os.environ.pop("RAY_ADDRESS", None)
         fallback_ray_init_kwargs: Dict[str, Any] = {
             "ignore_reinit_error": True,
             "log_to_driver": False,
