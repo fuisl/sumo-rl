@@ -41,15 +41,11 @@ from pettingzoo.utils.conversions import parallel_wrapper_fn
 
 from .observations import DefaultObservationFunction, ObservationFunction
 from .traffic_signal import TrafficSignal
+from ..util.tripinfo import collect_tripinfo_metrics, is_ghost_vehicle
 
 
 TRACI_START_RETRIES = 3
 TRACI_START_RETRY_DELAY_SECONDS = 0.5
-
-
-def _is_ghost_vehicle(vehicle_id: str) -> bool:
-    return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
-
 
 def _backend_module(use_libsumo: bool):
     if use_libsumo:
@@ -651,14 +647,12 @@ class SumoEnvironment(gym.Env):
             return numeric_value
         return None
 
-    @staticmethod
-    def _is_truthy_xml_value(value: Optional[str]) -> bool:
-        return str(value).strip().lower() in {"1", "true", "yes"}
-
     def _parse_tripinfo_summary(self, tripinfo_path: Path) -> dict:
         nan = float("nan")
         empty_summary = {
             "tripinfo/finished_count": 0.0,
+            "tripinfo/running_unfinished_count": 0.0,
+            "tripinfo/undeparted_count": 0.0,
             "tripinfo/unfinished_count": 0.0,
             "tripinfo/total_count": 0.0,
             "tripinfo/avg_duration": nan,
@@ -700,31 +694,14 @@ class SumoEnvironment(gym.Env):
             parsed_empty_summary["tripinfo/parse_success"] = 1.0
             return parsed_empty_summary
 
-        delays = []
-        trip_times = []
-        waits = []
-        time_losses = []
-        finished_count = 0
-        unfinished_count = 0
-        for vehicle in vehicles:
-            vehicle_id = vehicle.attrib.get("id", "")
-            if _is_ghost_vehicle(vehicle_id):
-                continue
-            is_unfinished = self._is_truthy_xml_value(vehicle.attrib.get("vaporized")) or self._is_truthy_xml_value(
-                vehicle.attrib.get("unfinished")
-            )
-            if is_unfinished:
-                unfinished_count += 1
-                continue
-            finished_count += 1
-            time_loss = float(vehicle.attrib.get("timeLoss", 0.0))
-            depart_delay = float(vehicle.attrib.get("departDelay", 0.0))
-            delays.append(time_loss + depart_delay)
-            trip_times.append(float(vehicle.attrib.get("duration", 0.0)))
-            waits.append(float(vehicle.attrib.get("waitingTime", 0.0)))
-            time_losses.append(time_loss)
-
-        total_count = finished_count + unfinished_count
+        tripinfo_metrics = collect_tripinfo_metrics(vehicles)
+        delays = tripinfo_metrics.delay_values
+        trip_times = tripinfo_metrics.duration_values
+        waits = tripinfo_metrics.wait_values
+        time_losses = tripinfo_metrics.time_loss_values
+        finished_count = tripinfo_metrics.finished_count
+        unfinished_count = tripinfo_metrics.unfinished_count
+        total_count = tripinfo_metrics.total_count
         avg_delay = float(np.mean(delays)) if delays else nan
         std_delay = float(np.std(delays)) if delays else nan
         max_delay = float(np.max(delays)) if delays else nan
@@ -737,6 +714,8 @@ class SumoEnvironment(gym.Env):
         std_time_loss = float(np.std(time_losses)) if time_losses else nan
         return {
             "tripinfo/finished_count": float(finished_count),
+            "tripinfo/running_unfinished_count": float(tripinfo_metrics.running_unfinished_count),
+            "tripinfo/undeparted_count": float(tripinfo_metrics.undeparted_count),
             "tripinfo/unfinished_count": float(unfinished_count),
             "tripinfo/total_count": float(total_count),
             "tripinfo/avg_duration": avg_trip_time,

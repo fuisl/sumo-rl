@@ -387,7 +387,7 @@ These are the main thesis comparison metrics.
 
 | Metric | Formula | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `resco_avg_delay` | `mean(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_avg_delay` | `mean(timeLoss + departDelay)` over completed non-ghost vehicles (`arrival >= 0` and no unfinished/vaporized marker) | SUMO tripinfo XML | episode summary |
 | `resco_delay_mean` | same value as `resco_avg_delay` | SUMO tripinfo XML | episode summary and training trace |
 | `resco_delay_max` | `max(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_delay_std` | std of `timeLoss + departDelay` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
@@ -398,6 +398,9 @@ These are the main thesis comparison metrics.
 | `resco_wait_max` | `max(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_wait_std` | std of `waitingTime` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_tripinfo_count` | count of completed non-ghost tripinfo rows | SUMO tripinfo XML | episode summary |
+| `tripinfo/running_unfinished_count` | count of departed non-ghost tripinfo rows with no arrival by episode end | SUMO tripinfo XML | episode summary and final eval |
+| `tripinfo/undeparted_count` | count of non-ghost tripinfo rows that never departed by episode end | SUMO tripinfo XML | episode summary and final eval |
+| `tripinfo/unfinished_count` | `tripinfo/running_unfinished_count + tripinfo/undeparted_count` | SUMO tripinfo XML | episode summary and final eval |
 | `resco_queue` | mean of recorded queue-per-signal values across the episode | `system_mean_queued`, else `system_total_queued / num_signals`, else `system_total_stopped / num_signals` | episode summary |
 | `resco_max_queue` | max recorded queue-per-signal value across the episode | `system_max_queue` from live step info | episode summary |
 | `resco_queue_mean` | same value as `resco_queue` | live queue metrics | episode summary and training trace |
@@ -419,6 +422,9 @@ For the training trace, the runner remaps the completed-episode summary into:
 
 These `train/*` fields are not recomputed from a separate source.
 They are copied from the cached completed-episode summary that the environment builds at episode end.
+
+When `--tripinfo-output.write-unfinished` and `--tripinfo-output.write-undeparted` are enabled, SUMO also writes rows for vehicles that did not finish before the episode ended.
+Those rows are excluded from `resco_*` delay, wait, and trip-time aggregates and are only counted under the `tripinfo/*unfinished*` fields.
 
 Only the episode-facing throughput totals stay in `train/*`.
 The end-of-episode live-state efficiency snapshot fields move to `debug/*`

@@ -1545,8 +1545,9 @@ def test_extract_validation_seed_artifacts_parses_tripinfo_and_removes_temp_file
     tripinfo_path.write_text(
         """
 <routes>
-  <tripinfo id="veh_1" duration="20" waitingTime="4" timeLoss="3" departDelay="1" />
-  <tripinfo id="veh_2" unfinished="true" duration="0" waitingTime="0" timeLoss="0" departDelay="0" />
+  <tripinfo id="veh_1" depart="0" arrival="20" duration="20" waitingTime="4" timeLoss="3" departDelay="1" vaporized="" />
+  <tripinfo id="veh_2" depart="5" arrival="-1" duration="15" waitingTime="9" timeLoss="12" departDelay="0" vaporized="" />
+  <tripinfo id="veh_3" depart="-1" arrival="-1" duration="0" waitingTime="0" timeLoss="0" departDelay="0" />
 </routes>
 """.strip(),
         encoding="utf-8",
@@ -1565,8 +1566,8 @@ def test_extract_validation_seed_artifacts_parses_tripinfo_and_removes_temp_file
     assert artifact.tripinfo.wait_values == [4.0]
     assert artifact.tripinfo.delay_values == [4.0]
     assert artifact.tripinfo.finished_count == 1
-    assert artifact.tripinfo.unfinished_count == 1
-    assert artifact.tripinfo.total_count == 2
+    assert artifact.tripinfo.unfinished_count == 2
+    assert artifact.tripinfo.total_count == 3
     assert tripinfo_path.exists() is False
 
 
@@ -1575,7 +1576,7 @@ def test_extract_validation_seed_artifacts_keeps_tripinfo_when_requested(tmp_pat
     tripinfo_path.write_text(
         """
 <routes>
-  <tripinfo id="veh_1" duration="20" waitingTime="4" timeLoss="3" departDelay="1" />
+  <tripinfo id="veh_1" depart="0" arrival="20" duration="20" waitingTime="4" timeLoss="3" departDelay="1" vaporized="" />
 </routes>
 """.strip(),
         encoding="utf-8",

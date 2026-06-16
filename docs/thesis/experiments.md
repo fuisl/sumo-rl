@@ -27,10 +27,11 @@ Hydra is used as the experiment composition layer.
 - When training with `+env.kwargs.use_libsumo=true`, manual validation and final evaluation stay on TraCI by default via `logging.eval_use_libsumo=false`.
 - Do not combine Libsumo training with RLlib-native evaluation through `algorithm.params.evaluation_interval`; the runner rejects that configuration because it conflicts with the project-side manual validation path.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
-  - `resco_avg_delay` from SUMO tripinfo `timeLoss + departDelay`
-  - `resco_trip_time` from SUMO tripinfo `duration`
-  - `resco_wait` from SUMO tripinfo `waitingTime`
+  - `resco_avg_delay` from completed SUMO tripinfo rows only: `timeLoss + departDelay`
+  - `resco_trip_time` from completed SUMO tripinfo rows only: `duration`
+  - `resco_wait` from completed SUMO tripinfo rows only: `waitingTime`
   - `resco_queue` and `resco_max_queue` from the live queue metrics
+  - unfinished and undeparted vehicles at episode end are tracked separately under `tripinfo/*unfinished*` counts and are excluded from the RESCO aggregates
   - `efficiency_*` for queue, speed, waiting-time, and throughput diagnostics in episode summaries and eval/final outputs
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
   - the RLlib training trace keeps only the episode-facing throughput totals in `train/*`; the end-of-episode live snapshot diagnostics stay under `debug/*`

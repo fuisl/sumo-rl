@@ -83,10 +83,11 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
         tmp_path,
         """
         <tripinfos>
-            <tripinfo id="veh_1" duration="30" waitingTime="5" timeLoss="8" departDelay="2" />
-            <tripinfo id="veh_2" duration="50" waitingTime="7" timeLoss="10" departDelay="4" />
+            <tripinfo id="veh_1" depart="0" arrival="30" duration="30" waitingTime="5" timeLoss="8" departDelay="2" vaporized="" />
+            <tripinfo id="veh_2" depart="5" arrival="55" duration="50" waitingTime="7" timeLoss="10" departDelay="4" vaporized="" />
             <tripinfo id="ghost_1" duration="999" waitingTime="999" timeLoss="999" departDelay="999" />
-            <tripinfo id="veh_3" duration="20" waitingTime="3" timeLoss="4" departDelay="1" vaporized="true" />
+            <tripinfo id="veh_3" depart="10" arrival="-1" duration="20" waitingTime="3" timeLoss="4" departDelay="1" vaporized="" />
+            <tripinfo id="veh_4" depart="-1" arrival="-1" duration="0" waitingTime="0" timeLoss="0" departDelay="0" />
         </tripinfos>
         """,
     )
@@ -94,7 +95,10 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
     summary = env.finalize_episode_summary(parse_tripinfo=True)
 
     assert summary["tripinfo/finished_count"] == 2.0
-    assert summary["tripinfo/unfinished_count"] == 1.0
+    assert summary["tripinfo/running_unfinished_count"] == 1.0
+    assert summary["tripinfo/undeparted_count"] == 1.0
+    assert summary["tripinfo/unfinished_count"] == 2.0
+    assert summary["tripinfo/total_count"] == 4.0
     assert summary["tripinfo/avg_delay"] == 12.0
     assert summary["resco_avg_delay"] == 12.0
     assert summary["resco_delay_mean"] == 12.0
@@ -136,7 +140,7 @@ def test_pending_tripinfo_summary_is_replaced_after_sumo_close(tmp_path) -> None
         tmp_path,
         """
         <tripinfos>
-            <tripinfo id="veh_1" duration="30" waitingTime="5" timeLoss="8" departDelay="2" />
+            <tripinfo id="veh_1" depart="0" arrival="30" duration="30" waitingTime="5" timeLoss="8" departDelay="2" vaporized="" />
         </tripinfos>
         """,
     )
@@ -314,8 +318,10 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
                 "resco_queue": 2.5,
                 "resco_max_queue": 9.0,
                 "tripinfo/finished_count": 4.0,
-                "tripinfo/unfinished_count": 1.0,
-                "tripinfo/total_count": 5.0,
+                "tripinfo/running_unfinished_count": 1.0,
+                "tripinfo/undeparted_count": 2.0,
+                "tripinfo/unfinished_count": 3.0,
+                "tripinfo/total_count": 7.0,
                 "tripinfo/avg_duration": 34.0,
                 "tripinfo/avg_waiting_time": 7.0,
                 "tripinfo/avg_time_loss": 9.0,
@@ -357,6 +363,8 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     assert "eval/safety/total_collisions" not in row
     assert "final/fairness/jain_waiting_time" not in row
     assert row["tripinfo/finished_count"] == 4.0
+    assert row["tripinfo/running_unfinished_count"] == 1.0
+    assert row["tripinfo/undeparted_count"] == 2.0
     assert row["warnings/no_finished_trips"] is False
     assert row["warnings/no_final_summary_metrics"] is False
     assert row["debug/has_metrics"] is True

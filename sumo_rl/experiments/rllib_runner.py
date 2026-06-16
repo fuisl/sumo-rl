@@ -61,6 +61,8 @@ from sumo_rl.agents.rllib_common import (
     scenario_factory_name,
     validation_interval_episodes,
 )
+from sumo_rl.util.tripinfo import collect_tripinfo_metrics
+
 SUPPORTED_RLLIB_ALGORITHMS = {
     "ppo",
     "ppo_dcrnn_mlp",
@@ -439,41 +441,19 @@ def _validation_tripinfo_output_path(env: Any) -> Optional[Path]:
 
 
 def _parse_tripinfo_distribution_file(tripinfo_path: Path) -> TripinfoDistributionArtifact:
-    wait_values: list[float] = []
-    delay_values: list[float] = []
-    finished_count = 0
-    unfinished_count = 0
     if not tripinfo_path.exists():
         return TripinfoDistributionArtifact(wait_values=[], delay_values=[], finished_count=0, unfinished_count=0, total_count=0)
     try:
         tree = ET.parse(tripinfo_path)
     except (ET.ParseError, OSError):
         return TripinfoDistributionArtifact(wait_values=[], delay_values=[], finished_count=0, unfinished_count=0, total_count=0)
-
-    def _is_truthy_xml_value(value: Optional[str]) -> bool:
-        return str(value).strip().lower() in {"1", "true", "yes"}
-
-    for vehicle in tree.getroot().findall(".//tripinfo"):
-        vehicle_id = str(vehicle.attrib.get("id", "") or "")
-        if vehicle_id.startswith("ghost"):
-            continue
-        is_unfinished = _is_truthy_xml_value(vehicle.attrib.get("vaporized")) or _is_truthy_xml_value(
-            vehicle.attrib.get("unfinished")
-        )
-        if is_unfinished:
-            unfinished_count += 1
-            continue
-        finished_count += 1
-        time_loss = float(vehicle.attrib.get("timeLoss", 0.0))
-        depart_delay = float(vehicle.attrib.get("departDelay", 0.0))
-        delay_values.append(time_loss + depart_delay)
-        wait_values.append(float(vehicle.attrib.get("waitingTime", 0.0)))
+    tripinfo_metrics = collect_tripinfo_metrics(tree.getroot().findall(".//tripinfo"))
     return TripinfoDistributionArtifact(
-        wait_values=wait_values,
-        delay_values=delay_values,
-        finished_count=finished_count,
-        unfinished_count=unfinished_count,
-        total_count=finished_count + unfinished_count,
+        wait_values=list(tripinfo_metrics.wait_values),
+        delay_values=list(tripinfo_metrics.delay_values),
+        finished_count=int(tripinfo_metrics.finished_count),
+        unfinished_count=int(tripinfo_metrics.unfinished_count),
+        total_count=int(tripinfo_metrics.total_count),
     )
 
 

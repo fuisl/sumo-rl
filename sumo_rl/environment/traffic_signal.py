@@ -13,9 +13,7 @@ else:
 import numpy as np
 from gymnasium import spaces
 
-
-def _is_ghost_vehicle(vehicle_id: str) -> bool:
-    return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
+from ..util.tripinfo import is_ghost_vehicle as _is_ghost_vehicle
 
 
 class TrafficSignal:
