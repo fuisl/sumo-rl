@@ -9,7 +9,7 @@ This page covers the non-learning static baselines for the thesis RESCO scenario
 It also matches the fixed-time benchmark style used in the thesis, which follows the same five-seed averaging pattern.
 The logged summary values follow the RESCO formulas:
 
-- `resco_avg_delay` from tripinfo `timeLoss`
+- `resco_avg_delay` from tripinfo `timeLoss + departDelay`
 - `resco_trip_time` from tripinfo `duration`
 - `resco_wait` from tripinfo `waitingTime`
 - `resco_queue` and `resco_max_queue` from live queue counts in the simulator

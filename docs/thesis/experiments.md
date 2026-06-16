@@ -27,7 +27,7 @@ Hydra is used as the experiment composition layer.
 - When training with `+env.kwargs.use_libsumo=true`, manual validation and final evaluation stay on TraCI by default via `logging.eval_use_libsumo=false`.
 - Do not combine Libsumo training with RLlib-native evaluation through `algorithm.params.evaluation_interval`; the runner rejects that configuration because it conflicts with the project-side manual validation path.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
-  - `resco_avg_delay` from SUMO tripinfo `timeLoss`
+  - `resco_avg_delay` from SUMO tripinfo `timeLoss + departDelay`
   - `resco_trip_time` from SUMO tripinfo `duration`
   - `resco_wait` from SUMO tripinfo `waitingTime`
   - `resco_queue` and `resco_max_queue` from the live queue metrics
