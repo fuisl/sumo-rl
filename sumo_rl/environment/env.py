@@ -41,7 +41,7 @@ from pettingzoo.utils.conversions import parallel_wrapper_fn
 
 from .observations import DefaultObservationFunction, ObservationFunction
 from .traffic_signal import TrafficSignal
-from ..util.tripinfo import collect_tripinfo_metrics, is_ghost_vehicle
+from ..util.tripinfo import collect_tripinfo_metrics, is_ghost_vehicle as _is_ghost_vehicle
 
 
 TRACI_START_RETRIES = 3
