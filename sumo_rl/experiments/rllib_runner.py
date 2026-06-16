@@ -2032,20 +2032,25 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     ray_num_gpus = _resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto")))
     runtime_env_vars = dict(cpu_thread_env)
     runtime_env_vars.update(cuda_env)
+    local_ray_startup = not _is_existing_ray_address(ray_address)
+    if local_ray_startup:
+        _clear_ray_auto_discovery_state(ray)
     ray_init_kwargs: Dict[str, Any] = {
         "ignore_reinit_error": True,
         "log_to_driver": False,
     }
-    if ray_address is not None:
+    if local_ray_startup:
+        ray_init_kwargs["address"] = "local"
+    elif ray_address is not None:
         ray_init_kwargs["address"] = ray_address
-    if not _is_existing_ray_address(ray_address):
+    if local_ray_startup:
         ray_init_kwargs["include_dashboard"] = False
         ray_init_kwargs["num_gpus"] = ray_num_gpus
         if ray_num_cpus is not None:
             ray_init_kwargs["num_cpus"] = ray_num_cpus
     if runtime_env_vars:
         ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
-    connected_to_existing_cluster = _is_existing_ray_address(ray_address)
+    connected_to_existing_cluster = not local_ray_startup
     try:
         ray.init(**ray_init_kwargs)
     except ConnectionError:
