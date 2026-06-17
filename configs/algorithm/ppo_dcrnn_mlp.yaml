@@ -13,11 +13,12 @@ algorithm:
     clip_param: 0.2
     entropy_coeff: 0.0
     train_batch_size_per_learner: 4000
-    sgd_minibatch_size: 128
+    sgd_minibatch_size: 64
     num_sgd_iter: 10
     history_len: 5
     include_virtual_nodes: true
     add_self_loops: true
+    observation_dtype: float16
     model_config:
       architecture_tag: ppo_dcrnn_mlp
       feature_layout: phase_min_green_density_queue

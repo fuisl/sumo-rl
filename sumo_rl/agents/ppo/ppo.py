@@ -30,6 +30,50 @@ KIND = "ppo"
 MLP_DCRNN_KIND = "ppo_dcrnn_mlp"
 
 
+def _dtype_nbytes(value: str) -> int:
+    normalized = str(value or "float16").strip().lower()
+    if normalized in {"float16", "fp16", "half"}:
+        return 2
+    return 4
+
+
+def _format_gib(num_bytes: float) -> str:
+    return f"{num_bytes / float(1024 ** 3):.2f} GiB"
+
+
+def _warn_if_ppo_graph_memory_is_large(context) -> None:
+    if not context.active_policies:
+        return
+
+    first_policy = next(iter(context.active_policies.values()))
+    obs_space = getattr(first_policy, "observation_space", None)
+    obs_shape = tuple(getattr(obs_space, "shape", ()) or ())
+    if len(obs_shape) != 3:
+        return
+
+    history_len, num_nodes, feature_dim = (int(dim) for dim in obs_shape)
+    dtype_name = str(getattr(obs_space, "dtype", "float32"))
+    num_policies = max(1, len(context.active_policies))
+    per_sample_obs_bytes = history_len * num_nodes * feature_dim * _dtype_nbytes(dtype_name)
+    rollout_obs_bytes = per_sample_obs_bytes * max(1, int(context.episode_steps)) * num_policies
+    train_batch_size = max(1, int(context.params.get("train_batch_size_per_learner", context.episode_steps)))
+    minibatch_size = max(1, int(context.params.get("minibatch_size", context.params.get("sgd_minibatch_size", train_batch_size))))
+    effective_train_batch_size = min(train_batch_size, max(1, int(context.episode_steps)))
+    minibatch_obs_bytes = per_sample_obs_bytes * minibatch_size
+
+    if max(rollout_obs_bytes, minibatch_obs_bytes) < 256 * 1024 * 1024:
+        return
+
+    print(
+        f"[{MLP_DCRNN_KIND}] Large PPO graph footprint detected: "
+        f"{num_policies} policies x [{history_len}, {num_nodes}, {feature_dim}] {dtype_name} observations. "
+        f"One full on-policy rollout across all policies stores about {_format_gib(rollout_obs_bytes)} of observations; "
+        f"one learner minibatch holds about {_format_gib(minibatch_obs_bytes)} of observations. "
+        f"Effective train_batch_size_per_learner is capped to {effective_train_batch_size} by the episode horizon. "
+        f"If memory spikes, lower sgd_minibatch_size or history_len before changing the backbone."
+    )
+
+
 def _ppo_dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config.setdefault("architecture_tag", MLP_DCRNN_KIND)
@@ -73,6 +117,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
             algorithm_kind=algorithm_kind,
             model_config_builder=_ppo_dcrnn_model_config,
         )
+        _warn_if_ppo_graph_memory_is_large(context)
     else:
         context = build_algorithm_context(cfg, run_dir, KIND)
         model_configs = None

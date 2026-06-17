@@ -83,6 +83,9 @@ belongs to one traffic signal, but its backbone sees the full graph history,
 runs diffusion message passing inside the DCRNN, and then keeps only the ego
 node's latent for the PPO policy head and value head. There is no separate GAT
 or explicit post-DCRNN communication block in this PPO path.
+For memory, the PPO+DCRNN config now makes `observation_dtype=float16`
+explicit and uses `sgd_minibatch_size=64` so the learner holds smaller graph
+minibatches on GPU without changing the DCRNN architecture itself.
 
 FRAP is available as `algorithm=frap`. It is a DQN-family RLlib method whose
 custom RLModule replaces the Q-network with the paper's phase-competition
@@ -183,6 +186,10 @@ one node-wise MLP layer before each DCRNN encoder.
 shared ego-node latent. This still uses DCRNN diffusion over the graph-history
 observation, not a GAT layer, and should be treated as an experimental
 parameter-sharing ablation.
+
+For memory, the SAC+DCRNN configs now make `observation_dtype=float16`
+explicit and use `train_batch_size_per_learner=32` so the learner and replay
+path hold smaller graph batches without changing the DCRNN architecture itself.
 
 Across all current DCRNN SAC variants, the graph observation and message flow
 match the DQN/PPO graph wrapper: observations are graph histories made from
