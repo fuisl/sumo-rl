@@ -78,6 +78,7 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     "sac_builtin",
     fgsv2_agent.KIND,
     fgsv3_agent.KIND,
+    fgsv3_agent.PPO_KIND,
     "sac_mlp",
     "sac_dcrnn_actor",
     "sac_dcrnn_actor_mlp",
@@ -198,7 +199,7 @@ def _algorithm_module(algorithm_kind: str):
         return importlib.import_module("sumo_rl.agents.fgs.fgs")
     if algorithm_kind == fgsv2_agent.KIND:
         return fgsv2_agent
-    if algorithm_kind == fgsv3_agent.KIND:
+    if algorithm_kind in {fgsv3_agent.KIND, fgsv3_agent.PPO_KIND}:
         return fgsv3_agent
     if algorithm_kind in {
         "sac_builtin",
@@ -220,6 +221,7 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
         "ppo_dcrnn_mlp",
         "dqn_dcrnn_mlp",
         "fgs_ppo",
+        fgsv3_agent.PPO_KIND,
         "sac_builtin",
         "sac_mlp",
         "sac_dcrnn_actor",
@@ -239,6 +241,7 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
         "ppo_dcrnn_mlp",
         "dqn_dcrnn_mlp",
         "fgs_ppo",
+        fgsv3_agent.PPO_KIND,
         "sac_builtin",
         "sac_mlp",
         "sac_dcrnn_actor",

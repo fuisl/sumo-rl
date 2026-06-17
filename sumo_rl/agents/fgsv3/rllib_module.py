@@ -353,3 +353,145 @@ def build_fgsv3_sac_multi_module_spec(
         rl_module_specs=rl_module_specs,
         model_config=normalize_fgsv3_model_config(model_config),
     )
+
+
+def build_fgsv3_ppo_module_class():
+    import torch
+    from ray.rllib.algorithms.ppo.default_ppo_rl_module import DefaultPPORLModule
+    from ray.rllib.core.columns import Columns
+    from ray.rllib.core.rl_module.torch import TorchRLModule
+
+    class FGSv3PPOTorchRLModule(TorchRLModule, DefaultPPORLModule):
+        """PPO module using the FGSv3 demand encoder and action-conditioned actor."""
+
+        def setup(self):
+            if not isinstance(self.action_space, gym.spaces.Discrete):
+                raise ValueError("FGSv3 PPO requires a discrete traffic-signal action space.")
+            if not isinstance(self.observation_space, gym.spaces.Dict):
+                raise ValueError("FGSv3 PPO requires graph Dict observations from FGSGraphParallelEnv.")
+            spaces = self.observation_space.spaces
+            self.model_config = normalize_fgsv3_model_config(dict(self.model_config or {}))
+            self.num_nodes = int(spaces["node_features"].shape[0])
+            self.node_feature_dim = int(spaces["node_features"].shape[-1])
+            self.num_actions = int(self.action_space.n)
+            self.invalid_action_value = float(self.model_config.get("invalid_action_value", -1.0e9))
+
+            self.encoder = FGSv3GraphEncoder(
+                node_feature_dim=self.node_feature_dim,
+                num_nodes=self.num_nodes,
+                num_actions=self.num_actions,
+                model_config=self.model_config,
+            )
+            actor_config = dict(self.model_config.get("actor", {}) or {})
+            self.policy_head = ActionConditionedActor(
+                token_dim=self.encoder.token_dim,
+                graph_dim=self.encoder.output_dim,
+                num_actions=self.num_actions,
+                hidden_dims=actor_config.get("hidden_dims", [128]),
+                activation=str(actor_config.get("activation", "relu")),
+            )
+            value_config = dict(self.model_config.get("value", {}) or {})
+            hidden_dims = value_config.get("hidden_dims")
+            if hidden_dims is None:
+                hidden_dim = int(value_config.get("hidden_dim", self.model_config.get("hidden_dim", 128)))
+                hidden_dims = [hidden_dim]
+            hidden_dims = list(hidden_dims) or [128]
+            self.value_head = torch.nn.Sequential(
+                torch.nn.Linear(self.encoder.output_dim + self.encoder.token_dim, int(hidden_dims[0])),
+                torch.nn.ReLU(),
+                *[
+                    layer
+                    for in_dim, out_dim in zip(hidden_dims[:-1], hidden_dims[1:])
+                    for layer in (torch.nn.Linear(int(in_dim), int(out_dim)), torch.nn.ReLU())
+                ],
+                torch.nn.Linear(int(hidden_dims[-1]), 1),
+            )
+
+        def _masked_logits(self, logits, mask):
+            if mask is None:
+                return logits
+            return logits.masked_fill((mask > 0).logical_not(), self.invalid_action_value)
+
+        def _value_features(self, encoded: Dict[str, torch.Tensor], action_mask: Optional[torch.Tensor]) -> torch.Tensor:
+            action_tokens = encoded["ego_action_tokens"]
+            if action_mask is None:
+                valid_actions = torch.ones(
+                    action_tokens.shape[:2],
+                    dtype=action_tokens.dtype,
+                    device=action_tokens.device,
+                )
+            else:
+                valid_actions = action_mask.to(device=action_tokens.device, dtype=action_tokens.dtype)[
+                    ..., : self.num_actions
+                ]
+            weights = valid_actions / valid_actions.sum(dim=-1, keepdim=True).clamp_min(1.0)
+            pooled_tokens = torch.sum(action_tokens * weights.unsqueeze(-1), dim=1)
+            return torch.cat((encoded["ego"], pooled_tokens), dim=-1)
+
+        def _forward_outputs(self, obs: Dict[str, torch.Tensor], *, include_values: bool) -> Dict[str, torch.Tensor]:
+            encoded = self.encoder(obs)
+            logits = self.policy_head(encoded["ego_action_tokens"], encoded["ego"])
+            logits = self._masked_logits(logits, obs.get("action_mask"))
+            output = {Columns.ACTION_DIST_INPUTS: logits}
+            if include_values:
+                output[Columns.VF_PREDS] = self.value_head(self._value_features(encoded, obs.get("action_mask"))).squeeze(-1)
+            return output
+
+        def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=False)
+
+        def _forward_inference(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=False)
+
+        def _forward_exploration(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=True)
+
+        def _forward_train(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            del kwargs
+            return self._forward_outputs(batch[Columns.OBS], include_values=True)
+
+        def compute_values(self, batch: Dict[str, Any], embeddings=None):
+            del embeddings
+            encoded = self.encoder(batch[Columns.OBS])
+            return self.value_head(self._value_features(encoded, batch[Columns.OBS].get("action_mask"))).squeeze(-1)
+
+        def get_initial_state(self) -> dict:
+            return {}
+
+        def get_non_inference_attributes(self):
+            return ["value_head"]
+
+    FGSv3PPOTorchRLModule.__name__ = "FGSv3PPOTorchRLModule"
+    return FGSv3PPOTorchRLModule
+
+
+def build_fgsv3_ppo_module_spec(
+    observation_space,
+    action_space,
+    *,
+    model_config: Optional[Dict[str, Any]] = None,
+):
+    from ray.rllib.core.rl_module.rl_module import RLModuleSpec
+
+    return RLModuleSpec(
+        module_class=build_fgsv3_ppo_module_class(),
+        observation_space=observation_space,
+        action_space=action_space,
+        model_config=normalize_fgsv3_model_config(model_config),
+    )
+
+
+def build_fgsv3_ppo_multi_module_spec(
+    rl_module_specs: Dict[str, Any],
+    *,
+    model_config: Optional[Dict[str, Any]] = None,
+):
+    from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+
+    return MultiRLModuleSpec(
+        rl_module_specs=rl_module_specs,
+        model_config=normalize_fgsv3_model_config(model_config),
+    )
