@@ -245,7 +245,40 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
         module.train(algo, cfg, emit_metrics=emit_metrics, validate=validate)
 
 
-def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
+def _compute_single_action(
+    algo,
+    obs,
+    *,
+    policy_id: Optional[str] = None,
+    algorithm_kind: Optional[str] = None,
+):
+    normalized_algorithm_kind = normalize_algorithm_kind(str(algorithm_kind or "").strip())
+    prefer_rllib_inference_api = normalized_algorithm_kind in {"sac_dcrnn_full", "sac_dcrnn_full_mlp"}
+
+    if prefer_rllib_inference_api:
+        compute_single_action = getattr(algo, "compute_single_action", None)
+        if callable(compute_single_action):
+            try:
+                if policy_id is None:
+                    action = compute_single_action(obs, explore=False)
+                else:
+                    action = compute_single_action(obs, policy_id=policy_id, explore=False)
+                return action[0] if isinstance(action, tuple) else action
+            except AttributeError:
+                # Some RLlib API-stack combinations route through env runners that
+                # do not expose `get_policy` for `compute_single_action()`.
+                pass
+
+        get_policy = getattr(algo, "get_policy", None)
+        if callable(get_policy):
+            try:
+                policy = get_policy(policy_id) if policy_id else get_policy()
+            except Exception:
+                policy = None
+            if policy is not None and hasattr(policy, "compute_single_action"):
+                action = policy.compute_single_action(obs, explore=False)
+                return action[0] if isinstance(action, tuple) else action
+
     get_module = getattr(algo, "get_module", None)
     if callable(get_module):
         try:
@@ -279,28 +312,29 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
                 action = action.detach().cpu().numpy()
             return np.asarray(action).reshape(-1)[0].item()
 
-    compute_single_action = getattr(algo, "compute_single_action", None)
-    if callable(compute_single_action):
-        try:
-            if policy_id is None:
-                action = compute_single_action(obs, explore=False)
-            else:
-                action = compute_single_action(obs, policy_id=policy_id, explore=False)
-            return action[0] if isinstance(action, tuple) else action
-        except AttributeError:
-            # Some RLlib API-stack combinations route through env runners that
-            # do not expose `get_policy` for `compute_single_action()`.
-            pass
+    if not prefer_rllib_inference_api:
+        compute_single_action = getattr(algo, "compute_single_action", None)
+        if callable(compute_single_action):
+            try:
+                if policy_id is None:
+                    action = compute_single_action(obs, explore=False)
+                else:
+                    action = compute_single_action(obs, policy_id=policy_id, explore=False)
+                return action[0] if isinstance(action, tuple) else action
+            except AttributeError:
+                # Some RLlib API-stack combinations route through env runners that
+                # do not expose `get_policy` for `compute_single_action()`.
+                pass
 
-    get_policy = getattr(algo, "get_policy", None)
-    if callable(get_policy):
-        try:
-            policy = get_policy(policy_id) if policy_id else get_policy()
-        except Exception:
-            policy = None
-        if policy is not None and hasattr(policy, "compute_single_action"):
-            action = policy.compute_single_action(obs, explore=False)
-            return action[0] if isinstance(action, tuple) else action
+        get_policy = getattr(algo, "get_policy", None)
+        if callable(get_policy):
+            try:
+                policy = get_policy(policy_id) if policy_id else get_policy()
+            except Exception:
+                policy = None
+            if policy is not None and hasattr(policy, "compute_single_action"):
+                action = policy.compute_single_action(obs, explore=False)
+                return action[0] if isinstance(action, tuple) else action
     raise AttributeError("Algorithm does not expose a usable validation inference interface.")
 
 
@@ -340,8 +374,14 @@ def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind
     )
 
 
-def _run_multi_agent_episode(algo, env, seed: int, *, policy_mode: str) -> float:
-    total_reward, _, _, _ = _run_multi_agent_episode_trace(algo, env, seed, policy_mode=policy_mode)
+def _run_multi_agent_episode(algo, env, seed: int, *, algorithm_kind: str = "", policy_mode: str) -> float:
+    total_reward, _, _, _ = _run_multi_agent_episode_trace(
+        algo,
+        env,
+        seed,
+        algorithm_kind=algorithm_kind,
+        policy_mode=policy_mode,
+    )
     return total_reward
 
 
@@ -492,6 +532,7 @@ def _run_multi_agent_episode_trace(
     env,
     seed: int,
     *,
+    algorithm_kind: str,
     policy_mode: str,
 ) -> tuple[float, Dict[str, list[int]], Dict[str, int], Dict[str, list[Dict[str, Any]]]]:
     obs, _ = env.reset(seed=seed)
@@ -511,6 +552,7 @@ def _run_multi_agent_episode_trace(
                 algo,
                 agent_obs,
                 policy_id=_policy_id_for_agent(str(agent_id), policy_mode),
+                algorithm_kind=algorithm_kind,
             )
         for agent_id, action in actions.items():
             action_traces[str(agent_id)].append(_to_discrete_action(action))
@@ -1712,6 +1754,7 @@ def _evaluate_with_details(
                 algo,
                 eval_env,
                 seed,
+                algorithm_kind=algorithm_kind,
                 policy_mode=policy_mode,
             )
         finally:
