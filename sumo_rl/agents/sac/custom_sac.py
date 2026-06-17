@@ -621,23 +621,15 @@ def build_custom_sac_module_class():
                 non_inference_attributes = list(super().get_non_inference_attributes())
             except AttributeError:
                 non_inference_attributes = []
+
+            # Keep actor-side DCRNN modules/config on inference-only copies
+            # because validation and manual evaluation act through
+            # forward_inference(). Only critic/target components are safe to
+            # strip from inference-only modules.
             for attr in (
-                "_architecture_tag",
-                "_actor_config",
                 "_critic_config",
-                "_shared_encoder_config",
-                "_encoder_layout",
-                "_communication_config",
-                "_communication_enabled",
-                "_communication_type",
-                "_communication_apply_to",
-                "_actor_encoder_type",
                 "_critic_encoder_type",
-                "actor_communication",
                 "critic_communication",
-                "shared_dcrnn_backbone",
-                "actor_dcrnn_backbone",
-                "actor_dcrnn_head",
                 "qf_dcrnn_backbone",
                 "qf_twin_dcrnn_backbone",
             ):
