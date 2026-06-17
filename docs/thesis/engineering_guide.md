@@ -248,6 +248,13 @@ The RLlib SAC paths are implemented under `sumo_rl/agents/sac/sac.py`.
 The current runner hands SAC the same multi-agent RLlib wrapper used by PPO and
 DQN, and the SAC module owns SAC-specific config and training metrics.
 
+For the DCRNN SAC variants, that "same wrapper" means the graph-history wrapper
+from `sumo_rl/environment/graph_env.py`: each policy receives a tensor shaped as
+`[history_len, num_nodes, phase_one_hot_min_green_density_queue_features]`
+built from one static traffic-signal graph plus rolling full-TLS state frames.
+The graph communication in these variants happens inside the DCRNN diffusion
+operator, not through a separate attention layer.
+
 ### Custom SAC module
 
 `sac_builtin` is the reference RLlib SAC baseline. `sac_mlp` keeps the same
@@ -266,6 +273,39 @@ The custom path is configured through `algorithm.params.model_config` in
 the `twin_q` setting, and the communication hook metadata are exposed there.
 Training still uses RLlib's SAC learner, replay buffer, target updates, and
 optimizer ownership; the repo only owns the module architecture boundary.
+
+Important implementation detail: the generic communication hook in
+`sumo_rl/agents/sac/custom_sac.py` is currently an identity block. The config
+accepts names such as `message_passing` or `gat`, but that path is scaffolding
+for future SAC communication work, not an active GAT implementation today.
+If you need the concrete SAC-side reference for graph attention and explicit
+neighbor message passing, use FGS under `sumo_rl/agents/fgs/`.
+
+### Graph observations and message passing
+
+The thesis repo currently has two distinct graph-observation patterns:
+
+- DQN+DCRNN, PPO+DCRNN, and SAC+DCRNN use `sumo_rl/environment/graph_env.py`.
+  The wrapper converts the current multi-agent SUMO state into one graph-history
+  tensor shared across agents. Node features contain the canonicalized local TLS
+  state `[phase_one_hot, min_green, density, queue]`, padded to the maximum
+  phase count and lane count, and the graph comes from traffic signal
+  incoming/outgoing lane connectivity. Each agent receives the full graph
+  history, but its model keeps only the ego node embedding after DCRNN
+  diffusion. This is best described as decentralized policies with centralized
+  graph observations.
+- FGS uses `sumo_rl/agents/fgs/graph_env.py`. That wrapper exposes a richer
+  dict observation with full-graph node features, edge indices, masks, ego
+  index, FRAP phase-competition metadata, and previous joint-action context.
+  Node features are the canonicalized SUMO-RL default local observations
+  `[phase_one_hot, min_green, density, queue]`, not just density/queue tails.
+
+This distinction matters when describing "message passing":
+
+- In the DCRNN variants, message passing is implicit in the diffusion supports
+  used inside each DCGRU gate over the fixed adjacency matrix.
+- In FGS, message passing is explicit graph attention over edges through the
+  CoLight-style GAT or `GATv2Conv` layer after local node encoding.
 
 ## Shared Pieces Across Methods
 

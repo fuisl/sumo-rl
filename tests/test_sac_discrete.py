@@ -541,14 +541,22 @@ def test_custom_sac_dcrnn_full_forward_train_uses_separate_actor_and_critic_back
     assert module.actor_dcrnn_backbone is not None
     assert module.qf_dcrnn_backbone is not None
     assert module.qf_twin_dcrnn_backbone is not None
+    assert module.target_qf_encoder is not None
+    assert module.target_qf_twin_encoder is not None
     assert module.actor_dcrnn_backbone is not module.qf_dcrnn_backbone
     assert module.qf_dcrnn_backbone is not module.qf_twin_dcrnn_backbone
+    assert module.qf_encoder is not module.target_qf_encoder
+    assert module.qf_twin_encoder is not module.target_qf_twin_encoder
     actor_param_ids = {id(param) for param in module.actor_dcrnn_backbone.parameters()}
     qf_param_ids = {id(param) for param in module.qf_dcrnn_backbone.parameters()}
     qf_twin_param_ids = {id(param) for param in module.qf_twin_dcrnn_backbone.parameters()}
+    target_qf_param_ids = {id(param) for param in module.target_qf_encoder.backbone.parameters()}
+    target_qf_twin_param_ids = {id(param) for param in module.target_qf_twin_encoder.backbone.parameters()}
     assert actor_param_ids.isdisjoint(qf_param_ids)
     assert actor_param_ids.isdisjoint(qf_twin_param_ids)
     assert qf_param_ids.isdisjoint(qf_twin_param_ids)
+    assert qf_param_ids.isdisjoint(target_qf_param_ids)
+    assert qf_twin_param_ids.isdisjoint(target_qf_twin_param_ids)
 
 
 def test_custom_sac_dcrnn_shared_mlp_forward_train_uses_one_shared_backbone():
@@ -615,6 +623,12 @@ def test_custom_sac_dcrnn_shared_mlp_forward_train_uses_one_shared_backbone():
     assert module.qf_twin_dcrnn_backbone is module.shared_dcrnn_backbone
     assert module.qf_encoder.backbone is module.shared_dcrnn_backbone
     assert module.qf_twin_encoder.backbone is module.shared_dcrnn_backbone
+    assert module.target_qf_encoder is not None
+    assert module.target_qf_twin_encoder is not None
+    assert module.target_qf_encoder is not module.qf_encoder
+    assert module.target_qf_twin_encoder is not module.qf_twin_encoder
+    assert module.target_qf_encoder.backbone is not module.shared_dcrnn_backbone
+    assert module.target_qf_twin_encoder.backbone is not module.shared_dcrnn_backbone
     actor_head_param_ids = {id(param) for param in module.actor_dcrnn_head.parameters()}
     qf_head_param_ids = {id(param) for param in module.qf.parameters()}
     qf_twin_head_param_ids = {id(param) for param in module.qf_twin.parameters()}
@@ -790,6 +804,7 @@ def test_sac_dcrnn_full_build_config_installs_graph_multi_module(monkeypatch, tm
     for spec in config.rl_module_spec.rl_module_specs.values():
         assert spec.module_class.__name__ == "CustomSACTorchRLModule"
         assert spec.model_config["architecture_tag"] == "sac_dcrnn_full"
+        assert spec.model_config["feature_layout"] == "phase_min_green_density_queue"
         assert spec.model_config["custom_sac"]["actor"]["encoder"]["type"] == "dcrnn"
         assert spec.model_config["custom_sac"]["critic"]["encoder"]["type"] == "dcrnn"
         assert "agent_index" in spec.model_config

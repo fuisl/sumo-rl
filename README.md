@@ -265,9 +265,14 @@ non-default `experiment.name`; the default `experiment.name=rllib` keeps the
 generated `scenario__algorithm__time` title.
 
 `ppo_dcrnn_mlp` uses the same graph-history wrapper as the DCRNN DQN/SAC
-variants, then feeds each agent through a shared MLP+DCRNN backbone with
-separate PPO policy and value heads. This graph PPO variant supports
-independent policies only.
+variants. The wrapper builds one directed traffic-signal graph from
+incoming/outgoing lane connectivity and returns rolling
+`[history_len, num_nodes, phase_one_hot_min_green_density_queue_features]`
+tensors. Each PPO
+policy sees the full graph history, performs diffusion inside the DCRNN, and
+then acts from the ego node latent through separate policy and value heads.
+This graph PPO variant keeps decentralized policies with centralized graph
+observations and does not add a separate GAT layer.
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
 Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
@@ -278,10 +283,14 @@ movement-pair ordering.
 
 DQN+DCRNN is implemented as a DQN-family RLlib module with a graph-observation
 wrapper. It builds a traffic-signal graph from incoming/outgoing lanes and feeds
-rolling density/queue histories to a diffusion-convolutional recurrent
-Q-network. Use `algorithm=dqn_dcrnn` as the canonical name; `algorithm=dcrnn`
-is kept as a backward-compatible alias. The first version supports independent
-policies.
+rolling full traffic-light state histories
+`[phase_one_hot, min_green, density, queue]` to a diffusion-convolutional
+recurrent Q-network. The graph can include virtual source/sink nodes plus
+self-loops, and neighbor influence is carried through the DCRNN diffusion
+operator rather than through attention. The Q-head uses the ego node latent plus
+the ego node's most recent features. Use `algorithm=dqn_dcrnn` as the canonical name;
+`algorithm=dcrnn` is kept as a backward-compatible alias. The first version
+keeps decentralized policies with centralized graph observations.
 
 `dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one node-wise
 MLP layer before the DCRNN stack.
@@ -308,6 +317,9 @@ Use `algorithm=sac_builtin` as the reference RLlib baseline. Use
 architecture through `algorithm.params.model_config`, including actor, twin
 critic, and future message-passing/GAT hook settings. `algorithm=sac_custom`
 is kept as a backward-compatible alias so older launch commands still work.
+Important: the generic SAC communication hook is currently a placeholder
+identity block, so configuring `communication.type=gat` there does not yet give
+you real graph attention.
 The default SAC config sets `algorithm.params.training_intensity=1.0` and
 `algorithm.params.train_batch_size_per_learner=64` because RLlib's natural
 off-policy replay ratio can make Cologne-sized multi-agent discrete SAC spend
@@ -315,17 +327,27 @@ most of its wall time in learner/replay updates. Keep `twin_q` enabled for
 `sac_builtin`; RLlib's discrete SAC learner expects twin-Q outputs on this path.
 Use `algorithm=sac_dcrnn_actor` when you want the graph-history DCRNN encoder
 on the SAC actor while keeping the SAC critics on the current MLP path. The
-first version supports independent policies only. Use
+actor sees the same graph-history observation as DQN+DCRNN and performs
+diffusion message passing before reducing to the ego node latent. The critics do
+not return to the original local flat observation; they still consume the graph
+history, then flatten it into the MLP SAC critic path. Treat this as an
+experimental ablation. Use
 `algorithm=sac_dcrnn_full` when you want separate DCRNN encoders on the SAC
 actor, `qf`, and `qf_twin` branches while keeping the standard SAC target-copy
-behavior for the critic targets. This variant also supports independent
-policies only.
+behavior for the critic targets. This is the canonical thesis DCRNN SAC path.
 `algorithm=sac_dcrnn_actor_mlp` and `algorithm=sac_dcrnn_full_mlp` keep those
 same branch layouts, but add one node-wise MLP layer before each enabled DCRNN
 encoder. Use `algorithm=sac_dcrnn_shared_mlp` when you want one shared
 DCRNN+MLP backbone across the SAC actor, `qf`, and `qf_twin` while keeping
-separate actor and critic heads. This variant also supports independent
-policies only.
+separate actor and critic heads. Treat this as an experimental parameter-sharing
+ablation. Across all of these SAC DCRNN variants, graph communication currently
+means DCRNN diffusion over graph-history observations, not GAT.
+
+If you want the concrete SAC-side reference for graph attention and explicit
+message passing, use `algorithm=fgs`. FGS applies a local FRAP or MLP encoder to
+per-node default SUMO-RL observations `[phase_one_hot, min_green, density,
+queue]`, then runs a CoLight-style GAT or `GATv2Conv` over the traffic-signal
+graph before the discrete SAC actor and centralized critics.
 
 ### Proof that SAC supports `Discrete` by default:
 ```bash

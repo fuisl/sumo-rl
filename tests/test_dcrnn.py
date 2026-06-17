@@ -19,11 +19,27 @@ from sumo_rl.models.graph import GraphObservationHistory, build_traffic_signal_g
 
 
 class _FakeTrafficSignal:
-    def __init__(self, ts_id, lanes, out_lanes, density, queue, num_green_phases=3):
+    def __init__(
+        self,
+        ts_id,
+        lanes,
+        out_lanes,
+        density,
+        queue,
+        num_green_phases=3,
+        green_phase=0,
+        min_green=5,
+        yellow_time=2,
+        time_since_last_phase_change=0,
+    ):
         self.id = ts_id
         self.lanes = list(lanes)
         self.out_lanes = list(out_lanes)
         self.num_green_phases = num_green_phases
+        self.green_phase = green_phase
+        self.min_green = min_green
+        self.yellow_time = yellow_time
+        self.time_since_last_phase_change = time_since_last_phase_change
         self._density = list(density)
         self._queue = list(queue)
 
@@ -36,8 +52,26 @@ class _FakeTrafficSignal:
 
 def _fake_signals():
     return [
-        _FakeTrafficSignal("tls_0", ["in_0"], ["lane_0_1"], [0.25], [0.5], num_green_phases=2),
-        _FakeTrafficSignal("tls_1", ["lane_0_1", "in_1"], ["out_1"], [0.75, 0.1], [0.2, 0.3], num_green_phases=3),
+        _FakeTrafficSignal(
+            "tls_0",
+            ["in_0"],
+            ["lane_0_1"],
+            [0.25],
+            [0.5],
+            num_green_phases=2,
+            green_phase=1,
+            time_since_last_phase_change=10,
+        ),
+        _FakeTrafficSignal(
+            "tls_1",
+            ["lane_0_1", "in_1"],
+            ["out_1"],
+            [0.75, 0.1],
+            [0.2, 0.3],
+            num_green_phases=3,
+            green_phase=2,
+            time_since_last_phase_change=1,
+        ),
     ]
 
 
@@ -47,6 +81,7 @@ def test_graph_topology_construction_adds_virtual_nodes_and_self_loops():
     assert graph.ts_ids == ("tls_0", "tls_1")
     assert graph.num_nodes == 4
     assert graph.max_lanes == 2
+    assert graph.max_green_phases == 3
     assert graph.adjacency[graph.incoming_node_index, graph.ts_index["tls_0"]] == 1.0
     assert graph.adjacency[graph.ts_index["tls_0"], graph.ts_index["tls_1"]] == 1.0
     assert graph.adjacency[graph.ts_index["tls_1"], graph.outgoing_node_index] == 1.0
@@ -57,18 +92,32 @@ def test_graph_feature_packing_and_history_repeat_padding():
     graph = build_traffic_signal_graph(_fake_signals(), include_virtual_nodes=True)
     features = pack_density_queue_features(_fake_signals(), graph)
 
-    assert features.shape == (4, 4)
-    assert features[graph.ts_index["tls_0"]].tolist() == [0.25, 0.0, 0.5, 0.0]
-    assert np.allclose(features[graph.ts_index["tls_1"]], [0.75, 0.1, 0.2, 0.3])
-    assert np.allclose(features[graph.incoming_node_index], [0.0, 0.0, 0.0, 0.0])
+    assert features.shape == (4, 8)
+    assert features[graph.ts_index["tls_0"]].tolist() == [0.0, 1.0, 0.0, 1.0, 0.25, 0.0, 0.5, 0.0]
+    assert np.allclose(features[graph.ts_index["tls_1"]], [0.0, 0.0, 1.0, 0.0, 0.75, 0.1, 0.2, 0.3])
+    assert np.allclose(features[graph.incoming_node_index], np.zeros(8, dtype=np.float32))
 
     history = GraphObservationHistory(3, graph)
     stacked = history.reset(features)
 
-    assert stacked.shape == (3, 4, 4)
+    assert stacked.shape == (3, 4, 8)
     assert np.allclose(stacked[0], features)
     assert np.allclose(stacked[1], features)
     assert np.allclose(stacked[2], features)
+
+
+def test_graph_feature_packing_supports_legacy_density_queue_layout():
+    graph = build_traffic_signal_graph(
+        _fake_signals(),
+        include_virtual_nodes=True,
+        feature_layout="density_queue",
+    )
+    features = pack_density_queue_features(_fake_signals(), graph)
+
+    assert graph.feature_layout == "density_queue"
+    assert features.shape == (4, 4)
+    assert features[graph.ts_index["tls_0"]].tolist() == [0.25, 0.0, 0.5, 0.0]
+    assert np.allclose(features[graph.ts_index["tls_1"]], [0.75, 0.1, 0.2, 0.3])
 
 
 def test_dcrnn_q_network_outputs_one_q_value_per_action():
@@ -98,7 +147,7 @@ def test_dcrnn_q_network_outputs_one_q_value_per_action():
     backbone_latent = backbone(obs)
     q_values = model(obs)
 
-    assert backbone_latent.shape == (2, 20)
+    assert backbone_latent.shape == (2, 24)
     assert q_values.shape == (2, 3)
     assert torch.isfinite(q_values).all()
 
@@ -189,6 +238,7 @@ def test_dcrnn_build_config_registers_graph_rl_modules(monkeypatch, tmp_path):
     assert multi_spec.rl_module_specs["tls_0"].model_config["agent_index"] == 0
     assert multi_spec.rl_module_specs["tls_1"].model_config["agent_index"] == 1
     assert multi_spec.rl_module_specs["tls_0"].model_config["architecture_tag"] == "dqn_dcrnn"
+    assert multi_spec.rl_module_specs["tls_0"].model_config["feature_layout"] == "phase_min_green_density_queue"
 
 
 def test_dcrnn_mlp_build_config_enables_pre_encoder(monkeypatch, tmp_path):
@@ -221,3 +271,30 @@ def test_dcrnn_mlp_build_config_enables_pre_encoder(monkeypatch, tmp_path):
     spec = multi_spec.rl_module_specs["tls_0"]
     assert spec.model_config["architecture_tag"] == "dqn_dcrnn_mlp"
     assert spec.model_config["pre_encoder"]["enabled"] is True
+
+
+def test_dcrnn_module_uses_distinct_target_network_copy():
+    pytest.importorskip("ray")
+    torch = pytest.importorskip("torch")
+    from sumo_rl.agents.dcrnn.rllib_module import build_dcrnn_dqn_module_spec
+
+    obs_space = Box(low=0.0, high=1.0, shape=(5, 4, 8), dtype=np.float32)
+    action_space = Discrete(3)
+    module = build_dcrnn_dqn_module_spec(
+        obs_space,
+        action_space,
+        model_config={
+            "agent_index": 1,
+            "num_nodes": 4,
+            "input_dim": 8,
+            "adjacency": np.eye(4, dtype=np.float32).tolist(),
+            "hid_dim": 16,
+            "max_diffusion_step": 1,
+        },
+    ).build()
+    module.make_target_networks()
+
+    assert module.q_net is not module._target_q_net
+    online_param_ids = {id(param) for param in module.q_net.parameters()}
+    target_param_ids = {id(param) for param in module._target_q_net.parameters()}
+    assert online_param_ids.isdisjoint(target_param_ids)

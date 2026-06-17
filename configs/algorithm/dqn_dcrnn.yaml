@@ -28,7 +28,7 @@ algorithm:
     add_self_loops: true
     model_config:
       architecture_tag: dqn_dcrnn
-      feature_layout: density_queue
+      feature_layout: phase_min_green_density_queue
       hid_dim: 128
       max_diffusion_step: 2
       num_rnn_layers: 1

@@ -11,6 +11,8 @@ algorithm:
     add_self_loops: true
     model_config:
       architecture_tag: sac_dcrnn_full
+      feature_layout: phase_min_green_density_queue
+      # Canonical DCRNN SAC path: separate actor, Q1, and Q2 DCRNN encoders.
       actor:
         encoder:
           type: dcrnn

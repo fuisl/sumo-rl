@@ -103,4 +103,37 @@ def test_ppo_dcrnn_mlp_build_config_registers_graph_rl_modules(monkeypatch, tmp_
     assert set(multi_spec.rl_module_specs.keys()) == {"tls_0", "tls_1"}
     spec = multi_spec.rl_module_specs["tls_0"]
     assert spec.model_config["architecture_tag"] == "ppo_dcrnn_mlp"
+    assert spec.model_config["feature_layout"] == "phase_min_green_density_queue"
     assert spec.model_config["pre_encoder"]["enabled"] is True
+
+
+def test_ppo_dcrnn_mlp_shared_backbone_receives_policy_and_value_gradients():
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from ray.rllib.core.columns import Columns
+    from sumo_rl.agents.ppo.rllib_module import build_ppo_dcrnn_module_spec
+
+    obs_space = Box(low=0.0, high=1.0, shape=(5, 4, 8), dtype=np.float32)
+    action_space = Discrete(3)
+    module = build_ppo_dcrnn_module_spec(
+        obs_space,
+        action_space,
+        model_config={
+            "architecture_tag": "ppo_dcrnn_mlp",
+            "agent_index": 1,
+            "num_nodes": 4,
+            "input_dim": 8,
+            "adjacency": np.eye(4, dtype=np.float32).tolist(),
+            "hid_dim": 16,
+            "pre_encoder": {"enabled": True, "hidden_dim": 16, "activation": "relu"},
+        },
+    ).build()
+
+    batch = {Columns.OBS: torch.zeros(3, 5, 4, 8)}
+    outputs = module.forward_train(batch)
+    loss = outputs[Columns.ACTION_DIST_INPUTS].sum() + outputs[Columns.VF_PREDS].sum()
+    loss.backward()
+
+    backbone_grads = [param.grad for param in module.backbone.parameters() if param.requires_grad]
+    assert backbone_grads
+    assert all(grad is not None for grad in backbone_grads)

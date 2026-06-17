@@ -12,7 +12,7 @@ from sumo_rl.models.graph import (
     GraphObservationHistory,
     TrafficSignalGraph,
     build_traffic_signal_graph,
-    pack_density_queue_features,
+    pack_graph_features,
     traffic_signals_from_base_env,
 )
 
@@ -48,6 +48,7 @@ class GraphParallelEnv:
         history_len: int = 5,
         include_virtual_nodes: bool = True,
         add_self_loops: bool = True,
+        feature_layout: str = "phase_min_green_density_queue",
     ) -> None:
         self.env = env
         self.par_env = env
@@ -58,6 +59,7 @@ class GraphParallelEnv:
             traffic_signals_from_base_env(self.base_env),
             include_virtual_nodes=include_virtual_nodes,
             add_self_loops=add_self_loops,
+            feature_layout=feature_layout,
         )
         self.history = GraphObservationHistory(history_len, self.graph)
         self.observation_spaces = {agent_id: self.history.observation_space for agent_id in self.possible_agents}
@@ -82,7 +84,7 @@ class GraphParallelEnv:
         return self.action_spaces[agent_id]
 
     def _current_graph_frame(self):
-        return pack_density_queue_features(traffic_signals_from_base_env(self.base_env), self.graph)
+        return pack_graph_features(traffic_signals_from_base_env(self.base_env), self.graph)
 
     def _graph_observations(self, agent_ids):
         graph_obs = self.history.as_array()
@@ -137,6 +139,7 @@ def build_graph_parallel_env(
         history_len=int(params.get("history_len", 5)),
         include_virtual_nodes=bool(params.get("include_virtual_nodes", True)),
         add_self_loops=bool(params.get("add_self_loops", True)),
+        feature_layout=str(params.get("feature_layout", "phase_min_green_density_queue")),
     )
 
 

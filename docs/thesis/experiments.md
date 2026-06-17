@@ -73,8 +73,16 @@ PPO and DQN default to independent policies. To switch to a shared policy, overr
 `algorithm.params.policy_mode=shared` on the command line.
 
 `algorithm=ppo_dcrnn_mlp` keeps PPO on independent policies, but swaps the flat
-observation path for graph histories plus a shared MLP+DCRNN backbone with
-separate policy/value heads.
+per-agent observation for the same graph-history wrapper used by the DCRNN DQN
+and SAC variants. The wrapper builds one directed traffic-signal graph from
+incoming/outgoing lane connectivity, pads every node to a shared lane width, and
+returns a rolling tensor shaped as
+`[history_len, num_nodes, phase_one_hot_min_green_density_queue_features]`.
+Each PPO policy still
+belongs to one traffic signal, but its backbone sees the full graph history,
+runs diffusion message passing inside the DCRNN, and then keeps only the ego
+node's latent for the PPO policy head and value head. There is no separate GAT
+or explicit post-DCRNN communication block in this PPO path.
 
 FRAP is available as `algorithm=frap`. It is a DQN-family RLlib method whose
 custom RLModule replaces the Q-network with the paper's phase-competition
@@ -84,14 +92,23 @@ per-movement demand vector by using the split density/queue layout.
 
 DQN+DCRNN is available as `algorithm=dqn_dcrnn`. It is a DQN-family RLlib
 method that wraps the PettingZoo parallel environment with graph observations
-shaped as `[history_len, num_nodes, density_queue_features]`, then replaces the
-Q-network with a diffusion-convolutional recurrent encoder. `algorithm=dcrnn`
-remains as a backward-compatible alias. The first version supports independent
-policies only; shared graph communication with existing models is a future
-extension.
+shaped as
+`[history_len, num_nodes, phase_one_hot_min_green_density_queue_features]`,
+then replaces the Q-network with a diffusion-convolutional recurrent encoder.
+The graph is built once from traffic-signal incoming/outgoing lane links, can
+include virtual source/sink nodes, and adds self-loops before the diffusion
+supports are computed. At each recurrent step, the DCRNN performs diffusion
+message passing over that fixed adjacency, so neighboring traffic signals
+influence the ego latent through the DCGRU gates rather than through an
+attention module. The final DQN head uses only the ego node embedding
+concatenated with the ego node's latest features. `algorithm=dcrnn` remains as
+a backward-compatible alias. The first version keeps decentralized policies with
+centralized graph observations; shared graph communication with existing models
+is a future extension.
 
 `algorithm=dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one
-node-wise MLP layer before the DCRNN stack.
+node-wise MLP layer before the DCRNN stack so each node feature is projected
+locally before diffusion over the graph.
 
 CoLight is available as `algorithm=colight`. It uses a shared graph-attention
 Q-network over the whole traffic-signal graph and forces
@@ -125,24 +142,50 @@ setup, not in a custom continuous-action wrapper.
 `sac_mlp` uses the same trainer and replay setup, but replaces the RLModule
 boundary with project-owned actor, twin-critic, and communication hook points.
 Use `configs/algorithm/sac_mlp.yaml` or command-line overrides under
-`algorithm.params.model_config` to change actor/critic MLP sizes or enable
-placeholder message-passing metadata for later GAT experiments. The older
-`sac_custom` name remains as an alias.
+`algorithm.params.model_config` to change actor/critic MLP sizes. The older
+`sac_custom` name remains as an alias. Important: the generic SAC
+`communication` block is still an identity placeholder in the current codebase,
+so `communication.type=gat` does not yet create real graph attention or
+neighbor-to-neighbor message passing on this path.
 
 `sac_dcrnn_actor` reuses the graph-observation wrapper from `dqn_dcrnn`, but
-applies the DCRNN encoder only to the SAC actor. The critics stay on the
-current MLP SAC path in v1. This variant supports independent policies only.
+applies the DCRNN encoder only to the SAC actor. That means the actor sees the
+full graph-history tensor
+`[history_len, num_nodes, phase_one_hot_min_green_density_queue_features]`, performs diffusion
+message passing over the fixed traffic-signal graph, and acts from the ego node
+latent only. The critics do not return to the original local flat observation;
+they still consume the same graph-history tensor and flatten it into the MLP
+SAC critic path in v1. Treat this variant as an experimental ablation where
+graph structure affects action selection but not the critic encoders.
 
 `sac_dcrnn_actor_mlp` keeps the same actor-only graph layout, but inserts one
 node-wise MLP layer before the actor DCRNN encoder.
 
 `sac_dcrnn_full` uses the same graph-observation wrapper, but assigns separate
-DCRNN encoders to the SAC actor, `qf`, and `qf_twin` branches. The target
-critics stay on the normal SAC target-copy path rather than using separately
-configured target DCRNN stacks. This variant supports independent policies only.
+DCRNN encoders to the SAC actor, `qf`, and `qf_twin` branches. In this variant,
+the actor and both critics consume the same full graph-history observation and
+each branch performs its own diffusion message passing before reducing back to
+the ego node latent. The target critics each own their own copied DCRNN encoder
+and Q-head, and those target branches follow SAC target-network sync behavior
+rather than gradient updates. Treat this as the canonical thesis DCRNN SAC
+path.
 
 `sac_dcrnn_full_mlp` keeps the same full-graph DCRNN SAC layout, but inserts
 one node-wise MLP layer before each DCRNN encoder.
+
+`sac_dcrnn_shared_mlp` uses one shared MLP+DCRNN backbone for the SAC actor,
+`qf`, and `qf_twin`, then keeps separate actor and critic heads on top of that
+shared ego-node latent. This still uses DCRNN diffusion over the graph-history
+observation, not a GAT layer, and should be treated as an experimental
+parameter-sharing ablation.
+
+Across all current DCRNN SAC variants, the graph observation and message flow
+match the DQN/PPO graph wrapper: observations are graph histories made from
+`[phase_one_hot, min_green, density, queue]`, the graph is static within an
+episode, and communication happens only inside the DCRNN diffusion operator. If
+you want SAC
+with explicit graph-attention message passing, use FGS as the concrete reference
+architecture rather than the generic SAC communication hook.
 
 FGS is available as `algorithm=fgs`. FGS stands for FRAP-GNN-SAC: it applies a
 FRAP-style local phase-competition encoder to each SUMO-RL default observation,
@@ -154,11 +197,19 @@ the full graph embedding plus replayed same-transition joint actions for the
 critic TD loss. Actor and target updates use current policy action distributions
 as a tractable expectation context, so FGS remains centralized during training
 without enumerating all joint actions.
-FGS defaults to the same PyTorch Geometric `MessagePassing` attention layer as
-CoLight, so the graph API is shared while the FRAP encoder and SAC heads remain
-FGS-specific. Set `algorithm.params.model_config.communication.type=gatv2` to
-swap that communication block for PyG's `GATv2Conv`; the Cologne8 presets
-include both FRAP+GATv2 and MLP+GATv2 ablations.
+FGS is the repo's main reference for how graph attention applies to SAC. Its
+graph wrapper is richer than the DCRNN wrapper: each agent receives a dict with
+full-graph `node_features`, `edge_index`, `edge_mask`, `ego_index`,
+node/action masks, FRAP phase-pair masks, and the previous joint action
+one-hot matrix. The node features are the canonicalized SUMO-RL default local
+observations `[phase_one_hot, min_green, density, queue]`, padded so all nodes
+share one width. The local encoder first maps each node independently with FRAP
+or an MLP, then the communication block performs explicit neighbor-to-neighbor
+message passing with the CoLight-style GAT implemented through PyTorch
+Geometric's `MessagePassing` API. Set
+`algorithm.params.model_config.communication.type=gatv2` to swap that
+communication block for PyG's `GATv2Conv`; the Cologne8 presets include both
+FRAP+GATv2 and MLP+GATv2 ablations.
 
 FGS defaults to the existing `diff-waiting-time` reward. Its graph construction
 defaults to the TLS super-edge parser inspired by HMARL-TSC: it reads the SUMO

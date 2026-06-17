@@ -42,6 +42,12 @@ def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
         "history_len": int(params.get("history_len", model_config.get("history_len", 5))),
         "include_virtual_nodes": bool(params.get("include_virtual_nodes", model_config.get("include_virtual_nodes", True))),
         "add_self_loops": bool(params.get("add_self_loops", model_config.get("add_self_loops", True))),
+        "feature_layout": str(
+            params.get(
+                "feature_layout",
+                model_config.get("feature_layout", "phase_min_green_density_queue"),
+            )
+        ),
     }
 
 

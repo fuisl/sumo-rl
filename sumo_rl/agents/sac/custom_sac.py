@@ -585,6 +585,37 @@ def build_custom_sac_module_class():
                 qf_out = qf_out.squeeze(-1)
             return qf_out
 
+        def _uses_dcrnn_critic_targets(self) -> bool:
+            return self._encoder_layout == "shared" or self._critic_encoder_type == "dcrnn"
+
+        def make_target_networks(self) -> None:
+            if not self._uses_dcrnn_critic_targets():
+                super().make_target_networks()
+                return
+
+            # Keep explicit target encoder ownership for each critic branch so
+            # critic encoders follow SAC target-sync behavior rather than
+            # gradient updates.
+            self.target_qf_encoder = deepcopy(self.qf_encoder)
+            self.target_qf = deepcopy(self.qf)
+            if self.twin_q:
+                self.target_qf_twin_encoder = deepcopy(self.qf_twin_encoder)
+                self.target_qf_twin = deepcopy(self.qf_twin)
+
+        def get_target_network_pairs(self):
+            if not self._uses_dcrnn_critic_targets():
+                return super().get_target_network_pairs()
+
+            pairs = [(self.qf_encoder, self.target_qf_encoder), (self.qf, self.target_qf)]
+            if self.twin_q:
+                pairs.extend(
+                    [
+                        (self.qf_twin_encoder, self.target_qf_twin_encoder),
+                        (self.qf_twin, self.target_qf_twin),
+                    ]
+                )
+            return pairs
+
         def get_non_inference_attributes(self):
             try:
                 non_inference_attributes = list(super().get_non_inference_attributes())
@@ -612,6 +643,10 @@ def build_custom_sac_module_class():
             ):
                 if attr not in non_inference_attributes:
                     non_inference_attributes.append(attr)
+            if self._uses_dcrnn_critic_targets():
+                for attr in ("target_qf_encoder", "target_qf", "target_qf_twin_encoder", "target_qf_twin"):
+                    if attr not in non_inference_attributes:
+                        non_inference_attributes.append(attr)
             return non_inference_attributes
 
     CustomSACTorchRLModule.__name__ = "CustomSACTorchRLModule"

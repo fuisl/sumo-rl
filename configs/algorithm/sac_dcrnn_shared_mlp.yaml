@@ -11,6 +11,8 @@ algorithm:
     add_self_loops: true
     model_config:
       architecture_tag: sac_dcrnn_shared_mlp
+      feature_layout: phase_min_green_density_queue
+      # Experimental ablation: actor and critics share one graph-temporal encoder.
       encoder_layout: shared
       shared_encoder:
         type: dcrnn
