@@ -195,21 +195,18 @@ def _resolve_base_env(env: Any) -> Any:
 def _completed_episode_summary(env: Any) -> Dict[str, Any]:
     base_env = _resolve_base_env(env)
     cached_summary = getattr(base_env, "last_episode_summary", None)
-    if isinstance(cached_summary, dict) and cached_summary and not cached_summary.get("tripinfo/parse_pending"):
+    if isinstance(cached_summary, dict) and cached_summary:
         return dict(cached_summary)
-
-    if getattr(base_env, "sumo", None) is not None and getattr(base_env, "tripinfo_output_name", None):
-        return {}
 
     if hasattr(base_env, "finalize_episode_summary"):
         try:
-            summary = dict(base_env.finalize_episode_summary() or {})
+            summary = dict(base_env.finalize_episode_summary(parse_tripinfo=False) or {})
         except Exception:
             summary = {}
-        if summary and not summary.get("tripinfo/parse_pending"):
+        if summary:
             return summary
 
-    if isinstance(cached_summary, dict) and not cached_summary.get("tripinfo/parse_pending"):
+    if isinstance(cached_summary, dict):
         return dict(cached_summary)
     return {}
 
@@ -221,6 +218,34 @@ def _is_nonempty_episode_summary(summary: Dict[str, Any]) -> bool:
     return True
 
 
+def _summary_metric_key(key: str) -> str:
+    return str(key).replace("/", "__")
+
+
+def _summary_metric_original_key(key: str) -> str:
+    return str(key).replace("__", "/")
+
+
+def _log_episode_summary_metrics(metrics_logger: Any, summary: Dict[str, Any]) -> None:
+    if metrics_logger is None or not isinstance(summary, dict):
+        return
+    log_value = getattr(metrics_logger, "log_value", None)
+    if not callable(log_value):
+        return
+    for key, value in summary.items():
+        if not isinstance(value, (int, float, np.integer, np.floating)) or isinstance(value, bool):
+            continue
+        numeric_value = float(value)
+        if not np.isfinite(numeric_value):
+            continue
+        log_value(
+            ("sumo_episode", _summary_metric_key(str(key))),
+            numeric_value,
+            reduce="mean",
+            clear_on_reduce=True,
+        )
+
+
 def _completed_episode_summary_history(env: Any) -> list[Dict[str, Any]]:
     base_env = _resolve_base_env(env)
     summaries = []
@@ -228,7 +253,6 @@ def _completed_episode_summary_history(env: Any) -> list[Dict[str, Any]]:
         if (
             isinstance(summary, dict)
             and summary
-            and not summary.get("tripinfo/parse_pending")
             and _is_nonempty_episode_summary(summary)
         ):
             summaries.append(dict(summary))
@@ -276,7 +300,7 @@ def training_episode_summary_callbacks_class():
             cls.seen_episode_summaries.clear()
 
         @classmethod
-        def collect_completed_episode_summaries(cls, env: Any) -> None:
+        def collect_completed_episode_summaries(cls, env: Any, metrics_logger: Any = None) -> None:
             base_env = _resolve_base_env(env)
             for summary in _completed_episode_summary_history(base_env):
                 episode_index = summary.get("episode/index")
@@ -287,11 +311,13 @@ def training_episode_summary_callbacks_class():
                     continue
                 cls.pending_episode_summaries.append(summary)
                 cls.seen_episode_summaries.add(key)
+                _log_episode_summary_metrics(metrics_logger, summary)
 
         def on_episode_start(self, *args, **kwargs) -> None:
             env = _resolve_callback_env(args, kwargs)
+            metrics_logger = kwargs.get("metrics_logger")
             if env is not None:
-                self.__class__.collect_completed_episode_summaries(env)
+                self.__class__.collect_completed_episode_summaries(env, metrics_logger)
 
         def on_episode_end(self, *args, **kwargs) -> None:
             episode = kwargs.get("episode")
@@ -299,8 +325,9 @@ def training_episode_summary_callbacks_class():
                 episode = args[0]
             del episode
             env = _resolve_callback_env(args, kwargs)
+            metrics_logger = kwargs.get("metrics_logger")
             if env is not None:
-                self.__class__.collect_completed_episode_summaries(env)
+                self.__class__.collect_completed_episode_summaries(env, metrics_logger)
 
     return TrainingEpisodeSummaryCallbacks
 
@@ -720,6 +747,15 @@ def extract_rllib_result_metrics(result: Dict[str, Any], *, algorithm_kind: str,
             value = env_runner_metrics.get(source_key)
             if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
                 metrics[target_key] = float(value)
+        sumo_episode_metrics = env_runner_metrics.get("sumo_episode")
+        if isinstance(sumo_episode_metrics, dict):
+            episode_summary = {
+                _summary_metric_original_key(key): numeric_value
+                for key, value in sumo_episode_metrics.items()
+                for numeric_value in [_numeric_metric_value(value)]
+                if numeric_value is not None
+            }
+            _append_common_training_metrics(metrics, episode_summary)
     if "train/episodes_total" in metrics:
         metrics["train/rollout_index"] = float(metrics["train/episodes_total"])
     if "train/env_steps_sampled" in metrics:
@@ -790,6 +826,18 @@ def extract_entropy_mean(value: Any) -> Optional[float]:
 def _copy_numeric_metric(row: Dict[str, Any], key: str, value: Any) -> None:
     if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
         row[key] = float(value)
+
+
+def _numeric_metric_value(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+        numeric_value = float(value)
+        return numeric_value if np.isfinite(numeric_value) else None
+    if isinstance(value, dict):
+        for key in ("mean", "value", "last", "min", "max"):
+            numeric_value = _numeric_metric_value(value.get(key))
+            if numeric_value is not None:
+                return numeric_value
+    return None
 
 
 def _summary_value(summary: Dict[str, Any], *keys: str) -> Any:
@@ -916,6 +964,10 @@ def build_training_episode_row(
     fallback_env_step = metrics.get("train/env_step", metrics.get("train/env_steps_sampled"))
     if isinstance(fallback_env_step, (int, float, np.integer, np.floating)) and not isinstance(fallback_env_step, bool):
         row["train/env_step"] = float(fallback_env_step)
+
+    for key, value in metrics.items():
+        if key.startswith(("train/resco_", "train/reward_", "train/efficiency_", "train/safety_")):
+            _copy_numeric_metric(row, key, value)
 
     if isinstance(episode_summary, dict):
         _append_common_training_metrics(row, episode_summary)

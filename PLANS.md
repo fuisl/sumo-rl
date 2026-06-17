@@ -42,6 +42,9 @@ This project will be organized in phases so the thesis work stays incremental an
 - The v1 critic defaults to a joint-action CTDE form over graph embeddings and same-transition joint action context, while execution remains decentralized through a shared policy.
 - The default reward remains SUMO-RL's existing `diff-waiting-time`.
 - Cologne8 FGS presets include PyG `GATv2Conv` communication ablations for both FRAP and MLP local encoders.
+- FGSv3 is implemented as `algorithm=fgsv3`: it keeps FRAP action tokens local,
+  communicates phase-demand plus own previous phase through weighted GATv2, and
+  uses a neighborhood-factored SAC critic for Cologne8 and Ingolstadt21 runs.
 
 ## Assumptions
 - `SUMO_HOME` remains required for all simulation runs.

@@ -305,6 +305,15 @@ as `algorithm=fgs_ppo` and through the `fgs_*_ppo` Cologne8 and Ingolstadt21
 presets; it reuses the FGS FRAP/MLP plus GAT/GATv2 graph encoder with PPO
 policy and value heads.
 
+FGSv3 is available as `algorithm=fgsv3` and through
+`configs/presets/resco_cologne8/fgsv3_frap_gatv2_sac.yaml` plus
+`configs/presets/resco_ingolstadt21/fgsv3_frap_gatv2_sac.yaml`. It keeps FRAP
+phase-competition action tokens for the actor, communicates Level-B phase
+demand plus each node's own previous phase through weighted GATv2, and uses a
+neighborhood-factored SAC critic with normalized direct-neighbor sums. Matching
+FGSv2 comparator presets are available as `fgsv2_sac.yaml` in the same
+scenario folders.
+
 SAC now uses RLlib's native discrete-action support for the traffic-light
 policies in this repo, so it does not depend on a custom joint continuous-action
 adapter anymore.

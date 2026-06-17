@@ -10,6 +10,7 @@ import sumo_rl
 from sumo_rl.agents.colight import colight
 from sumo_rl.agents.fgs import fgs
 from sumo_rl.agents.fgsv2 import fgsv2
+from sumo_rl.agents.fgsv3 import fgsv3
 
 
 def _cfg():
@@ -58,5 +59,16 @@ def test_fgsv2_builder_does_not_override_libsumo_mode(monkeypatch, tmp_path):
     monkeypatch.setattr(fgsv2, "FGSGraphParallelEnv", lambda env, **kwargs: env)
 
     fgsv2.build_fgsv2_parallel_env(_cfg(), tmp_path, {}, seed=5)
+
+    assert "use_libsumo" not in calls[0]
+
+
+def test_fgsv3_builder_does_not_override_libsumo_mode(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: calls.append(kwargs) or object())
+    monkeypatch.setattr(fgsv3, "FGSGraphParallelEnv", lambda env, **kwargs: env)
+
+    fgsv3.build_fgsv3_parallel_env(_cfg(), tmp_path, {}, seed=5)
 
     assert "use_libsumo" not in calls[0]

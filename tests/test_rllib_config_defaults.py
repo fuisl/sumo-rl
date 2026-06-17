@@ -55,10 +55,14 @@ def test_fgs_ablation_presets_compose():
         "presets/resco_cologne8/fgs_mlp_gat_ppo": ("resco_cologne8", "fgs_ppo", "mlp", "gat"),
         "presets/resco_cologne8/fgs_mlp_gatv2_ppo": ("resco_cologne8", "fgs_ppo", "mlp", "gatv2"),
         "presets/resco_cologne8/fgs_mlp_gatv2_sac": ("resco_cologne8", "fgs", "mlp", "gatv2"),
+        "presets/resco_cologne8/fgsv3_frap_gatv2_sac": ("resco_cologne8", "fgsv3", None, "gatv2"),
+        "presets/resco_cologne8/fgsv2_sac": ("resco_cologne8", "fgsv2", None, "gatv2"),
         "presets/resco_ingolstadt21/fgs_frap_gatv2_ppo": ("resco_ingolstadt21", "fgs_ppo", "frap", "gatv2"),
         "presets/resco_ingolstadt21/fgs_mlp_gat_ppo": ("resco_ingolstadt21", "fgs_ppo", "mlp", "gat"),
         "presets/resco_ingolstadt21/fgs_mlp_gatv2_ppo": ("resco_ingolstadt21", "fgs_ppo", "mlp", "gatv2"),
         "presets/resco_ingolstadt21/fgs_mlp_gatv2_sac": ("resco_ingolstadt21", "fgs", "mlp", "gatv2"),
+        "presets/resco_ingolstadt21/fgsv3_frap_gatv2_sac": ("resco_ingolstadt21", "fgsv3", None, "gatv2"),
+        "presets/resco_ingolstadt21/fgsv2_sac": ("resco_ingolstadt21", "fgsv2", None, "gatv2"),
     }
 
     for config_name, (scenario_name, algorithm_kind, local_type, communication_type) in expected.items():
@@ -66,7 +70,8 @@ def test_fgs_ablation_presets_compose():
 
         assert cfg.scenario.name == scenario_name
         assert cfg.algorithm.kind == algorithm_kind
-        assert cfg.algorithm.params.model_config.local_encoder.type == local_type
+        if local_type is not None:
+            assert cfg.algorithm.params.model_config.local_encoder.type == local_type
         assert cfg.algorithm.params.model_config.communication.type == communication_type
         _assert_shared_ray_defaults(cfg)
 

@@ -48,6 +48,7 @@ from sumo_rl.experiments.runner import (
     _update_wandb_summary,
 )
 from sumo_rl.agents.fgsv2 import fgsv2 as fgsv2_agent
+from sumo_rl.agents.fgsv3 import fgsv3 as fgsv3_agent
 from sumo_rl.experiments.metric_utils import map_system_metrics_to_namespaces
 from sumo_rl.agents.rllib_common import (
     build_rllib_parallel_env,
@@ -73,6 +74,7 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     "dcrnn",
     "sac_builtin",
     fgsv2_agent.KIND,
+    fgsv3_agent.KIND,
     "sac_mlp",
     "sac_dcrnn_actor",
     "sac_dcrnn_actor_mlp",
@@ -152,6 +154,8 @@ def _algorithm_module(algorithm_kind: str):
         return importlib.import_module("sumo_rl.agents.fgs.fgs")
     if algorithm_kind == fgsv2_agent.KIND:
         return fgsv2_agent
+    if algorithm_kind == fgsv3_agent.KIND:
+        return fgsv3_agent
     if algorithm_kind in {
         "sac_builtin",
         "sac_mlp",

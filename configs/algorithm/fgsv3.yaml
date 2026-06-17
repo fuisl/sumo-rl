@@ -1,6 +1,6 @@
 # @package _global_
 algorithm:
-  kind: fgsv2
+  kind: fgsv3
   params:
     policy_mode: shared
     actor_lr: 0.0001
@@ -9,8 +9,9 @@ algorithm:
     tau: 0.005
     gamma: 0.95
     grad_clip: 5.0
-    # Keep the SAC learner ratio explicit; the graph actor/critic stack is
-    # much heavier than PPO and RLlib's natural replay ratio can dominate time.
+    # Match the learner-light SAC ratio used by sac_builtin. FGSv3 already
+    # performs several graph/critic passes per learner step, so the default
+    # natural replay ratio is far slower than PPO on RESCO-sized networks.
     train_batch_size_per_learner: 64
     training_intensity: 1.0
     replay_buffer_type: MultiAgentEpisodeReplayBuffer
@@ -22,16 +23,17 @@ algorithm:
     n_step: 1
     twin_q: true
     model_config:
-      architecture_tag: fgsv2_frap_tokens_gnn_sac
+      architecture_tag: fgsv3_frap_demand_gatv2_factored_sac
       twin_q: true
       frap:
         demand_shape: 2
         demand_layout: split
         observation_has_phase: true
         observation_has_min_green: true
+        lane_embed_units: 16
         conv_units: 32
       adapter:
-        dim: 128
+        dim: 64
         hidden_dims: []
         activation: relu
       communication:
@@ -39,12 +41,14 @@ algorithm:
         type: gatv2
         num_heads: 4
         head_dim: 16
+        demand_comm_dim: 64
+        phase_emb_dim: 16
         residual_gate_init: 0.0
       actor:
         hidden_dims: [128]
         activation: relu
       critic:
-        type: central_graph_joint_action
+        type: factored_neighborhood
         hidden_dims: [256, 256]
         activation: relu
       topology:

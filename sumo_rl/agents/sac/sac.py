@@ -310,7 +310,8 @@ def train(
         print(
             f"[{algorithm_kind}] episode={min(completed_episodes, training_episode_target(cfg))}/"
             f"{training_episode_target(cfg)} iteration={iteration} "
-            f"result_keys={sorted(result.keys())[:8]}"
+            f"result_keys={sorted(result.keys())[:8]}",
+            flush=True,
         )
         if is_final:
             break

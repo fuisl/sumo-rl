@@ -1,0 +1,40 @@
+# @package _global_
+defaults:
+  - /rllib
+  - override /scenario: resco_cologne8
+  - override /algorithm: fgsv3
+  - _self_
+
+experiment:
+  name: ${scenario.name}__fgsv3_frap_gatv2_sac
+
+algorithm:
+  params:
+    model_config:
+      architecture_tag: fgsv3_frap_demand_gatv2_factored_sac
+      frap:
+        demand_shape: 2
+        demand_layout: split
+        observation_has_phase: true
+        observation_has_min_green: true
+        lane_embed_units: 16
+        conv_units: 32
+      adapter:
+        dim: 64
+        hidden_dims: []
+        activation: relu
+      communication:
+        enabled: true
+        type: gatv2
+        num_heads: 4
+        head_dim: 16
+        demand_comm_dim: 64
+        phase_emb_dim: 16
+        residual_gate_init: 0.0
+      critic:
+        type: factored_neighborhood
+        hidden_dims: [256, 256]
+        activation: relu
+      topology:
+        source: tls_super_edges
+        render: true

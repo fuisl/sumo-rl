@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - /rllib
+  - override /scenario: resco_ingolstadt21
+  - override /algorithm: fgsv2
+  - _self_
+
+experiment:
+  name: ${scenario.name}__fgsv2_sac
+
+algorithm:
+  params:
+    model_config:
+      architecture_tag: fgsv2_frap_tokens_gnn_sac
+      topology:
+        source: tls_super_edges
+        render: true
