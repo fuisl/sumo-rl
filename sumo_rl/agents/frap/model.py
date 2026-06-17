@@ -15,7 +15,7 @@ def infer_default_phase_pairs(num_movements: int, num_actions: int) -> list[list
     if num_movements == 12 and num_actions == 8:
         return [[1, 7], [2, 8], [1, 2], [7, 8], [4, 10], [5, 11], [10, 11], [4, 5]]
     if num_movements == 8 and num_actions == 8:
-        return [[0, 4], [1, 5], [0, 1], [4, 5], [2, 6], [3, 7], [6, 7], [2, 3]]
+        return [[3, 7], [6, 7], [2, 3], [2, 6], [1, 5], [4, 5], [0, 1], [0, 4]]
     if num_movements == 8 and num_actions == 4:
         return [[1, 5], [0, 4], [3, 7], [2, 6]]
     if num_movements == 4 and num_actions == 2:

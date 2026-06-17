@@ -43,13 +43,17 @@ class _DummyFRAPParallelEnv:
 
 
 def test_frap_competition_mask_matches_reference_rule():
-    mask = build_competition_mask([[0, 4], [1, 5], [0, 1], [4, 5]])
+    mask = build_competition_mask(infer_default_phase_pairs(num_movements=8, num_actions=8))
 
     assert mask.tolist() == [
-        [0, 1, 1],
-        [0, 1, 1],
-        [1, 1, 0],
-        [1, 1, 0],
+        [1, 1, 0, 0, 0, 0, 0],
+        [1, 0, 1, 0, 0, 0, 0],
+        [1, 0, 1, 0, 0, 0, 0],
+        [0, 1, 1, 0, 0, 0, 0],
+        [0, 0, 0, 0, 1, 1, 0],
+        [0, 0, 0, 0, 1, 0, 1],
+        [0, 0, 0, 0, 1, 0, 1],
+        [0, 0, 0, 0, 0, 1, 1],
     ]
 
 

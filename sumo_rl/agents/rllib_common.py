@@ -566,6 +566,7 @@ def apply_env_runner_settings(config, params: Dict[str, Any]):
     num_env_runners = int(params.get("num_env_runners", params.get("num_rollout_workers", 0)) or 0)
     num_envs_per_runner = int(params.get("num_envs_per_env_runner", 1) or 1)
     rollout_fragment_length = params.get("rollout_fragment_length")
+    sample_timeout_s = params.get("sample_timeout_s")
     if hasattr(config, "env_runners"):
         runner_kwargs = {
             "num_env_runners": num_env_runners,
@@ -577,11 +578,15 @@ def apply_env_runner_settings(config, params: Dict[str, Any]):
             runner_kwargs["num_gpus_per_env_runner"] = float(params["num_gpus_per_env_runner"])
         if rollout_fragment_length is not None:
             runner_kwargs["rollout_fragment_length"] = int(rollout_fragment_length)
+        if sample_timeout_s is not None:
+            runner_kwargs["sample_timeout_s"] = int(sample_timeout_s)
         config = config.env_runners(**runner_kwargs)
     elif hasattr(config, "rollouts"):
         rollout_kwargs = {"num_rollout_workers": num_env_runners}
         if rollout_fragment_length is not None:
             rollout_kwargs["rollout_fragment_length"] = int(rollout_fragment_length)
+        if sample_timeout_s is not None:
+            rollout_kwargs["sample_timeout_s"] = int(sample_timeout_s)
         config = config.rollouts(**rollout_kwargs)
     if hasattr(config, "learners"):
         learner_kwargs: Dict[str, Any] = {}
