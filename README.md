@@ -273,9 +273,8 @@ policy sees the full graph history, performs diffusion inside the DCRNN, and
 then acts from the ego node latent through separate policy and value heads.
 This graph PPO variant keeps decentralized policies with centralized graph
 observations and does not add a separate GAT layer.
-The PPO+DCRNN config now also makes `observation_dtype=float16` explicit and
-uses `sgd_minibatch_size=64` to reduce learner activation memory without
-changing the backbone or rollout horizon.
+The PPO+DCRNN config now uses `sgd_minibatch_size=64` to reduce learner
+activation memory without changing the backbone or rollout horizon.
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
 Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it
@@ -297,10 +296,10 @@ keeps decentralized policies with centralized graph observations.
 
 The DQN+DCRNN defaults are intentionally lighter than the plain DQN defaults on
 large RESCO maps: they now use `history_len=3`, `train_batch_size_per_learner=8`,
-and `observation_dtype=float16`. This helps because the full graph-history
-observation is duplicated once per controlled traffic signal; on a 21-signal map
-such as `resco_ingolstadt21`, episode replay can otherwise drive very large GPU
-allocations during learner batches.
+which helps because the full graph-history observation is duplicated once per
+controlled traffic signal. On a 21-signal map such as `resco_ingolstadt21`,
+episode replay can otherwise drive very large GPU allocations during learner
+batches.
 
 `dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one node-wise
 MLP layer before the DCRNN stack.
@@ -352,10 +351,9 @@ DCRNN+MLP backbone across the SAC actor, `qf`, and `qf_twin` while keeping
 separate actor and critic heads. Treat this as an experimental parameter-sharing
 ablation. Across all of these SAC DCRNN variants, graph communication currently
 means DCRNN diffusion over graph-history observations, not GAT.
-The SAC+DCRNN configs now also make `observation_dtype=float16` explicit and
-use `train_batch_size_per_learner=32` as a lighter default than the base SAC
-batch size, which reduces learner and replay memory pressure without changing
-the architecture.
+The SAC+DCRNN configs now use `train_batch_size_per_learner=32` as a lighter
+default than the base SAC batch size, which reduces learner and replay memory
+pressure without changing the architecture.
 
 If you want the concrete SAC-side reference for graph attention and explicit
 message passing, use `algorithm=fgs`. FGS applies a local FRAP or MLP encoder to

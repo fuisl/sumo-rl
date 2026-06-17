@@ -137,3 +137,43 @@ def test_ppo_dcrnn_mlp_shared_backbone_receives_policy_and_value_gradients():
     backbone_grads = [param.grad for param in module.backbone.parameters() if param.requires_grad]
     assert backbone_grads
     assert all(grad is not None for grad in backbone_grads)
+
+
+def test_ppo_dcrnn_mlp_compute_values_reuses_train_embeddings():
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from ray.rllib.core.columns import Columns
+    from sumo_rl.agents.ppo.rllib_module import build_ppo_dcrnn_module_spec
+
+    obs_space = Box(low=0.0, high=1.0, shape=(5, 4, 8), dtype=np.float32)
+    action_space = Discrete(3)
+    module = build_ppo_dcrnn_module_spec(
+        obs_space,
+        action_space,
+        model_config={
+            "architecture_tag": "ppo_dcrnn_mlp",
+            "agent_index": 1,
+            "num_nodes": 4,
+            "input_dim": 8,
+            "adjacency": np.eye(4, dtype=np.float32).tolist(),
+            "hid_dim": 16,
+            "pre_encoder": {"enabled": True, "hidden_dim": 16, "activation": "relu"},
+        },
+    ).build()
+
+    batch = {Columns.OBS: torch.zeros(3, 5, 4, 8)}
+    outputs = module.forward_train(batch)
+
+    original_backbone = module.backbone
+
+    def _fail_on_backbone(obs):
+        del obs
+        raise AssertionError("compute_values should reuse train embeddings instead of recomputing the backbone")
+
+    module.backbone = _fail_on_backbone
+    try:
+        values = module.compute_values(batch, embeddings=outputs[Columns.EMBEDDINGS])
+    finally:
+        module.backbone = original_backbone
+
+    assert values.shape == (3,)

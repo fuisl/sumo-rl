@@ -22,7 +22,6 @@ algorithm:
     history_len: 3
     include_virtual_nodes: true
     add_self_loops: true
-    observation_dtype: float16
     model_config:
       architecture_tag: dqn_dcrnn
       feature_layout: phase_min_green_density_queue

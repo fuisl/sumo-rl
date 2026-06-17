@@ -47,12 +47,6 @@ def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
                 model_config.get("feature_layout", "phase_min_green_density_queue"),
             )
         ),
-        "observation_dtype": str(
-            params.get(
-                "observation_dtype",
-                model_config.get("observation_dtype", "float16"),
-            )
-        ),
     }
 
 
@@ -117,14 +111,6 @@ def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algo
     register_env(env_name, _creator)
     return env_name
 
-
-def _dtype_nbytes(value: str) -> int:
-    normalized = str(value or "float16").strip().lower()
-    if normalized in {"float16", "fp16", "half"}:
-        return 2
-    return 4
-
-
 def _format_gib(num_bytes: float) -> str:
     return f"{num_bytes / float(1024 ** 3):.2f} GiB"
 
@@ -141,7 +127,7 @@ def _warn_if_graph_memory_is_large(
     num_nodes = int(sample_env.graph.num_nodes)
     feature_dim = int(sample_env.graph.feature_dim)
     dtype_name = str(sample_env.history.observation_space.dtype)
-    obs_bytes_per_agent = history_len * num_nodes * feature_dim * _dtype_nbytes(dtype_name)
+    obs_bytes_per_agent = history_len * num_nodes * feature_dim * 4
     all_agents_step_bytes = obs_bytes_per_agent * num_agents
     episode_obs_bytes = all_agents_step_bytes * max(1, int(episode_steps_value))
     replay_type = str(params.get("replay_buffer_type", "MultiAgentPrioritizedEpisodeReplayBuffer"))

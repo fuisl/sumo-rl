@@ -30,13 +30,6 @@ KIND = "ppo"
 MLP_DCRNN_KIND = "ppo_dcrnn_mlp"
 
 
-def _dtype_nbytes(value: str) -> int:
-    normalized = str(value or "float16").strip().lower()
-    if normalized in {"float16", "fp16", "half"}:
-        return 2
-    return 4
-
-
 def _format_gib(num_bytes: float) -> str:
     return f"{num_bytes / float(1024 ** 3):.2f} GiB"
 
@@ -54,7 +47,7 @@ def _warn_if_ppo_graph_memory_is_large(context) -> None:
     history_len, num_nodes, feature_dim = (int(dim) for dim in obs_shape)
     dtype_name = str(getattr(obs_space, "dtype", "float32"))
     num_policies = max(1, len(context.active_policies))
-    per_sample_obs_bytes = history_len * num_nodes * feature_dim * _dtype_nbytes(dtype_name)
+    per_sample_obs_bytes = history_len * num_nodes * feature_dim * 4
     rollout_obs_bytes = per_sample_obs_bytes * max(1, int(context.episode_steps)) * num_policies
     train_batch_size = max(1, int(context.params.get("train_batch_size_per_learner", context.episode_steps)))
     minibatch_size = max(1, int(context.params.get("minibatch_size", context.params.get("sgd_minibatch_size", train_batch_size))))

@@ -10,7 +10,6 @@ algorithm:
     history_len: 5
     include_virtual_nodes: true
     add_self_loops: true
-    observation_dtype: float16
     model_config:
       architecture_tag: sac_dcrnn_actor_mlp
       feature_layout: phase_min_green_density_queue

@@ -50,13 +50,13 @@ def build_ppo_dcrnn_module_class():
             del kwargs
             latent = self.backbone(batch[Columns.OBS])
             return {
+                Columns.EMBEDDINGS: latent,
                 Columns.ACTION_DIST_INPUTS: self.policy_head(latent),
                 Columns.VF_PREDS: self.value_head(latent).squeeze(-1),
             }
 
         def compute_values(self, batch: Dict[str, Any], embeddings=None):
-            del embeddings
-            latent = self.backbone(batch[Columns.OBS])
+            latent = embeddings if embeddings is not None else self.backbone(batch[Columns.OBS])
             return self.value_head(latent).squeeze(-1)
 
         def get_initial_state(self) -> dict:
