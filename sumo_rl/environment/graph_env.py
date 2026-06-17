@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+import numpy as np
 from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
 from sumo_rl.agents.rllib_common import build_sumo_parallel_env
@@ -49,6 +50,7 @@ class GraphParallelEnv:
         include_virtual_nodes: bool = True,
         add_self_loops: bool = True,
         feature_layout: str = "phase_min_green_density_queue",
+        observation_dtype: str = "float16",
     ) -> None:
         self.env = env
         self.par_env = env
@@ -61,12 +63,21 @@ class GraphParallelEnv:
             add_self_loops=add_self_loops,
             feature_layout=feature_layout,
         )
-        self.history = GraphObservationHistory(history_len, self.graph)
+        self.history = GraphObservationHistory(history_len, self.graph, dtype=self._resolve_observation_dtype(observation_dtype))
         self.observation_spaces = {agent_id: self.history.observation_space for agent_id in self.possible_agents}
         self.action_spaces = {
             agent_id: self._base_action_space(agent_id)
             for agent_id in self.possible_agents
         }
+
+    @staticmethod
+    def _resolve_observation_dtype(value: str):
+        normalized = str(value or "float16").strip().lower()
+        if normalized in {"float16", "fp16", "half"}:
+            return np.float16
+        if normalized in {"float32", "fp32", "single"}:
+            return np.float32
+        raise ValueError("graph observation_dtype must be one of: float16, float32.")
 
     def _base_action_space(self, agent_id: str):
         action_space = getattr(self.env, "action_space", None)
@@ -140,6 +151,7 @@ def build_graph_parallel_env(
         include_virtual_nodes=bool(params.get("include_virtual_nodes", True)),
         add_self_loops=bool(params.get("add_self_loops", True)),
         feature_layout=str(params.get("feature_layout", "phase_min_green_density_queue")),
+        observation_dtype=str(params.get("observation_dtype", "float16")),
     )
 
 

@@ -292,6 +292,13 @@ the ego node's most recent features. Use `algorithm=dqn_dcrnn` as the canonical 
 `algorithm=dcrnn` is kept as a backward-compatible alias. The first version
 keeps decentralized policies with centralized graph observations.
 
+The DQN+DCRNN defaults are intentionally lighter than the plain DQN defaults on
+large RESCO maps: they now use `history_len=3`, `train_batch_size_per_learner=8`,
+and `observation_dtype=float16`. This helps because the full graph-history
+observation is duplicated once per controlled traffic signal; on a 21-signal map
+such as `resco_ingolstadt21`, episode replay can otherwise drive very large GPU
+allocations during learner batches.
+
 `dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one node-wise
 MLP layer before the DCRNN stack.
 

@@ -233,9 +233,10 @@ def pack_density_queue_features(
 class GraphObservationHistory:
     """Rolling graph-feature buffer with repeat padding at episode start."""
 
-    def __init__(self, history_len: int, graph: TrafficSignalGraph):
+    def __init__(self, history_len: int, graph: TrafficSignalGraph, *, dtype: np.dtype = np.float32):
         self.history_len = max(1, int(history_len))
         self.graph = graph
+        self.dtype = np.dtype(dtype)
         self._frames: Deque[np.ndarray] = deque(maxlen=self.history_len)
 
     @property
@@ -244,18 +245,18 @@ class GraphObservationHistory:
             low=0.0,
             high=1.0,
             shape=(self.history_len, self.graph.num_nodes, self.graph.feature_dim),
-            dtype=np.float32,
+            dtype=self.dtype,
         )
 
     def reset(self, frame: np.ndarray) -> np.ndarray:
         self._frames.clear()
-        clean_frame = np.asarray(frame, dtype=np.float32)
+        clean_frame = np.asarray(frame, dtype=self.dtype)
         for _ in range(self.history_len):
             self._frames.append(clean_frame.copy())
         return self.as_array()
 
     def append(self, frame: np.ndarray) -> np.ndarray:
-        clean_frame = np.asarray(frame, dtype=np.float32)
+        clean_frame = np.asarray(frame, dtype=self.dtype)
         if not self._frames:
             return self.reset(clean_frame)
         self._frames.append(clean_frame.copy())
@@ -265,12 +266,12 @@ class GraphObservationHistory:
         if not self._frames:
             return np.zeros(
                 (self.history_len, self.graph.num_nodes, self.graph.feature_dim),
-                dtype=np.float32,
+                dtype=self.dtype,
             )
         frames = list(self._frames)
         while len(frames) < self.history_len:
             frames.insert(0, frames[0].copy())
-        return np.stack(frames, axis=0).astype(np.float32, copy=False)
+        return np.stack(frames, axis=0).astype(self.dtype, copy=False)
 
 
 def traffic_signals_from_base_env(base_env: Any) -> list[Any]:

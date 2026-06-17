@@ -10,7 +10,7 @@ algorithm:
     lr: 0.001
     gamma: 0.95
     grad_clip: 5.0
-    train_batch_size_per_learner: 64
+    train_batch_size_per_learner: 8
     replay_buffer_type: MultiAgentPrioritizedEpisodeReplayBuffer
     replay_buffer_capacity: 50000
     replay_buffer_alpha: 0.6
@@ -23,9 +23,10 @@ algorithm:
     dueling: false
     double_q: true
     num_atoms: 1
-    history_len: 5
+    history_len: 3
     include_virtual_nodes: true
     add_self_loops: true
+    observation_dtype: float16
     model_config:
       architecture_tag: dqn_dcrnn
       feature_layout: phase_min_green_density_queue

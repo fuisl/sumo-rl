@@ -106,6 +106,11 @@ a backward-compatible alias. The first version keeps decentralized policies with
 centralized graph observations; shared graph communication with existing models
 is a future extension.
 
+The current DQN+DCRNN defaults also trim graph replay pressure for larger RESCO
+networks. They use `history_len=3`, `train_batch_size_per_learner=8`, and
+`observation_dtype=float16` so the per-agent full-graph history does not
+inflate learner GPU memory as aggressively as the older `5 x ...` float32 setup.
+
 `algorithm=dqn_dcrnn_mlp` keeps the same graph-history wrapper, but inserts one
 node-wise MLP layer before the DCRNN stack so each node feature is projected
 locally before diffusion over the graph.
