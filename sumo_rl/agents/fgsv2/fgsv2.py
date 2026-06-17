@@ -42,7 +42,14 @@ def _fgsv2_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
     return normalize_fgsv2_model_config(model_config)
 
 
-def build_fgsv2_parallel_env(cfg: Any, run_dir: Path, model_config: Dict[str, Any], seed: Optional[int] = None):
+def build_fgsv2_parallel_env(
+    cfg: Any,
+    run_dir: Path,
+    model_config: Dict[str, Any],
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
     import sumo_rl
 
     kwargs = _prepare_env_kwargs(cfg, run_dir)
@@ -51,6 +58,8 @@ def build_fgsv2_parallel_env(cfg: Any, run_dir: Path, model_config: Dict[str, An
         kwargs["num_seconds"] = seconds
     if seed is not None:
         kwargs["sumo_seed"] = int(seed)
+    if use_libsumo is not None:
+        kwargs["use_libsumo"] = bool(use_libsumo)
     kwargs["single_agent"] = False
 
     factory = str(getattr(getattr(cfg, "env", None), "factory", "parallel_env") or "parallel_env")
@@ -58,7 +67,11 @@ def build_fgsv2_parallel_env(cfg: Any, run_dir: Path, model_config: Dict[str, An
         env = sumo_rl.parallel_env(**kwargs)
     else:
         constructor = getattr(sumo_rl, factory, None)
-        env = constructor(parallel=True, **kwargs) if constructor is not None else build_sumo_parallel_env(cfg, run_dir, seed=seed)
+        env = (
+            constructor(parallel=True, **kwargs)
+            if constructor is not None
+            else build_sumo_parallel_env(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
+        )
 
     topology_config = dict(model_config.get("topology", {}) or {})
     render_dir = run_dir / "topology" if bool(topology_config.get("render", True)) else None
@@ -74,7 +87,9 @@ def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
-    return ParallelPettingZooEnv(build_fgsv2_parallel_env(cfg, run_dir, _fgsv2_model_config(params), seed=seed))
+    return ParallelPettingZooEnv(
+        build_fgsv2_parallel_env(cfg, run_dir, _fgsv2_model_config(params), seed=seed, use_libsumo=False)
+    )
 
 
 def _build_fgsv2_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> RllibAlgorithmContext:

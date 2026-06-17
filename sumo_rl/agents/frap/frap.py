@@ -18,6 +18,7 @@ from sumo_rl.agents.rllib_common import (
     extract_rllib_result_metrics,
     flatten_numeric_metrics,
     plain_dict,
+    training_episode_jump,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
@@ -123,12 +124,22 @@ def train(
     callbacks_class.reset_episode_summary_tracking()
     iteration = 0
     last_logged_step = 0
+    last_completed_episode = 0
+    observed_completed_episodes = 0
     last_validation_progress = 0
     while True:
         iteration += 1
         result = algo.train()
         metrics = extract_training_metrics(result, iteration)
+        progress_jump = training_episode_jump(metrics, cfg, last_completed_episode=last_completed_episode)
+        metrics["train/rllib/rollout_jump"] = float(progress_jump)
+        metrics["debug/rllib/rollout_jump"] = float(progress_jump)
         episode_summaries = callbacks_class.drain_pending_episode_summaries()
+        observed_completed_episodes += len(episode_summaries)
+        metrics["train/observed_completed_episodes_jump"] = float(len(episode_summaries))
+        metrics["train/observed_completed_episodes_total"] = float(observed_completed_episodes)
+        metrics["debug/env_completed_episodes_jump"] = float(len(episode_summaries))
+        metrics["debug/env_completed_episodes_total"] = float(observed_completed_episodes)
         is_final = training_should_stop(metrics, cfg)
         last_logged_step = emit_training_episode_rows(
             metrics,
@@ -146,6 +157,13 @@ def train(
             validate=validate,
         )
         completed_episodes = completed_training_episodes(metrics, cfg)
+        last_completed_episode = completed_episodes
+        if progress_jump > 1:
+            print(
+                f"[{KIND}] RLlib episode jump detected: +{progress_jump} "
+                f"(from {completed_episodes - progress_jump} to {completed_episodes}) "
+                f"at iteration={iteration}"
+            )
         print(
             f"[{KIND}] episode={min(completed_episodes, training_episode_target(cfg))}/"
             f"{training_episode_target(cfg)} iteration={iteration} "

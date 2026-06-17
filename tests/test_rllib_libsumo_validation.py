@@ -7,6 +7,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sumo_rl.experiments import rllib_runner
+from sumo_rl.agents.sac import sac as sac_agent
 
 
 def test_train_rllib_keeps_periodic_validation_under_libsumo_with_traci_envs(monkeypatch, tmp_path):
@@ -59,7 +60,6 @@ def test_train_rllib_keeps_periodic_validation_under_libsumo_with_traci_envs(mon
             "total_trips": 0,
         }
 
-    monkeypatch.setenv("LIBSUMO_AS_TRACI", "1")
     monkeypatch.setitem(sys.modules, "ray", DummyRay)
     monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
     monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
@@ -89,8 +89,47 @@ def test_train_rllib_keeps_periodic_validation_under_libsumo_with_traci_envs(mon
             kind="ppo",
             params={"ray_num_gpus": 0, "num_gpus_per_learner": 0},
         ),
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
     )
 
     rllib_runner.train_rllib(cfg)
 
     assert callable(validate_holder["callback"])
+
+
+def test_sac_graph_eval_env_uses_isolated_traci_when_training_uses_libsumo(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(
+        sac_agent,
+        "graph_params",
+        lambda params: {"copied_params": dict(params)},
+    )
+
+    def fake_build_rllib_graph_parallel_env(cfg, run_dir, seed=None, *, params=None, use_libsumo=None):
+        del cfg, run_dir
+        calls.append(
+            {
+                "seed": seed,
+                "params": params,
+                "use_libsumo": use_libsumo,
+            }
+        )
+        return object()
+
+    import sumo_rl.environment.graph_env as graph_env_mod
+
+    monkeypatch.setattr(graph_env_mod, "build_rllib_graph_parallel_env", fake_build_rllib_graph_parallel_env)
+
+    cfg = SimpleNamespace(
+        algorithm=SimpleNamespace(
+            params={
+                "policy_mode": "independent",
+                "history_len": 3,
+            }
+        )
+    )
+
+    sac_agent.build_graph_eval_env(cfg, tmp_path, seed=11)
+
+    assert calls == [{"seed": 11, "params": {"copied_params": {"policy_mode": "independent", "history_len": 3}}, "use_libsumo": False}]

@@ -60,23 +60,37 @@ def _env_factory_name(cfg: Any) -> str:
     return str(getattr(env_cfg, "factory", "parallel_env") or "parallel_env")
 
 
-def _rllib_env_kwargs(cfg: Any, run_dir: Path, seed: Optional[int] = None) -> Dict[str, Any]:
+def _rllib_env_kwargs(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+) -> Dict[str, Any]:
     kwargs = _prepare_env_kwargs(cfg, run_dir)
     seconds = _episode_seconds(cfg)
     if seconds > 0 and "num_seconds" not in kwargs:
         kwargs["num_seconds"] = seconds
     if seed is not None:
         kwargs["sumo_seed"] = int(seed)
+    if use_libsumo is not None:
+        kwargs["use_libsumo"] = bool(use_libsumo)
     kwargs.setdefault("single_agent", False)
     return kwargs
 
 
-def build_sumo_parallel_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def build_sumo_parallel_env(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
     """Build the PettingZoo parallel env in the same shape as the RLlib example."""
 
     import sumo_rl
 
-    kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed)
+    kwargs = _rllib_env_kwargs(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
     factory = _env_factory_name(cfg)
     if factory in {"parallel_env", "sumo_env", "env"}:
         return sumo_rl.parallel_env(**kwargs)
@@ -107,10 +121,11 @@ def build_rllib_parallel_env(
     seed: Optional[int] = None,
     *,
     pad_spaces: bool = False,
+    use_libsumo: Optional[bool] = None,
 ):
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
-    base_env = build_sumo_parallel_env(cfg, run_dir, seed=seed)
+    base_env = build_sumo_parallel_env(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
     if pad_spaces:
         base_env = _maybe_pad_pettingzoo_env(base_env)
     return ParallelPettingZooEnv(base_env)
@@ -662,6 +677,11 @@ def completed_training_episodes(metrics: Dict[str, Any], cfg: Any) -> int:
     return authoritative_rollout_index(metrics, cfg)
 
 
+def training_episode_jump(metrics: Dict[str, Any], cfg: Any, *, last_completed_episode: int) -> int:
+    current_completed_episode = completed_training_episodes(metrics, cfg)
+    return max(0, current_completed_episode - int(last_completed_episode))
+
+
 def training_should_stop(metrics: Dict[str, Any], cfg: Any) -> bool:
     target_episodes = training_episode_target(cfg)
     return completed_training_episodes(metrics, cfg) >= target_episodes
@@ -940,6 +960,9 @@ def _append_debug_metrics(row: Dict[str, Any], metrics: Dict[str, Any]) -> None:
     for source_key, target_key in exact_map.items():
         _copy_numeric_metric(row, target_key, metrics.get(source_key))
     for source_key, value in metrics.items():
+        if source_key.startswith("debug/"):
+            _copy_numeric_metric(row, source_key, value)
+    for source_key, value in metrics.items():
         for prefix, replacement in prefix_map.items():
             if source_key.startswith(prefix):
                 _copy_numeric_metric(row, source_key.replace(prefix, replacement, 1), value)
@@ -964,6 +987,12 @@ def build_training_episode_row(
     fallback_env_step = metrics.get("train/env_step", metrics.get("train/env_steps_sampled"))
     if isinstance(fallback_env_step, (int, float, np.integer, np.floating)) and not isinstance(fallback_env_step, bool):
         row["train/env_step"] = float(fallback_env_step)
+    for source_key in (
+        "train/observed_completed_episodes_total",
+        "train/observed_completed_episodes_jump",
+        "train/rllib/rollout_jump",
+    ):
+        _copy_numeric_metric(row, source_key, metrics.get(source_key))
 
     for key, value in metrics.items():
         if key.startswith(("train/resco_", "train/reward_", "train/efficiency_", "train/safety_")):

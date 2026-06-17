@@ -12,8 +12,8 @@ def _compose(config_name: str, overrides: list[str] | None = None):
         return compose(config_name=config_name, overrides=overrides or [])
 
 
-def _assert_shared_ray_defaults(cfg):
-    assert cfg.resources.ray_address == "auto"
+def _assert_rllib_ray_defaults(cfg):
+    assert cfg.resources.ray_address is None
     assert cfg.algorithm.params.ray_num_gpus == "auto"
     assert cfg.algorithm.params.num_env_runners == 0
     assert cfg.algorithm.params.num_envs_per_env_runner == 1
@@ -24,12 +24,21 @@ def _assert_shared_ray_defaults(cfg):
     assert cfg.algorithm.params.num_gpus_per_learner == 0.1
 
 
-def test_rllib_direct_algorithm_uses_shared_ray_defaults():
+def test_rllib_direct_algorithm_uses_local_ray_defaults():
     cfg = _compose("rllib", ["algorithm=ppo", "scenario=cologne3"])
 
     assert cfg.algorithm.kind == "ppo"
     assert cfg.scenario.name == "resco_cologne3"
-    _assert_shared_ray_defaults(cfg)
+    assert cfg.env.kwargs.use_libsumo is True
+    assert cfg.logging.eval_use_libsumo is False
+    _assert_rllib_ray_defaults(cfg)
+
+
+def test_rllib_base_config_stays_backend_neutral_for_other_algorithms():
+    cfg = _compose("rllib", ["algorithm=colight", "scenario=resco_grid4x4"])
+
+    assert cfg.algorithm.kind == "colight"
+    assert "use_libsumo" not in cfg.env.kwargs
 
 
 def test_rllib_preset_uses_shared_ray_defaults_after_algorithm_override():
@@ -37,7 +46,7 @@ def test_rllib_preset_uses_shared_ray_defaults_after_algorithm_override():
 
     assert cfg.algorithm.kind == "fgs"
     assert cfg.scenario.name == "resco_cologne8"
-    _assert_shared_ray_defaults(cfg)
+    _assert_rllib_ray_defaults(cfg)
 
 
 def test_fgs_ppo_algorithm_uses_shared_ray_defaults():

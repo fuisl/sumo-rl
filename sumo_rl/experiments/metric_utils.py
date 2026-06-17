@@ -68,6 +68,18 @@ def reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penal
         )
     if reward_name == "average-speed":
         return "average vehicle speed for the signal"
+    if reward_name == "nash-average-speed":
+        return (
+            "geometric_mean(phase_average_speed + 0.1) across green phases, "
+            "where empty phases use average_speed = 1.0"
+        )
+    if reward_name == "weighted-nash-average-speed":
+        return (
+            "exp(sum(phase_weight * log(phase_average_speed + 0.1))) across green phases, "
+            "where phase_weight = phase_max_waiting_time / sum(phase_max_waiting_time), "
+            "empty phases use average_speed = 1.0 and max_waiting_time = 0, "
+            "and zero total max waiting falls back to uniform phase weights"
+        )
     if reward_name == "queue":
         return "- total queued vehicles for the signal"
     if reward_name == "normalized-queue":

@@ -10,6 +10,21 @@ import numpy as np
 from gymnasium import spaces
 
 
+def _normalize_feature_layout(feature_layout: str | None) -> str:
+    layout = str(feature_layout or "phase_min_green_density_queue").strip().lower()
+    aliases = {
+        "phase_min_green_density_queue": "phase_min_green_density_queue",
+        "full_tls_state": "phase_min_green_density_queue",
+        "density_queue": "density_queue",
+    }
+    if layout not in aliases:
+        raise ValueError(
+            "Unsupported graph feature_layout. Expected one of: "
+            "phase_min_green_density_queue, full_tls_state, density_queue."
+        )
+    return aliases[layout]
+
+
 @dataclass(frozen=True)
 class TrafficSignalGraph:
     """Static graph metadata derived from SUMO traffic-signal lane links."""
@@ -18,14 +33,39 @@ class TrafficSignalGraph:
     ts_index: dict[str, int]
     num_nodes: int
     max_lanes: int
+    max_green_phases: int
     adjacency: np.ndarray
     edge_index: np.ndarray
+    feature_layout: str = "phase_min_green_density_queue"
     incoming_node_index: int | None = None
     outgoing_node_index: int | None = None
 
     @property
+    def phase_dim(self) -> int:
+        return 0 if self.feature_layout == "density_queue" else self.max_green_phases
+
+    @property
     def feature_dim(self) -> int:
-        return 2 * self.max_lanes
+        if self.feature_layout == "density_queue":
+            return 2 * self.max_lanes
+        return self.max_green_phases + 1 + 2 * self.max_lanes
+
+    @property
+    def min_green_index(self) -> int | None:
+        if self.feature_layout == "density_queue":
+            return None
+        return self.max_green_phases
+
+    @property
+    def density_offset(self) -> int:
+        return 0 if self.feature_layout == "density_queue" else self.max_green_phases + 1
+
+    @property
+    def queue_offset(self) -> int:
+        return self.density_offset + self.max_lanes
+
+    def phase_slice(self) -> slice:
+        return slice(0, self.phase_dim)
 
     def model_config(self, agent_id: str, **extra: Any) -> dict[str, Any]:
         config = {
@@ -35,7 +75,14 @@ class TrafficSignalGraph:
             "input_dim": int(self.feature_dim),
             "adjacency": self.adjacency.astype(np.float32).tolist(),
             "ts_ids": list(self.ts_ids),
+            "feature_layout": self.feature_layout,
+            "max_lanes": int(self.max_lanes),
+            "max_green_phases": int(self.max_green_phases),
+            "density_offset": int(self.density_offset),
+            "queue_offset": int(self.queue_offset),
         }
+        if self.min_green_index is not None:
+            config["min_green_index"] = int(self.min_green_index)
         config.update(extra)
         return config
 
@@ -50,11 +97,47 @@ def _signal_id(ts: Any) -> str:
     return str(getattr(ts, "id"))
 
 
+def _phase_one_hot(ts: Any, max_green_phases: int) -> np.ndarray:
+    encoded = np.zeros(max_green_phases, dtype=np.float32)
+    if max_green_phases <= 0:
+        return encoded
+    green_phase = int(getattr(ts, "green_phase", 0) or 0)
+    if 0 <= green_phase < max_green_phases:
+        encoded[green_phase] = 1.0
+    return encoded
+
+
+def _min_green_feature(ts: Any) -> float:
+    if not all(hasattr(ts, name) for name in ("time_since_last_phase_change", "min_green", "yellow_time")):
+        return 0.0
+    return float(
+        0
+        if float(getattr(ts, "time_since_last_phase_change")) < float(getattr(ts, "min_green")) + float(getattr(ts, "yellow_time"))
+        else 1
+    )
+
+
+def _pack_feature_row(ts: Any, graph: TrafficSignalGraph) -> np.ndarray:
+    density = np.asarray(ts.get_lanes_density(), dtype=np.float32).reshape(-1)
+    queue = np.asarray(ts.get_lanes_queue(), dtype=np.float32).reshape(-1)
+    features = np.zeros(graph.feature_dim, dtype=np.float32)
+    if graph.feature_layout == "phase_min_green_density_queue":
+        features[graph.phase_slice()] = _phase_one_hot(ts, graph.max_green_phases)
+        if graph.min_green_index is not None:
+            features[graph.min_green_index] = _min_green_feature(ts)
+    density_width = min(graph.max_lanes, density.size)
+    queue_width = min(graph.max_lanes, queue.size)
+    features[graph.density_offset : graph.density_offset + density_width] = density[:density_width]
+    features[graph.queue_offset : graph.queue_offset + queue_width] = queue[:queue_width]
+    return features
+
+
 def build_traffic_signal_graph(
     traffic_signals: Mapping[str, Any] | Sequence[Any],
     *,
     include_virtual_nodes: bool = True,
     add_self_loops: bool = True,
+    feature_layout: str = "phase_min_green_density_queue",
 ) -> TrafficSignalGraph:
     """Build a deterministic directed graph from traffic signal in/out lanes."""
 
@@ -62,9 +145,11 @@ def build_traffic_signal_graph(
     if not ts_list:
         raise ValueError("Cannot build a traffic-signal graph without traffic signals.")
 
+    normalized_feature_layout = _normalize_feature_layout(feature_layout)
     ts_ids = tuple(_signal_id(ts) for ts in ts_list)
     ts_index = {ts_id: index for index, ts_id in enumerate(ts_ids)}
     max_lanes = max(1, max(len(getattr(ts, "lanes", []) or []) for ts in ts_list))
+    max_green_phases = max(1, max(int(getattr(ts, "num_green_phases", 1) or 1) for ts in ts_list))
 
     lanes = []
     for ts in ts_list:
@@ -112,31 +197,37 @@ def build_traffic_signal_graph(
         ts_index=ts_index,
         num_nodes=num_nodes,
         max_lanes=max_lanes,
+        max_green_phases=max_green_phases,
         adjacency=adjacency,
         edge_index=edge_index,
+        feature_layout=normalized_feature_layout,
         incoming_node_index=incoming_node_index,
         outgoing_node_index=outgoing_node_index,
     )
+
+
+def pack_graph_features(
+    traffic_signals: Mapping[str, Any] | Sequence[Any],
+    graph: TrafficSignalGraph,
+) -> np.ndarray:
+    """Pack current graph-state features into a graph node matrix."""
+
+    ts_by_id = {_signal_id(ts): ts for ts in _ordered_traffic_signals(traffic_signals)}
+    features = np.zeros((graph.num_nodes, graph.feature_dim), dtype=np.float32)
+    for ts_id in graph.ts_ids:
+        ts = ts_by_id[ts_id]
+        node_index = graph.ts_index[ts_id]
+        features[node_index] = _pack_feature_row(ts, graph)
+    return features
 
 
 def pack_density_queue_features(
     traffic_signals: Mapping[str, Any] | Sequence[Any],
     graph: TrafficSignalGraph,
 ) -> np.ndarray:
-    """Pack current density and queue features into a graph node matrix."""
+    """Backward-compatible wrapper around ``pack_graph_features``."""
 
-    ts_by_id = {_signal_id(ts): ts for ts in _ordered_traffic_signals(traffic_signals)}
-    features = np.zeros((graph.num_nodes, graph.feature_dim), dtype=np.float32)
-    for ts_id in graph.ts_ids:
-        ts = ts_by_id[ts_id]
-        density = np.asarray(ts.get_lanes_density(), dtype=np.float32).reshape(-1)
-        queue = np.asarray(ts.get_lanes_queue(), dtype=np.float32).reshape(-1)
-        node_index = graph.ts_index[ts_id]
-        density_width = min(graph.max_lanes, density.size)
-        queue_width = min(graph.max_lanes, queue.size)
-        features[node_index, :density_width] = density[:density_width]
-        features[node_index, graph.max_lanes : graph.max_lanes + queue_width] = queue[:queue_width]
-    return features
+    return pack_graph_features(traffic_signals, graph)
 
 
 class GraphObservationHistory:
@@ -190,4 +281,3 @@ def traffic_signals_from_base_env(base_env: Any) -> list[Any]:
     if isinstance(traffic_signals, Mapping):
         return _ordered_traffic_signals(traffic_signals)
     return _ordered_traffic_signals(traffic_signals or [])
-

@@ -4,33 +4,31 @@ defaults:
   - _self_
 
 algorithm:
-  kind: sac_dcrnn_actor_mlp
+  kind: sac_dcrnn_shared_mlp
   params:
     history_len: 5
     include_virtual_nodes: true
     add_self_loops: true
     model_config:
-      architecture_tag: sac_dcrnn_actor_mlp
+      architecture_tag: sac_dcrnn_shared_mlp
       feature_layout: phase_min_green_density_queue
-      actor:
-        encoder:
-          type: dcrnn
+      # Experimental ablation: actor and critics share one graph-temporal encoder.
+      encoder_layout: shared
+      shared_encoder:
+        type: dcrnn
+        hidden_dim: 128
+        max_diffusion_step: 2
+        num_rnn_layers: 1
+        filter_type: dual_random_walk
+        pre_encoder:
+          enabled: true
           hidden_dim: 128
-          max_diffusion_step: 2
-          num_rnn_layers: 1
-          filter_type: dual_random_walk
-          pre_encoder:
-            enabled: true
-            hidden_dim: 128
-            activation: relu
+          activation: relu
+      actor:
         head:
           hidden_dims: []
           activation: relu
       critic:
-        encoder:
-          type: mlp
-          hidden_dims: [256, 256]
-          activation: tanh
         head:
           hidden_dims: []
           activation: relu

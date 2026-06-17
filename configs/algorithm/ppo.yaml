@@ -1,4 +1,8 @@
 # @package _global_
+env:
+  kwargs:
+    use_libsumo: true
+
 algorithm:
   kind: ppo
   params:

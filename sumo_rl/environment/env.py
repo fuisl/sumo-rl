@@ -17,7 +17,14 @@ import gymnasium as gym
 import numpy as np
 import pandas as pd
 import sumolib
+# Backend selection is controlled by explicit use_libsumo flags from Hydra,
+# not by SUMO's process-global LIBSUMO_AS_TRACI import override.
+os.environ.pop("LIBSUMO_AS_TRACI", None)
 import traci
+try:
+    import libsumo
+except ImportError:
+    libsumo = None
 from gymnasium.utils import EzPickle, seeding
 from pettingzoo import AECEnv
 from pettingzoo.utils import wrappers
@@ -34,41 +41,42 @@ from pettingzoo.utils.conversions import parallel_wrapper_fn
 
 from .observations import DefaultObservationFunction, ObservationFunction
 from .traffic_signal import TrafficSignal
+from ..util.tripinfo import collect_tripinfo_metrics, is_ghost_vehicle as _is_ghost_vehicle
 
 
-LIBSUMO = "LIBSUMO_AS_TRACI" in os.environ
 TRACI_START_RETRIES = 3
 TRACI_START_RETRY_DELAY_SECONDS = 0.5
 
-
-def _is_ghost_vehicle(vehicle_id: str) -> bool:
-    return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
-
-
-def _env_var_truthy(value: Optional[str]) -> bool:
-    return str(value or "").strip().lower() not in {"", "0", "false", "no"}
-
-
-def default_use_libsumo() -> bool:
-    return _env_var_truthy(os.environ.get("LIBSUMO_AS_TRACI"))
+def _backend_module(use_libsumo: bool):
+    if use_libsumo:
+        if libsumo is None:
+            raise ImportError(
+                "Libsumo backend requested via use_libsumo=True, but the 'libsumo' Python module is not installed."
+            )
+        return libsumo
+    return traci
 
 
-def _start_traci_with_retries(cmd, *, label: Optional[str] = None):
+def _start_traci_with_retries(backend, cmd, *, label: Optional[str] = None):
     last_error = None
     for attempt in range(TRACI_START_RETRIES):
         try:
             if label is None:
-                traci.start(cmd)
-                return traci
-            traci.start(cmd, label=label)
-            return traci.getConnection(label)
+                backend.start(cmd)
+                return backend
+            backend.start(cmd, label=label)
+            if hasattr(backend, "getConnection"):
+                return backend.getConnection(label)
+            if hasattr(backend, "switch"):
+                backend.switch(label)
+            return backend
         except Exception as exc:
             last_error = exc
             if label is not None:
                 try:
-                    if hasattr(traci, "switch"):
-                        traci.switch(label)
-                        traci.close()
+                    if hasattr(backend, "switch"):
+                        backend.switch(label)
+                        backend.close()
                 except Exception:
                     pass
             if attempt + 1 >= TRACI_START_RETRIES:
@@ -209,7 +217,8 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.keep_tripinfo_output = keep_tripinfo_output
-        self.use_libsumo = default_use_libsumo() if use_libsumo is None else bool(use_libsumo) or default_use_libsumo()
+        self.use_libsumo = bool(use_libsumo) if use_libsumo is not None else False
+        self._traci_backend = _backend_module(self.use_libsumo)
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
@@ -220,9 +229,10 @@ class SumoEnvironment(gym.Env):
         self.sumo = None
 
         if self.use_libsumo:
-            conn = _start_traci_with_retries([sumolib.checkBinary("sumo"), "-n", self._net])
+            conn = _start_traci_with_retries(self._traci_backend, [sumolib.checkBinary("sumo"), "-n", self._net])
         else:
             conn = _start_traci_with_retries(
+                self._traci_backend,
                 [sumolib.checkBinary("sumo"), "-n", self._net],
                 label="init_connection" + self.label,
             )
@@ -327,9 +337,9 @@ class SumoEnvironment(gym.Env):
                 print("Virtual display started.")
 
         if self.use_libsumo:
-            self.sumo = _start_traci_with_retries(sumo_cmd)
+            self.sumo = _start_traci_with_retries(self._traci_backend, sumo_cmd)
         else:
-            self.sumo = _start_traci_with_retries(sumo_cmd, label=self.label)
+            self.sumo = _start_traci_with_retries(self._traci_backend, sumo_cmd, label=self.label)
 
         if self.use_gui or self.render_mode is not None:
             if "DEFAULT_VIEW" not in dir(traci.gui):  # traci.gui.DEFAULT_VIEW is not defined in libsumo
@@ -592,9 +602,9 @@ class SumoEnvironment(gym.Env):
         if getattr(self, "sumo", None) is None:
             return
 
-        if not self.use_libsumo and hasattr(traci, "switch"):
-            traci.switch(self.label)
-            traci.close()
+        if not self.use_libsumo and hasattr(self._traci_backend, "switch"):
+            self._traci_backend.switch(self.label)
+            self._traci_backend.close()
         else:
             self.sumo.close()
 
@@ -637,14 +647,12 @@ class SumoEnvironment(gym.Env):
             return numeric_value
         return None
 
-    @staticmethod
-    def _is_truthy_xml_value(value: Optional[str]) -> bool:
-        return str(value).strip().lower() in {"1", "true", "yes"}
-
     def _parse_tripinfo_summary(self, tripinfo_path: Path) -> dict:
         nan = float("nan")
         empty_summary = {
             "tripinfo/finished_count": 0.0,
+            "tripinfo/running_unfinished_count": 0.0,
+            "tripinfo/undeparted_count": 0.0,
             "tripinfo/unfinished_count": 0.0,
             "tripinfo/total_count": 0.0,
             "tripinfo/avg_duration": nan,
@@ -686,31 +694,14 @@ class SumoEnvironment(gym.Env):
             parsed_empty_summary["tripinfo/parse_success"] = 1.0
             return parsed_empty_summary
 
-        delays = []
-        trip_times = []
-        waits = []
-        time_losses = []
-        finished_count = 0
-        unfinished_count = 0
-        for vehicle in vehicles:
-            vehicle_id = vehicle.attrib.get("id", "")
-            if _is_ghost_vehicle(vehicle_id):
-                continue
-            is_unfinished = self._is_truthy_xml_value(vehicle.attrib.get("vaporized")) or self._is_truthy_xml_value(
-                vehicle.attrib.get("unfinished")
-            )
-            if is_unfinished:
-                unfinished_count += 1
-                continue
-            finished_count += 1
-            time_loss = float(vehicle.attrib.get("timeLoss", 0.0))
-            depart_delay = float(vehicle.attrib.get("departDelay", 0.0))
-            delays.append(time_loss + depart_delay)
-            trip_times.append(float(vehicle.attrib.get("duration", 0.0)))
-            waits.append(float(vehicle.attrib.get("waitingTime", 0.0)))
-            time_losses.append(time_loss)
-
-        total_count = finished_count + unfinished_count
+        tripinfo_metrics = collect_tripinfo_metrics(vehicles)
+        delays = tripinfo_metrics.delay_values
+        trip_times = tripinfo_metrics.duration_values
+        waits = tripinfo_metrics.wait_values
+        time_losses = tripinfo_metrics.time_loss_values
+        finished_count = tripinfo_metrics.finished_count
+        unfinished_count = tripinfo_metrics.unfinished_count
+        total_count = tripinfo_metrics.total_count
         avg_delay = float(np.mean(delays)) if delays else nan
         std_delay = float(np.std(delays)) if delays else nan
         max_delay = float(np.max(delays)) if delays else nan
@@ -723,6 +714,8 @@ class SumoEnvironment(gym.Env):
         std_time_loss = float(np.std(time_losses)) if time_losses else nan
         return {
             "tripinfo/finished_count": float(finished_count),
+            "tripinfo/running_unfinished_count": float(tripinfo_metrics.running_unfinished_count),
+            "tripinfo/undeparted_count": float(tripinfo_metrics.undeparted_count),
             "tripinfo/unfinished_count": float(unfinished_count),
             "tripinfo/total_count": float(total_count),
             "tripinfo/avg_duration": avg_trip_time,

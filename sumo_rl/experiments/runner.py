@@ -1066,6 +1066,8 @@ def _build_final_eval_summary_row(
             "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
             "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
             "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
+            "tripinfo/running_unfinished_count": float(summary.get("tripinfo/running_unfinished_count", float("nan"))),
+            "tripinfo/undeparted_count": float(summary.get("tripinfo/undeparted_count", float("nan"))),
             "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
             "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
             "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),

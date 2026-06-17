@@ -13,6 +13,8 @@ from sumo_rl.models.dcrnn import DCRNNBackbone
 
 DEFAULT_CUSTOM_SAC_MODEL_CONFIG: Dict[str, Any] = {
     "architecture_tag": "sac_mlp",
+    "encoder_layout": "separate",
+    "shared_encoder": {},
     "actor": {
         "encoder": {
             "type": "mlp",
@@ -44,6 +46,10 @@ DEFAULT_CUSTOM_SAC_MODEL_CONFIG: Dict[str, Any] = {
     },
 }
 
+_ENCODER_LAYOUTS = {"separate", "actor_only", "shared"}
+_ACTOR_ONLY_ARCHITECTURES = {"sac_dcrnn_actor", "sac_dcrnn_actor_mlp"}
+_SHARED_ARCHITECTURES = {"sac_dcrnn_shared_mlp"}
+
 
 def _deep_update(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
     merged = deepcopy(base)
@@ -66,6 +72,15 @@ def _int_list(value: Any, *, field_name: str) -> list[int]:
     return result
 
 
+def _default_encoder_layout_for_architecture(architecture_tag: str) -> str:
+    architecture_tag = str(architecture_tag or "sac_mlp")
+    if architecture_tag in _ACTOR_ONLY_ARCHITECTURES:
+        return "actor_only"
+    if architecture_tag in _SHARED_ARCHITECTURES:
+        return "shared"
+    return "separate"
+
+
 def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Return an RLlib-compatible model config plus project-owned SAC metadata."""
 
@@ -75,11 +90,17 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
         raise ImportError("custom SAC requires Ray RLlib to be installed.") from exc
 
     incoming = dict(model_config or {})
-    custom_updates = {
+    embedded_custom_sac = incoming.pop("custom_sac", None)
+    top_level_custom_updates = {
         key: incoming.pop(key)
         for key in list(incoming)
         if key in DEFAULT_CUSTOM_SAC_MODEL_CONFIG
     }
+    custom_updates = (
+        _deep_update(dict(embedded_custom_sac or {}), top_level_custom_updates)
+        if isinstance(embedded_custom_sac, dict)
+        else top_level_custom_updates
+    )
     custom_config = _deep_update(DEFAULT_CUSTOM_SAC_MODEL_CONFIG, custom_updates)
 
     actor_encoder = custom_config["actor"]["encoder"]
@@ -87,6 +108,15 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
     critic_encoder = custom_config["critic"]["encoder"]
     critic_head = custom_config["critic"]["head"]
     communication = custom_config["communication"]
+    architecture_tag = str(custom_config.get("architecture_tag", "sac_mlp") or "sac_mlp")
+    encoder_layout = (
+        str(custom_config.get("encoder_layout") or _default_encoder_layout_for_architecture(architecture_tag)).lower()
+    )
+    if "encoder_layout" not in custom_updates:
+        encoder_layout = _default_encoder_layout_for_architecture(architecture_tag)
+    if encoder_layout not in _ENCODER_LAYOUTS:
+        raise ValueError("custom SAC encoder_layout must be one of: separate, actor_only, shared.")
+    custom_config["encoder_layout"] = encoder_layout
 
     actor_encoder_type = str(actor_encoder.get("type", "mlp")).lower()
     critic_encoder_type = str(critic_encoder.get("type", "mlp")).lower()
@@ -110,11 +140,34 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
         if str(item).lower() in {"actor", "critic"}
     ]
 
+    shared_encoder = dict(custom_config.get("shared_encoder", {}) or {})
+    actor_encoder_supplied = (
+        isinstance(top_level_custom_updates.get("actor"), dict) and "encoder" in top_level_custom_updates["actor"]
+    )
+    critic_encoder_supplied = (
+        isinstance(top_level_custom_updates.get("critic"), dict) and "encoder" in top_level_custom_updates["critic"]
+    )
+    if encoder_layout == "shared":
+        if actor_encoder_supplied or critic_encoder_supplied:
+            raise ValueError(
+                "custom SAC shared encoder layout does not accept actor.encoder or critic.encoder overrides."
+            )
+        if not shared_encoder:
+            raise ValueError("custom SAC shared encoder layout requires model_config.shared_encoder.")
+        shared_encoder_type = str(shared_encoder.get("type", "") or "").lower()
+        if shared_encoder_type != "dcrnn":
+            raise ValueError("custom SAC shared encoder layout currently requires shared_encoder.type='dcrnn'.")
+        shared_encoder["type"] = shared_encoder_type
+    custom_config["shared_encoder"] = shared_encoder
+
     merged: Dict[str, Any] = asdict(DefaultModelConfig())
     merged.update(incoming)
-    merged["architecture_tag"] = str(custom_config.get("architecture_tag", "sac_mlp"))
+    merged["architecture_tag"] = architecture_tag
     merged["custom_sac"] = custom_config
-    if actor_encoder_type == "mlp":
+    if encoder_layout == "shared":
+        merged["fcnet_hiddens"] = []
+        merged["fcnet_activation"] = "relu"
+    elif actor_encoder_type == "mlp":
         merged["fcnet_hiddens"] = _int_list(actor_encoder.get("hidden_dims"), field_name="actor.encoder.hidden_dims")
         merged["fcnet_activation"] = str(actor_encoder.get("activation", "relu") or "relu")
     else:
@@ -122,7 +175,10 @@ def normalize_custom_sac_model_config(model_config: Optional[Dict[str, Any]] = N
         merged["fcnet_activation"] = "relu"
     merged["head_fcnet_hiddens"] = _int_list(actor_head.get("hidden_dims"), field_name="actor.head.hidden_dims")
     merged["head_fcnet_activation"] = str(actor_head.get("activation", "relu") or "relu")
-    if critic_encoder_type == "mlp":
+    if encoder_layout == "shared":
+        merged["critic_fcnet_hiddens"] = []
+        merged["critic_fcnet_activation"] = "relu"
+    elif critic_encoder_type == "mlp":
         merged["critic_fcnet_hiddens"] = _int_list(
             critic_encoder.get("hidden_dims"),
             field_name="critic.encoder.hidden_dims",
@@ -200,8 +256,21 @@ def build_custom_sac_catalog_class():
             encoder_config = dict(critic_config.get("encoder", {}) or {})
             return str(encoder_config.get("type", "mlp") or "mlp").lower()
 
+        def _encoder_layout(self) -> str:
+            custom_sac = self._custom_sac_config()
+            return str(custom_sac.get("encoder_layout", "separate") or "separate").lower()
+
+        def _shared_encoder_type(self) -> str:
+            custom_sac = self._custom_sac_config()
+            shared_encoder = dict(custom_sac.get("shared_encoder", {}) or {})
+            return str(shared_encoder.get("type", "none") or "none").lower()
+
         def _uses_graph_override(self) -> bool:
-            return self._actor_encoder_type() == "dcrnn" or self._critic_encoder_type() == "dcrnn"
+            return (
+                self._actor_encoder_type() == "dcrnn"
+                or self._critic_encoder_type() == "dcrnn"
+                or (self._encoder_layout() == "shared" and self._shared_encoder_type() == "dcrnn")
+            )
 
         def _determine_components_hook(self):
             if not self._uses_graph_override():
@@ -344,6 +413,8 @@ def build_custom_sac_module_class():
             self._architecture_tag = str(self.model_config.get("architecture_tag", "sac_mlp"))
             self._actor_config = dict(custom_config.get("actor", {}) or {})
             self._critic_config = dict(custom_config.get("critic", {}) or {})
+            self._shared_encoder_config = dict(custom_config.get("shared_encoder", {}) or {})
+            self._encoder_layout = str(custom_config.get("encoder_layout", "separate") or "separate").lower()
             self._communication_config = communication
             self._communication_enabled = bool(communication.get("enabled", False))
             self._communication_type = str(communication.get("type", "none") or "none")
@@ -352,14 +423,61 @@ def build_custom_sac_module_class():
             self._critic_encoder_type = str(self._critic_config.get("encoder", {}).get("type", "mlp") or "mlp").lower()
             self.actor_communication = CustomSACCommunicationBlock(self._communication_type)
             self.critic_communication = CustomSACCommunicationBlock(self._communication_type)
+            self.shared_dcrnn_backbone = None
             self.actor_dcrnn_backbone = None
             self.actor_dcrnn_head = None
             self.qf_dcrnn_backbone = None
             self.qf_twin_dcrnn_backbone = None
-            if self._actor_encoder_type == "dcrnn" or self._critic_encoder_type == "dcrnn":
+            uses_dcrnn = (
+                self._encoder_layout == "shared"
+                or self._actor_encoder_type == "dcrnn"
+                or self._critic_encoder_type == "dcrnn"
+            )
+            if uses_dcrnn:
                 if not hasattr(self.action_space, "n"):
                     raise ValueError("custom SAC DCRNN encoders currently support discrete action spaces only.")
-            if self._actor_encoder_type == "dcrnn":
+            if self._encoder_layout == "shared":
+                actor_head_config = dict(self._actor_config.get("head", {}) or {})
+                actor_head_hidden_dims = _int_list(
+                    actor_head_config.get("hidden_dims"),
+                    field_name="actor.head.hidden_dims",
+                )
+                actor_head_activation = str(actor_head_config.get("activation", "relu") or "relu")
+                critic_head_config = dict(self._critic_config.get("head", {}) or {})
+                critic_head_hidden_dims = _int_list(
+                    critic_head_config.get("hidden_dims"),
+                    field_name="critic.head.hidden_dims",
+                )
+                critic_head_activation = str(critic_head_config.get("activation", "relu") or "relu")
+                self.shared_dcrnn_backbone = DCRNNBackbone.from_shared_sac_model_config(
+                    self.observation_space,
+                    self.model_config,
+                )
+                self.actor_dcrnn_backbone = self.shared_dcrnn_backbone
+                self.qf_dcrnn_backbone = self.shared_dcrnn_backbone
+                self.actor_dcrnn_head = _build_mlp(
+                    self.shared_dcrnn_backbone.output_dim,
+                    actor_head_hidden_dims,
+                    actor_head_activation,
+                    int(self.action_space.n),
+                )
+                self.qf_encoder = _TorchDCRNNEncoder(self.shared_dcrnn_backbone)
+                self.qf = _build_mlp(
+                    self.shared_dcrnn_backbone.output_dim,
+                    critic_head_hidden_dims,
+                    critic_head_activation,
+                    int(self.action_space.n),
+                )
+                if self.twin_q:
+                    self.qf_twin_dcrnn_backbone = self.shared_dcrnn_backbone
+                    self.qf_twin_encoder = _TorchDCRNNEncoder(self.shared_dcrnn_backbone)
+                    self.qf_twin = _build_mlp(
+                        self.shared_dcrnn_backbone.output_dim,
+                        critic_head_hidden_dims,
+                        critic_head_activation,
+                        int(self.action_space.n),
+                    )
+            elif self._actor_encoder_type == "dcrnn":
                 head_config = dict(self._actor_config.get("head", {}) or {})
                 head_hidden_dims = _int_list(head_config.get("hidden_dims"), field_name="actor.head.hidden_dims")
                 head_activation = str(head_config.get("activation", "relu") or "relu")
@@ -412,7 +530,7 @@ def build_custom_sac_module_class():
             return latent
 
         def _actor_logits(self, batch):
-            if self._actor_encoder_type == "dcrnn":
+            if self._encoder_layout == "shared" or self._actor_encoder_type == "dcrnn":
                 actor_latent = self.actor_dcrnn_backbone(batch[Columns.OBS])
                 actor_latent = self._apply_actor_communication(actor_latent)
                 return self.actor_dcrnn_head(actor_latent)
@@ -467,30 +585,60 @@ def build_custom_sac_module_class():
                 qf_out = qf_out.squeeze(-1)
             return qf_out
 
+        def _uses_dcrnn_critic_targets(self) -> bool:
+            return self._encoder_layout == "shared" or self._critic_encoder_type == "dcrnn"
+
+        def make_target_networks(self) -> None:
+            if not self._uses_dcrnn_critic_targets():
+                super().make_target_networks()
+                return
+
+            # Keep explicit target encoder ownership for each critic branch so
+            # critic encoders follow SAC target-sync behavior rather than
+            # gradient updates.
+            self.target_qf_encoder = deepcopy(self.qf_encoder)
+            self.target_qf = deepcopy(self.qf)
+            if self.twin_q:
+                self.target_qf_twin_encoder = deepcopy(self.qf_twin_encoder)
+                self.target_qf_twin = deepcopy(self.qf_twin)
+
+        def get_target_network_pairs(self):
+            if not self._uses_dcrnn_critic_targets():
+                return super().get_target_network_pairs()
+
+            pairs = [(self.qf_encoder, self.target_qf_encoder), (self.qf, self.target_qf)]
+            if self.twin_q:
+                pairs.extend(
+                    [
+                        (self.qf_twin_encoder, self.target_qf_twin_encoder),
+                        (self.qf_twin, self.target_qf_twin),
+                    ]
+                )
+            return pairs
+
         def get_non_inference_attributes(self):
             try:
                 non_inference_attributes = list(super().get_non_inference_attributes())
             except AttributeError:
                 non_inference_attributes = []
+
+            # Keep actor-side DCRNN modules/config on inference-only copies
+            # because validation and manual evaluation act through
+            # forward_inference(). Only critic/target components are safe to
+            # strip from inference-only modules.
             for attr in (
-                "_architecture_tag",
-                "_actor_config",
                 "_critic_config",
-                "_communication_config",
-                "_communication_enabled",
-                "_communication_type",
-                "_communication_apply_to",
-                "_actor_encoder_type",
                 "_critic_encoder_type",
-                "actor_communication",
                 "critic_communication",
-                "actor_dcrnn_backbone",
-                "actor_dcrnn_head",
                 "qf_dcrnn_backbone",
                 "qf_twin_dcrnn_backbone",
             ):
                 if attr not in non_inference_attributes:
                     non_inference_attributes.append(attr)
+            if self._uses_dcrnn_critic_targets():
+                for attr in ("target_qf_encoder", "target_qf", "target_qf_twin_encoder", "target_qf_twin"):
+                    if attr not in non_inference_attributes:
+                        non_inference_attributes.append(attr)
             return non_inference_attributes
 
     CustomSACTorchRLModule.__name__ = "CustomSACTorchRLModule"

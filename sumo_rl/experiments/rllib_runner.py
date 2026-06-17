@@ -4,6 +4,7 @@ from collections import deque
 import colorsys
 from dataclasses import dataclass
 import importlib
+import inspect
 import json
 import os
 import shutil
@@ -61,6 +62,8 @@ from sumo_rl.agents.rllib_common import (
     scenario_factory_name,
     validation_interval_episodes,
 )
+from sumo_rl.util.tripinfo import collect_tripinfo_metrics
+
 SUPPORTED_RLLIB_ALGORITHMS = {
     "ppo",
     "ppo_dcrnn_mlp",
@@ -111,6 +114,47 @@ class ValidationSeedArtifacts:
     action_space_sizes: Dict[str, int]
     phase_queue_traces: Dict[str, list[Dict[str, Any]]]
     tripinfo: TripinfoDistributionArtifact
+
+
+def _training_uses_libsumo(cfg: DictConfig) -> bool:
+    env_cfg = getattr(cfg, "env", None)
+    kwargs = _plain_dict(getattr(env_cfg, "kwargs", {}) or {})
+    return bool(kwargs.get("use_libsumo", False))
+
+
+def _manual_eval_uses_libsumo(cfg: DictConfig) -> bool:
+    logging_cfg = getattr(cfg, "logging", None)
+    return bool(getattr(logging_cfg, "eval_use_libsumo", False))
+
+
+def _rllib_native_evaluation_enabled(cfg: DictConfig) -> bool:
+    params = _plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
+    value = params.get("evaluation_interval")
+    return value not in (None, 0, "0", False)
+
+
+def _validate_manual_evaluation_backend_config(cfg: DictConfig) -> None:
+    if _training_uses_libsumo(cfg) and not _manual_eval_uses_libsumo(cfg) and _rllib_native_evaluation_enabled(cfg):
+        raise ValueError(
+            "RLlib native evaluation conflicts with manual TraCI-only evaluation when training uses Libsumo. "
+            "Set algorithm.params.evaluation_interval=0 or disable training Libsumo for this run."
+        )
+
+
+def _validation_log_action_shares(logging_cfg: Any) -> bool:
+    return bool(getattr(logging_cfg, "validation_log_action_shares", True))
+
+
+def _validation_log_action_timelines(logging_cfg: Any) -> bool:
+    return bool(getattr(logging_cfg, "validation_log_action_timelines", True))
+
+
+def _validation_log_phase_queues(logging_cfg: Any) -> bool:
+    return bool(getattr(logging_cfg, "validation_log_phase_queues", True))
+
+
+def _validation_log_tripinfo_distributions(logging_cfg: Any) -> bool:
+    return bool(getattr(logging_cfg, "validation_log_tripinfo_distributions", True))
 
 
 def _eval_seeds(cfg: DictConfig) -> list[int]:
@@ -270,6 +314,10 @@ def _compute_single_action(algo, obs, *, policy_id: Optional[str] = None):
 def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind: str, policy_mode: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
     module = _algorithm_module(algorithm_kind)
+    # Manual validation chooses its backend independently from training. SAC
+    # runs that train with Libsumo should keep logging.eval_use_libsumo=false
+    # so evaluation here uses TraCI-only env construction.
+    use_libsumo = _manual_eval_uses_libsumo(cfg)
     if algorithm_kind in {
         "dqn_dcrnn",
         "dqn_dcrnn_mlp",
@@ -280,15 +328,22 @@ def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind
         "sac_dcrnn_full_mlp",
         "sac_dcrnn_shared_mlp",
     }:
-        return module.build_graph_eval_env(cfg, run_dir, seed=seed)
+        return module.build_graph_eval_env(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
     build_eval_env = getattr(module, "build_eval_env", None)
     if callable(build_eval_env):
+        try:
+            signature = inspect.signature(build_eval_env)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None and "use_libsumo" in signature.parameters:
+            return build_eval_env(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
         return build_eval_env(cfg, run_dir, seed=seed)
     return build_rllib_parallel_env(
         cfg,
         run_dir,
         seed=seed,
         pad_spaces=(policy_mode == "shared"),
+        use_libsumo=use_libsumo,
     )
 
 
@@ -393,41 +448,19 @@ def _validation_tripinfo_output_path(env: Any) -> Optional[Path]:
 
 
 def _parse_tripinfo_distribution_file(tripinfo_path: Path) -> TripinfoDistributionArtifact:
-    wait_values: list[float] = []
-    delay_values: list[float] = []
-    finished_count = 0
-    unfinished_count = 0
     if not tripinfo_path.exists():
         return TripinfoDistributionArtifact(wait_values=[], delay_values=[], finished_count=0, unfinished_count=0, total_count=0)
     try:
         tree = ET.parse(tripinfo_path)
     except (ET.ParseError, OSError):
         return TripinfoDistributionArtifact(wait_values=[], delay_values=[], finished_count=0, unfinished_count=0, total_count=0)
-
-    def _is_truthy_xml_value(value: Optional[str]) -> bool:
-        return str(value).strip().lower() in {"1", "true", "yes"}
-
-    for vehicle in tree.getroot().findall(".//tripinfo"):
-        vehicle_id = str(vehicle.attrib.get("id", "") or "")
-        if vehicle_id.startswith("ghost"):
-            continue
-        is_unfinished = _is_truthy_xml_value(vehicle.attrib.get("vaporized")) or _is_truthy_xml_value(
-            vehicle.attrib.get("unfinished")
-        )
-        if is_unfinished:
-            unfinished_count += 1
-            continue
-        finished_count += 1
-        time_loss = float(vehicle.attrib.get("timeLoss", 0.0))
-        depart_delay = float(vehicle.attrib.get("departDelay", 0.0))
-        delay_values.append(time_loss + depart_delay)
-        wait_values.append(float(vehicle.attrib.get("waitingTime", 0.0)))
+    tripinfo_metrics = collect_tripinfo_metrics(tree.getroot().findall(".//tripinfo"))
     return TripinfoDistributionArtifact(
-        wait_values=wait_values,
-        delay_values=delay_values,
-        finished_count=finished_count,
-        unfinished_count=unfinished_count,
-        total_count=finished_count + unfinished_count,
+        wait_values=list(tripinfo_metrics.wait_values),
+        delay_values=list(tripinfo_metrics.delay_values),
+        finished_count=int(tripinfo_metrics.finished_count),
+        unfinished_count=int(tripinfo_metrics.unfinished_count),
+        total_count=int(tripinfo_metrics.total_count),
     )
 
 
@@ -1270,6 +1303,7 @@ def _log_validation_action_plot_images(
     env_step: int,
     episode_index: int,
     decision_seconds: int,
+    logging_cfg: Any,
 ) -> None:
     if wandb_run is None or (not plot_rows_by_agent and not timeline_actions_by_agent and not phase_queue_rows_by_agent):
         return
@@ -1290,14 +1324,12 @@ def _log_validation_action_plot_images(
             "validation/pass_index": float(pass_index),
             "validation/env_step": float(env_step),
         }
-        if not rows:
-            pass
-        else:
+        if rows and _validation_log_action_shares(logging_cfg):
             payload[f"validation/actions_share/{agent_id}"] = wandb.Image(
                 _render_validation_action_plot_image(agent_id, rows),
                 caption=f"validation pass {pass_index} at env step {env_step}",
             )
-        if timeline_actions:
+        if timeline_actions and _validation_log_action_timelines(logging_cfg):
             payload[f"validation/actions_timeline/{agent_id}"] = wandb.Image(
                 _render_validation_action_timeline_image(
                     agent_id,
@@ -1307,7 +1339,7 @@ def _log_validation_action_plot_images(
                 ),
                 caption=f"validation pass {pass_index} at env step {env_step}",
             )
-        if phase_queue_rows:
+        if phase_queue_rows and _validation_log_phase_queues(logging_cfg):
             payload[f"validation/phase_queue/{agent_id}"] = wandb.Image(
                 _render_validation_phase_queue_image(
                     agent_id,
@@ -1327,8 +1359,9 @@ def _log_validation_tripinfo_distribution_images(
     pass_index: int,
     env_step: int,
     episode_index: int,
+    logging_cfg: Any,
 ) -> None:
-    if wandb_run is None:
+    if wandb_run is None or not _validation_log_tripinfo_distributions(logging_cfg):
         return
     wait_series = list(tripinfo_distributions.get("waiting_time", []))
     delay_series = list(tripinfo_distributions.get("delay", []))
@@ -1882,6 +1915,24 @@ def _is_existing_ray_address(address: Optional[str]) -> bool:
     return str(address).strip().lower() not in {"", "local", "none", "null"}
 
 
+def _clear_ray_auto_discovery_state(ray_module: Any) -> None:
+    os.environ.pop("RAY_ADDRESS", None)
+    ray_utils = getattr(getattr(ray_module, "_private", None), "utils", None)
+    get_ray_address_file = getattr(ray_utils, "get_ray_address_file", None)
+    if not callable(get_ray_address_file):
+        return
+    try:
+        address_file = get_ray_address_file(None)
+    except Exception:
+        return
+    if not address_file:
+        return
+    try:
+        Path(address_file).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _format_ray_resource_value(resources: Dict[str, Any], key: str) -> str:
     value = resources.get(key, 0.0)
     try:
@@ -1946,6 +1997,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     run_dir = _get_run_dir()
     run_dir.mkdir(parents=True, exist_ok=True)
     logging_cfg = cfg.logging
+    _validate_manual_evaluation_backend_config(cfg)
     run_name = _rllib_run_name(cfg, algorithm_kind)
     wandb_run = _init_wandb(cfg, run_dir, run_name=run_name, include_final_metrics=False)
     csv_run = _LocalMetricsCsvLogger(run_dir / "csv" / f"{cfg.experiment.name}.csv")
@@ -1967,24 +2019,32 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     ray_num_gpus = _resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto")))
     runtime_env_vars = dict(cpu_thread_env)
     runtime_env_vars.update(cuda_env)
+    local_ray_startup = not _is_existing_ray_address(ray_address)
+    if local_ray_startup:
+        _clear_ray_auto_discovery_state(ray)
     ray_init_kwargs: Dict[str, Any] = {
         "ignore_reinit_error": True,
         "log_to_driver": False,
     }
-    ray_init_kwargs["address"] = ray_address if ray_address is not None else "local"
-    if not _is_existing_ray_address(ray_address):
+    if local_ray_startup:
+        ray_init_kwargs["address"] = "local"
+    elif ray_address is not None:
+        ray_init_kwargs["address"] = ray_address
+    if local_ray_startup:
         ray_init_kwargs["include_dashboard"] = False
         ray_init_kwargs["num_gpus"] = ray_num_gpus
         if ray_num_cpus is not None:
             ray_init_kwargs["num_cpus"] = ray_num_cpus
     if runtime_env_vars:
         ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
-    connected_to_existing_cluster = _is_existing_ray_address(ray_address)
+    connected_to_existing_cluster = not local_ray_startup
     try:
         ray.init(**ray_init_kwargs)
     except ConnectionError:
         if not _is_auto_ray_address(ray_address):
             raise
+        ray.shutdown()
+        _clear_ray_auto_discovery_state(ray)
         fallback_ray_init_kwargs: Dict[str, Any] = {
             "address": "local",
             "ignore_reinit_error": True,
@@ -2080,6 +2140,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 env_step=step,
                 episode_index=episode_index,
                 decision_seconds=decision_interval_seconds(cfg),
+                logging_cfg=logging_cfg,
             )
             _log_validation_tripinfo_distribution_images(
                 wandb_run,
@@ -2087,6 +2148,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
                 pass_index=pass_index,
                 env_step=step,
                 episode_index=episode_index,
+                logging_cfg=logging_cfg,
             )
             _consider_best_validation_checkpoint(
                 best_validation_state,

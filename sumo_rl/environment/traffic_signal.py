@@ -13,9 +13,7 @@ else:
 import numpy as np
 from gymnasium import spaces
 
-
-def _is_ghost_vehicle(vehicle_id: str) -> bool:
-    return isinstance(vehicle_id, str) and vehicle_id.startswith("ghost")
+from ..util.tripinfo import is_ghost_vehicle as _is_ghost_vehicle
 
 
 class TrafficSignal:
@@ -48,6 +46,7 @@ class TrafficSignal:
 
     # Default min gap of SUMO (see https://sumo.dlr.de/docs/Simulation/Safety.html). Should this be parameterized?
     MIN_GAP = 2.5
+    NASH_AVERAGE_SPEED_EPSILON = 0.1
 
     def __init__(
         self,
@@ -98,6 +97,8 @@ class TrafficSignal:
         self.reward_penalty_lambda = float(reward_penalty_lambda)
         self.sumo = sumo
         self._last_fixed_cycle_phase_index = None
+        self._phase_stats_cache_step = None
+        self._phase_stats_cache = None
 
         if type(self.reward_fn) is list:
             self.reward_dim = len(self.reward_fn)
@@ -282,6 +283,33 @@ class TrafficSignal:
     def _average_speed_reward(self):
         return self.get_average_speed()
 
+    def _nash_average_speed_reward(self):
+        phase_average_speeds = self.get_phase_average_speeds()
+        if not phase_average_speeds:
+            return self.get_average_speed() + self.NASH_AVERAGE_SPEED_EPSILON
+
+        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + self.NASH_AVERAGE_SPEED_EPSILON
+        return float(np.exp(np.mean(np.log(phase_utilities))))
+
+    def _weighted_nash_average_speed_reward(self):
+        phase_average_speeds = self.get_phase_average_speeds()
+        if not phase_average_speeds:
+            return self.get_average_speed() + self.NASH_AVERAGE_SPEED_EPSILON
+
+        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + self.NASH_AVERAGE_SPEED_EPSILON
+        phase_max_waiting_times = np.asarray(self.get_phase_max_waiting_times(), dtype=np.float64)
+
+        if phase_max_waiting_times.size != phase_utilities.size:
+            phase_max_waiting_times = np.zeros_like(phase_utilities)
+
+        total_max_waiting_time = float(np.sum(phase_max_waiting_times))
+        if total_max_waiting_time > 0.0:
+            phase_weights = phase_max_waiting_times / total_max_waiting_time
+        else:
+            phase_weights = np.full_like(phase_utilities, 1.0 / float(phase_utilities.size))
+
+        return float(np.exp(np.sum(phase_weights * np.log(phase_utilities))))
+
     def _queue_reward(self):
         return -self.get_total_queued()
 
@@ -448,9 +476,67 @@ class TrafficSignal:
             for phase_lanes in self.phase_lanes
         ]
 
+    def get_phase_average_speeds(self) -> List[float]:
+        """Returns mean normalized speed ratios for the vehicles served by each green phase."""
+        return [stats["average_speed"] for stats in self._get_phase_speed_wait_stats()]
+
+    def get_phase_max_waiting_times(self) -> List[float]:
+        """Returns the max current waiting time among the vehicles served by each green phase."""
+        return [stats["max_waiting_time"] for stats in self._get_phase_speed_wait_stats()]
+
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""
         return sum(self.sumo.vehicle.getCO2Emission(veh) for veh in self._get_veh_list())
+
+    def _get_unique_phase_vehicle_ids(self, phase_lanes: List[str]) -> List[str]:
+        seen = set()
+        phase_vehicles = []
+        for lane in phase_lanes:
+            for veh in self.sumo.lane.getLastStepVehicleIDs(lane):
+                if _is_ghost_vehicle(veh) or veh in seen:
+                    continue
+                seen.add(veh)
+                phase_vehicles.append(veh)
+        return phase_vehicles
+
+    def _get_phase_speed_wait_stats(self) -> List[dict]:
+        cache_step = self._get_phase_stats_cache_step()
+        cached_stats = getattr(self, "_phase_stats_cache", None)
+        cached_step = getattr(self, "_phase_stats_cache_step", None)
+        if cached_stats is not None and cache_step is not None and cached_step == cache_step:
+            return cached_stats
+
+        phase_stats = []
+        for phase_lanes in self.phase_lanes:
+            phase_vehicles = self._get_unique_phase_vehicle_ids(phase_lanes)
+            if not phase_vehicles:
+                phase_stats.append({"average_speed": 1.0, "max_waiting_time": 0.0})
+                continue
+
+            normalized_speeds = []
+            max_waiting_time = 0.0
+            for veh in phase_vehicles:
+                allowed_speed = self.sumo.vehicle.getAllowedSpeed(veh)
+                normalized_speeds.append(0.0 if allowed_speed <= 0.0 else self.sumo.vehicle.getSpeed(veh) / allowed_speed)
+                max_waiting_time = max(max_waiting_time, float(self.sumo.vehicle.getWaitingTime(veh)))
+            phase_stats.append(
+                {
+                    "average_speed": float(np.mean(normalized_speeds)),
+                    "max_waiting_time": max_waiting_time,
+                }
+            )
+
+        if cache_step is not None:
+            self._phase_stats_cache_step = cache_step
+            self._phase_stats_cache = phase_stats
+        else:
+            self._phase_stats_cache_step = None
+            self._phase_stats_cache = None
+        return phase_stats
+
+    def _get_phase_stats_cache_step(self):
+        env = getattr(self, "env", None)
+        return getattr(env, "sim_step", None)
 
     def _get_veh_list(self):
         veh_list = []
@@ -474,6 +560,8 @@ class TrafficSignal:
         "diff-waiting-time": _diff_waiting_time_reward,
         "diff-waiting-time-with-unchosen-phase-penalty": _diff_waiting_time_with_unchosen_phase_penalty_reward,
         "average-speed": _average_speed_reward,
+        "nash-average-speed": _nash_average_speed_reward,
+        "weighted-nash-average-speed": _weighted_nash_average_speed_reward,
         "queue": _queue_reward,
         "normalized-queue": _normalized_queue_reward,
         "pressure": _pressure_reward,
