@@ -66,6 +66,7 @@ from sumo_rl.util.tripinfo import collect_tripinfo_metrics
 SUPPORTED_RLLIB_ALGORITHMS = {
     "ppo",
     "ppo_dcrnn_mlp",
+    "ppo_dcrnn_shared_mlp",
     "dqn",
     "frap",
     "colight",
@@ -181,7 +182,7 @@ def _rllib_run_name(cfg: DictConfig, algorithm_kind: str) -> str:
 
 def _algorithm_module(algorithm_kind: str):
     algorithm_kind = normalize_algorithm_kind(algorithm_kind)
-    if algorithm_kind in {"ppo", "ppo_dcrnn_mlp"}:
+    if algorithm_kind in {"ppo", "ppo_dcrnn_mlp", "ppo_dcrnn_shared_mlp"}:
         return importlib.import_module("sumo_rl.agents.ppo.ppo")
     if algorithm_kind == "dqn":
         return importlib.import_module("sumo_rl.agents.dqn.dqn")
@@ -213,6 +214,7 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
     module = _algorithm_module(algorithm_kind)
     if algorithm_kind in {
         "ppo_dcrnn_mlp",
+        "ppo_dcrnn_shared_mlp",
         "dqn_dcrnn_mlp",
         "sac_builtin",
         "sac_mlp",
@@ -231,6 +233,7 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
     module = _algorithm_module(algorithm_kind)
     if algorithm_kind in {
         "ppo_dcrnn_mlp",
+        "ppo_dcrnn_shared_mlp",
         "dqn_dcrnn_mlp",
         "sac_builtin",
         "sac_mlp",
@@ -349,6 +352,7 @@ def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind
         "dqn_dcrnn",
         "dqn_dcrnn_mlp",
         "ppo_dcrnn_mlp",
+        "ppo_dcrnn_shared_mlp",
         "sac_dcrnn_actor",
         "sac_dcrnn_actor_mlp",
         "sac_dcrnn_full",

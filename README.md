@@ -214,6 +214,7 @@ python experiments/static_max_pressure.py -m scenario=resco_cologne1,resco_colog
 ```bash
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=ppo_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=ppo_dcrnn_shared_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
@@ -275,6 +276,12 @@ This graph PPO variant keeps decentralized policies with centralized graph
 observations and does not add a separate GAT layer.
 The PPO+DCRNN config now uses `sgd_minibatch_size=64` to reduce learner
 activation memory without changing the backbone or rollout horizon.
+
+`ppo_dcrnn_shared_mlp` keeps the same graph-history wrapper and independent
+per-agent policy IDs, but lifts the DCRNN+MLP encoder into one shared
+multi-module backbone. Each traffic signal still keeps its own PPO actor and
+value heads, and one optimizer updates the shared encoder plus all heads
+together.
 
 FRAP is implemented as a DQN-family RLlib module with the phase-competition
 Q-network from Zheng et al. and the LibSignal FRAP implementation. By default it

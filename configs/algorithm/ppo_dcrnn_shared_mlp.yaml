@@ -1,0 +1,33 @@
+# @package _global_
+env:
+  kwargs:
+    use_libsumo: true
+
+algorithm:
+  kind: ppo_dcrnn_shared_mlp
+  params:
+    policy_mode: independent
+    lr: 0.0005
+    gamma: 0.99
+    lambda_: 0.95
+    clip_param: 0.2
+    entropy_coeff: 0.0
+    train_batch_size_per_learner: 4000
+    sgd_minibatch_size: 64
+    num_sgd_iter: 10
+    history_len: 5
+    include_virtual_nodes: true
+    add_self_loops: true
+    model_config:
+      architecture_tag: ppo_dcrnn_shared_mlp
+      feature_layout: phase_min_green_density_queue
+      hid_dim: 128
+      max_diffusion_step: 2
+      num_rnn_layers: 1
+      filter_type: dual_random_walk
+      policy_hidden_dim: 128
+      value_hidden_dim: 128
+      pre_encoder:
+        enabled: true
+        hidden_dim: 128
+        activation: relu

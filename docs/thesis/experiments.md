@@ -55,6 +55,7 @@ Other common entrypoints:
 python experiments/static_max_pressure.py scenario=resco_cologne1
 python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4
 python experiments/rllib.py algorithm=ppo_dcrnn_mlp scenario=resco_grid4x4 experiment.episodes=1
+python experiments/rllib.py algorithm=ppo_dcrnn_shared_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=dqn scenario=resco_cologne1
 python experiments/rllib.py algorithm=frap scenario=resco_grid4x4
 python experiments/rllib.py algorithm=dqn_dcrnn scenario=resco_grid4x4 experiment.episodes=1
@@ -86,6 +87,12 @@ or explicit post-DCRNN communication block in this PPO path.
 For memory, the PPO+DCRNN config now uses `sgd_minibatch_size=64` so the
 learner holds smaller graph minibatches on GPU without changing the DCRNN
 architecture itself.
+
+`algorithm=ppo_dcrnn_shared_mlp` keeps the same graph-history observation path
+and independent policy mapping, but shares one DCRNN+MLP encoder across the PPO
+modules for all traffic signals. Each policy still owns its own actor and value
+heads, and the learner updates the shared encoder and all heads through one
+optimizer.
 
 FRAP is available as `algorithm=frap`. It is a DQN-family RLlib method whose
 custom RLModule replaces the Q-network with the paper's phase-competition

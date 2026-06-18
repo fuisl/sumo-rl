@@ -223,7 +223,7 @@ class DCRNNBackbone(nn.Module):
         input_dim: int,
         adjacency: np.ndarray,
         num_nodes: int,
-        agent_index: int,
+        agent_index: int | None,
         hidden_dim: int = 128,
         max_diffusion_step: int = 2,
         num_rnn_layers: int = 1,
@@ -236,7 +236,7 @@ class DCRNNBackbone(nn.Module):
         self.input_dim = int(input_dim)
         self.hidden_dim = int(hidden_dim)
         self.num_nodes = int(num_nodes)
-        self.agent_index = int(agent_index)
+        self.agent_index = int(agent_index) if agent_index is not None else None
         self.pre_encoder_enabled = bool(pre_encoder_enabled)
         self.pre_encoder_input_dim = self.input_dim
         self.pre_encoder_output_dim = int(pre_encoder_hidden_dim or self.hidden_dim) if self.pre_encoder_enabled else self.input_dim
@@ -268,6 +268,33 @@ class DCRNNBackbone(nn.Module):
         encoded = self.pre_encoder(obs.reshape(batch_size * history_len * num_nodes, self.input_dim))
         return encoded.reshape(batch_size, history_len, num_nodes, self.pre_encoder_output_dim)
 
+    def encode_graph(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        obs = obs.float()
+        if obs.ndim != 4:
+            raise ValueError(f"DCRNN expects observations with shape [B, H, N, F], got {tuple(obs.shape)}.")
+        encoded_obs = self._encode_observations(obs)
+        encoded = self.encoder(encoded_obs.transpose(0, 1))
+        latest_features = encoded_obs[:, -1]
+        return encoded, latest_features
+
+    def select_agent_latent(
+        self,
+        encoded: torch.Tensor,
+        latest_features: torch.Tensor,
+        *,
+        agent_index: int | None = None,
+    ) -> torch.Tensor:
+        resolved_agent_index = self.agent_index if agent_index is None else int(agent_index)
+        if resolved_agent_index is None:
+            raise ValueError("DCRNNBackbone requires an agent_index when selecting an agent latent.")
+        agent_hidden = encoded[:, resolved_agent_index, :]
+        agent_features = latest_features[:, resolved_agent_index, :]
+        return torch.cat([agent_hidden, agent_features], dim=-1)
+
+    def forward_for_agent(self, obs: torch.Tensor, *, agent_index: int) -> torch.Tensor:
+        encoded, latest_features = self.encode_graph(obs)
+        return self.select_agent_latent(encoded, latest_features, agent_index=agent_index)
+
     @staticmethod
     def _resolve_pre_encoder_kwargs(
         config: dict[str, Any],
@@ -294,6 +321,28 @@ class DCRNNBackbone(nn.Module):
             adjacency=adjacency,
             num_nodes=int(model_config.get("num_nodes", num_nodes)),
             agent_index=int(model_config["agent_index"]),
+            hidden_dim=hidden_dim,
+            max_diffusion_step=int(model_config.get("max_diffusion_step", 2)),
+            num_rnn_layers=int(model_config.get("num_rnn_layers", 1)),
+            filter_type=str(model_config.get("filter_type", "dual_random_walk")),
+            **cls._resolve_pre_encoder_kwargs(model_config, hidden_dim=hidden_dim),
+        )
+
+    @classmethod
+    def from_shared_ppo_model_config(
+        cls,
+        observation_space: Any,
+        model_config: dict[str, Any],
+    ) -> "DCRNNBackbone":
+        history_len, num_nodes, input_dim = observation_space.shape
+        del history_len
+        adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
+        hidden_dim = int(model_config.get("hid_dim", model_config.get("hidden_dim", 128)))
+        return cls(
+            input_dim=int(model_config.get("input_dim", input_dim)),
+            adjacency=adjacency,
+            num_nodes=int(model_config.get("num_nodes", num_nodes)),
+            agent_index=None,
             hidden_dim=hidden_dim,
             max_diffusion_step=int(model_config.get("max_diffusion_step", 2)),
             num_rnn_layers=int(model_config.get("num_rnn_layers", 1)),
@@ -365,15 +414,8 @@ class DCRNNBackbone(nn.Module):
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        obs = obs.float()
-        if obs.ndim != 4:
-            raise ValueError(f"DCRNN expects observations with shape [B, H, N, F], got {tuple(obs.shape)}.")
-        encoded_obs = self._encode_observations(obs)
-        encoded = self.encoder(encoded_obs.transpose(0, 1))
-        latest_features = encoded_obs[:, -1]
-        agent_hidden = encoded[:, self.agent_index, :]
-        agent_features = latest_features[:, self.agent_index, :]
-        return torch.cat([agent_hidden, agent_features], dim=-1)
+        encoded, latest_features = self.encode_graph(obs)
+        return self.select_agent_latent(encoded, latest_features)
 
 
 class DCRNNQNetwork(nn.Module):

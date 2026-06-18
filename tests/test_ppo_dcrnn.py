@@ -70,17 +70,13 @@ def test_rllib_runner_supports_ppo_dcrnn_mlp_algorithm_kind():
     from sumo_rl.experiments import rllib_runner
 
     assert "ppo_dcrnn_mlp" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
+    assert "ppo_dcrnn_shared_mlp" in rllib_runner.SUPPORTED_RLLIB_ALGORITHMS
 
 
-def test_ppo_dcrnn_mlp_build_config_registers_graph_rl_modules(monkeypatch, tmp_path):
-    pytest.importorskip("torch")
-    pytest.importorskip("ray")
-    from sumo_rl.agents.ppo import ppo
-
-    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyGraphParallelEnv(**kwargs))
-    cfg = SimpleNamespace(
+def _ppo_graph_cfg(algorithm_kind: str):
+    return SimpleNamespace(
         scenario=SimpleNamespace(name="resco_grid4x4"),
-        experiment=SimpleNamespace(name="ppo_dcrnn_mlp_test", seed=7, episode_seconds=60),
+        experiment=SimpleNamespace(name=f"{algorithm_kind}_test", seed=7, episode_seconds=60),
         env=SimpleNamespace(factory="parallel_env", kwargs={}),
         algorithm=SimpleNamespace(
             params={
@@ -97,6 +93,15 @@ def test_ppo_dcrnn_mlp_build_config_registers_graph_rl_modules(monkeypatch, tmp_
         ),
     )
 
+
+def test_ppo_dcrnn_mlp_build_config_registers_graph_rl_modules(monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from sumo_rl.agents.ppo import ppo
+
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyGraphParallelEnv(**kwargs))
+    cfg = _ppo_graph_cfg("ppo_dcrnn_mlp")
+
     config = ppo.build_config(cfg, tmp_path, algorithm_kind="ppo_dcrnn_mlp")
     multi_spec = config.get_multi_rl_module_spec(env=None, spaces=None, inference_only=False)
 
@@ -105,6 +110,24 @@ def test_ppo_dcrnn_mlp_build_config_registers_graph_rl_modules(monkeypatch, tmp_
     assert spec.model_config["architecture_tag"] == "ppo_dcrnn_mlp"
     assert spec.model_config["feature_layout"] == "phase_min_green_density_queue"
     assert spec.model_config["pre_encoder"]["enabled"] is True
+
+
+def test_ppo_dcrnn_shared_mlp_build_config_registers_custom_multi_module_and_learner(monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from sumo_rl.agents.ppo import ppo
+    from sumo_rl.agents.ppo.learner import PPOSharedEncoderTorchLearner
+
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyGraphParallelEnv(**kwargs))
+    cfg = _ppo_graph_cfg("ppo_dcrnn_shared_mlp")
+
+    config = ppo.build_config(cfg, tmp_path, algorithm_kind="ppo_dcrnn_shared_mlp")
+    multi_spec = config.get_multi_rl_module_spec(env=None, spaces=None, inference_only=False)
+
+    assert config.learner_class is PPOSharedEncoderTorchLearner
+    assert multi_spec.multi_rl_module_class.__name__ == "PPODCRNNSharedMultiRLModule"
+    assert set(multi_spec.rl_module_specs.keys()) == {"tls_0", "tls_1"}
+    assert multi_spec.rl_module_specs["tls_0"].model_config["architecture_tag"] == "ppo_dcrnn_shared_mlp"
 
 
 def test_ppo_dcrnn_mlp_shared_backbone_receives_policy_and_value_gradients():
@@ -170,10 +193,159 @@ def test_ppo_dcrnn_mlp_compute_values_reuses_train_embeddings():
         del obs
         raise AssertionError("compute_values should reuse train embeddings instead of recomputing the backbone")
 
-    module.backbone = _fail_on_backbone
+    object.__setattr__(module, "backbone", _fail_on_backbone)
     try:
         values = module.compute_values(batch, embeddings=outputs[Columns.EMBEDDINGS])
     finally:
-        module.backbone = original_backbone
+        object.__setattr__(module, "backbone", original_backbone)
 
     assert values.shape == (3,)
+
+
+def test_ppo_dcrnn_shared_mlp_parent_owns_shared_backbone_and_children_keep_separate_heads():
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from sumo_rl.agents.ppo.rllib_module import build_ppo_dcrnn_shared_module_spec, build_ppo_dcrnn_shared_multi_module_spec
+
+    obs_space = Box(low=0.0, high=1.0, shape=(5, 4, 8), dtype=np.float32)
+    shared_config = {
+        "architecture_tag": "ppo_dcrnn_shared_mlp",
+        "num_nodes": 4,
+        "input_dim": 8,
+        "adjacency": np.eye(4, dtype=np.float32).tolist(),
+        "hid_dim": 16,
+        "pre_encoder": {"enabled": True, "hidden_dim": 16, "activation": "relu"},
+    }
+    multi_spec = build_ppo_dcrnn_shared_multi_module_spec(
+        {
+            "tls_0": build_ppo_dcrnn_shared_module_spec(
+                obs_space,
+                Discrete(2),
+                model_config={**shared_config, "agent_index": 0},
+            ),
+            "tls_1": build_ppo_dcrnn_shared_module_spec(
+                obs_space,
+                Discrete(3),
+                model_config={**shared_config, "agent_index": 1},
+            ),
+        },
+        model_config=shared_config,
+    )
+    module = multi_spec.build()
+    module_0 = module["tls_0"]
+    module_1 = module["tls_1"]
+
+    assert module_0._require_shared_backbone() is module.shared_backbone
+    assert module_1._require_shared_backbone() is module.shared_backbone
+    assert module_0.policy_head[-1].out_features == 2
+    assert module_1.policy_head[-1].out_features == 3
+
+    shared_param_ids = {id(param) for param in module.shared_backbone.parameters()}
+    child_0_param_ids = {id(param) for param in module_0.parameters()}
+    child_1_param_ids = {id(param) for param in module_1.parameters()}
+
+    assert shared_param_ids.isdisjoint(child_0_param_ids)
+    assert shared_param_ids.isdisjoint(child_1_param_ids)
+
+    batch_0 = {"obs": torch.zeros(2, 5, 4, 8)}
+    batch_1 = {"obs": torch.ones(2, 5, 4, 8)}
+    outputs_0 = module_0.forward_train(batch_0)
+    outputs_1 = module_1.forward_train(batch_1)
+    loss = (
+        outputs_0["action_dist_inputs"].sum()
+        + outputs_0["vf_preds"].sum()
+        + outputs_1["action_dist_inputs"].sum()
+        + outputs_1["vf_preds"].sum()
+    )
+    loss.backward()
+
+    shared_grads = [param.grad for param in module.shared_backbone.parameters() if param.requires_grad]
+    assert shared_grads
+    assert all(grad is not None for grad in shared_grads)
+
+
+def test_ppo_dcrnn_shared_mlp_state_round_trip_restores_shared_backbone_and_heads():
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from sumo_rl.agents.ppo.rllib_module import build_ppo_dcrnn_shared_module_spec, build_ppo_dcrnn_shared_multi_module_spec
+
+    obs_space = Box(low=0.0, high=1.0, shape=(5, 4, 8), dtype=np.float32)
+    shared_config = {
+        "architecture_tag": "ppo_dcrnn_shared_mlp",
+        "num_nodes": 4,
+        "input_dim": 8,
+        "adjacency": np.eye(4, dtype=np.float32).tolist(),
+        "hid_dim": 16,
+        "pre_encoder": {"enabled": True, "hidden_dim": 16, "activation": "relu"},
+    }
+    module_specs = {
+        "tls_0": build_ppo_dcrnn_shared_module_spec(
+            obs_space,
+            Discrete(2),
+            model_config={**shared_config, "agent_index": 0},
+        ),
+        "tls_1": build_ppo_dcrnn_shared_module_spec(
+            obs_space,
+            Discrete(3),
+            model_config={**shared_config, "agent_index": 1},
+        ),
+    }
+    multi_spec = build_ppo_dcrnn_shared_multi_module_spec(module_specs, model_config=shared_config)
+    source_module = multi_spec.build()
+    with torch.no_grad():
+        for index, param in enumerate(source_module.shared_backbone.parameters()):
+            param.fill_(index + 1)
+        for index, param in enumerate(source_module["tls_0"].policy_head.parameters()):
+            param.fill_(index + 11)
+        for index, param in enumerate(source_module["tls_1"].value_head.parameters()):
+            param.fill_(index + 21)
+
+    restored_module = multi_spec.build()
+    restored_module.set_state(source_module.get_state())
+
+    for source_param, restored_param in zip(
+        source_module.shared_backbone.parameters(),
+        restored_module.shared_backbone.parameters(),
+    ):
+        assert torch.equal(source_param, restored_param)
+    for source_param, restored_param in zip(
+        source_module["tls_0"].policy_head.parameters(),
+        restored_module["tls_0"].policy_head.parameters(),
+    ):
+        assert torch.equal(source_param, restored_param)
+    for source_param, restored_param in zip(
+        source_module["tls_1"].value_head.parameters(),
+        restored_module["tls_1"].value_head.parameters(),
+    ):
+        assert torch.equal(source_param, restored_param)
+
+
+def test_ppo_dcrnn_shared_mlp_learner_registers_one_optimizer_with_deduped_shared_params(monkeypatch, tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("ray")
+    from ray.rllib.core import ALL_MODULES
+    from sumo_rl.agents.ppo import ppo
+
+    monkeypatch.setattr(sumo_rl, "parallel_env", lambda **kwargs: _DummyGraphParallelEnv(**kwargs))
+    cfg = _ppo_graph_cfg("ppo_dcrnn_shared_mlp")
+    config = ppo.build_config(cfg, tmp_path, algorithm_kind="ppo_dcrnn_shared_mlp")
+    learner = config.build_learner()
+
+    assert list(learner._module_optimizers.keys()) == [ALL_MODULES]
+    optimizer_names = learner._module_optimizers[ALL_MODULES]
+    assert len(optimizer_names) == 1
+    optimizer = learner._named_optimizers[optimizer_names[0]]
+
+    optimizer_param_ids = [id(param) for group in optimizer.param_groups for param in group["params"]]
+    assert len(optimizer_param_ids) == len(set(optimizer_param_ids))
+
+    shared_param_ids = {id(param) for param in learner.module.shared_backbone.parameters()}
+    head_param_ids = {
+        id(param)
+        for module in learner.module.values()
+        for param in module.parameters()
+    }
+    optimizer_param_id_set = set(optimizer_param_ids)
+
+    assert shared_param_ids.issubset(optimizer_param_id_set)
+    assert head_param_ids.issubset(optimizer_param_id_set)

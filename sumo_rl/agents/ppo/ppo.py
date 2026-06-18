@@ -28,6 +28,7 @@ from sumo_rl.agents.rllib_common import (
 
 KIND = "ppo"
 MLP_DCRNN_KIND = "ppo_dcrnn_mlp"
+SHARED_MLP_DCRNN_KIND = "ppo_dcrnn_shared_mlp"
 
 
 def _format_gib(num_bytes: float) -> str:
@@ -83,6 +84,12 @@ def _ppo_dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str
     return model_config
 
 
+def _ppo_dcrnn_shared_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = _ppo_dcrnn_model_config(params, graph_model_config)
+    model_config["architecture_tag"] = SHARED_MLP_DCRNN_KIND
+    return model_config
+
+
 def build_graph_eval_env(
     cfg: Any,
     run_dir: Path,
@@ -100,15 +107,23 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     from ray.rllib.algorithms.ppo import PPOConfig
 
     algorithm_kind = str(algorithm_kind or KIND).strip()
-    if algorithm_kind == MLP_DCRNN_KIND:
+    if algorithm_kind in {MLP_DCRNN_KIND, SHARED_MLP_DCRNN_KIND}:
         from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
-        from sumo_rl.agents.ppo.rllib_module import build_ppo_dcrnn_module_spec
+        from sumo_rl.agents.ppo.rllib_module import (
+            build_ppo_dcrnn_module_spec,
+            build_ppo_dcrnn_shared_module_spec,
+            build_ppo_dcrnn_shared_multi_module_spec,
+        )
 
         context, model_configs = build_graph_algorithm_context(
             cfg,
             run_dir,
             algorithm_kind=algorithm_kind,
-            model_config_builder=_ppo_dcrnn_model_config,
+            model_config_builder=(
+                _ppo_dcrnn_shared_model_config
+                if algorithm_kind == SHARED_MLP_DCRNN_KIND
+                else _ppo_dcrnn_model_config
+            ),
         )
         _warn_if_ppo_graph_memory_is_large(context)
     else:
@@ -139,16 +154,36 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     )
     config = apply_multi_agent_settings(config, context)
     config = apply_standard_evaluation_settings(config, context.params)
-    if algorithm_kind == MLP_DCRNN_KIND:
+    if algorithm_kind in {MLP_DCRNN_KIND, SHARED_MLP_DCRNN_KIND}:
+        rl_module_spec_builder = (
+            build_ppo_dcrnn_shared_module_spec
+            if algorithm_kind == SHARED_MLP_DCRNN_KIND
+            else build_ppo_dcrnn_module_spec
+        )
         rl_module_specs = {
-            policy_id: build_ppo_dcrnn_module_spec(
+            policy_id: rl_module_spec_builder(
                 policy_spec.observation_space,
                 policy_spec.action_space,
                 model_config=model_configs[policy_id],
             )
             for policy_id, policy_spec in context.active_policies.items()
         }
-        config = config.rl_module(rl_module_spec=MultiRLModuleSpec(rl_module_specs=rl_module_specs))
+        if algorithm_kind == SHARED_MLP_DCRNN_KIND:
+            from sumo_rl.agents.ppo.learner import PPOSharedEncoderTorchLearner
+
+            config = config.rl_module(
+                rl_module_spec=build_ppo_dcrnn_shared_multi_module_spec(
+                    rl_module_specs,
+                    model_config=next(iter(model_configs.values())),
+                )
+            )
+            learners = getattr(config, "learners", None)
+            if callable(learners):
+                config = config.learners(learner_class=PPOSharedEncoderTorchLearner)
+            else:
+                config = config.training(learner_class=PPOSharedEncoderTorchLearner)
+        else:
+            config = config.rl_module(rl_module_spec=MultiRLModuleSpec(rl_module_specs=rl_module_specs))
     return config.callbacks(callbacks_class)
 
 
