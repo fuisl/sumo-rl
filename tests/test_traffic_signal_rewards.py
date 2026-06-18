@@ -47,6 +47,7 @@ def test_diff_waiting_time_with_unchosen_phase_penalty_reward_ignores_zero_queue
 
 def test_nash_average_speed_reward_uses_phase_geometric_mean() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
+    signal.reward_nash_epsilon = 0.1
     signal.get_phase_average_speeds = lambda: [0.5, 0.5, 0.5]
 
     reward = signal._nash_average_speed_reward()
@@ -56,6 +57,7 @@ def test_nash_average_speed_reward_uses_phase_geometric_mean() -> None:
 
 def test_weighted_nash_average_speed_reward_emphasizes_high_wait_phase() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
+    signal.reward_nash_epsilon = 0.1
     signal.get_phase_average_speeds = lambda: [0.9, 0.2]
     signal.get_phase_max_waiting_times = lambda: [2.0, 8.0]
 
@@ -67,12 +69,23 @@ def test_weighted_nash_average_speed_reward_emphasizes_high_wait_phase() -> None
 
 def test_weighted_nash_average_speed_reward_uses_uniform_weights_when_waits_are_zero() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
+    signal.reward_nash_epsilon = 0.1
     signal.get_phase_average_speeds = lambda: [1.0, 1.0, 1.0]
     signal.get_phase_max_waiting_times = lambda: [0.0, 0.0, 0.0]
 
     reward = signal._weighted_nash_average_speed_reward()
 
     assert reward == pytest.approx(1.1)
+
+
+def test_nash_average_speed_reward_uses_configured_epsilon() -> None:
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.reward_nash_epsilon = 0.01
+    signal.get_phase_average_speeds = lambda: [0.5, 0.5]
+
+    reward = signal._nash_average_speed_reward()
+
+    assert reward == pytest.approx(0.51)
 
 
 def test_phase_average_speeds_and_max_waits_handle_empty_phases() -> None:

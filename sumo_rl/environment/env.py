@@ -123,6 +123,7 @@ class SumoEnvironment(gym.Env):
         reward_fn (str/function/dict/List): String with the name of the reward function used by the agents, a reward function, dictionary with reward functions assigned to individual traffic lights by their keys, or a List of reward functions.
         reward_weights (List[float]/np.ndarray): Weights for linearly combining the reward functions, in case reward_fn is a list. If it is None, the reward returned will be a np.ndarray. Default: None
         reward_penalty_lambda (float): Coefficient for penalty-based reward functions that subtract an extra queue-aware waiting-time penalty. Default: 0.1
+        reward_nash_epsilon (float): Positive smoothing term added to phase utilities for Nash-style average-speed rewards. Default: 0.1
         observation_class (ObservationFunction): Inherited class which has both the observation function and observation space.
         add_system_info (bool): If true, it computes system metrics (total queue, total waiting time, average speed) in the info dictionary.
         add_per_agent_info (bool): If true, it computes per-agent (per-traffic signal) metrics (average accumulated waiting time, average queue) in the info dictionary.
@@ -163,6 +164,7 @@ class SumoEnvironment(gym.Env):
         reward_fn: Union[str, Callable, dict, List] = "diff-waiting-time",
         reward_weights: Optional[List[float]] = None,
         reward_penalty_lambda: float = 0.1,
+        reward_nash_epsilon: float = 0.1,
         observation_class: type[ObservationFunction] = DefaultObservationFunction,
         add_system_info: bool = True,
         add_per_agent_info: bool = False,
@@ -207,6 +209,7 @@ class SumoEnvironment(gym.Env):
         self.reward_fn = reward_fn
         self.reward_weights = reward_weights
         self.reward_penalty_lambda = float(reward_penalty_lambda)
+        self.reward_nash_epsilon = float(reward_nash_epsilon)
         self.sumo_seed = sumo_seed
         if isinstance(self.sumo_seed, int):
             self.sumo_seed &= 0x7FFFFFFF  # Ensure 32 bit non-negative seed
@@ -276,6 +279,7 @@ class SumoEnvironment(gym.Env):
                 self.reward_fn[ts],
                 self.reward_weights,
                 self.reward_penalty_lambda,
+                self.reward_nash_epsilon,
                 conn,
             )
             for ts in self.ts_ids

@@ -253,6 +253,7 @@ def test_resco_summary_row_includes_weighted_nash_average_speed_formula() -> Non
             self.reward_fn = "weighted-nash-average-speed"
             self.reward_weights = None
             self.reward_penalty_lambda = None
+            self.reward_nash_epsilon = 0.05
             self.last_episode_summary = {
                 "episode/index": 3.0,
                 "episode/steps": 3600.0,
@@ -276,7 +277,7 @@ def test_resco_summary_row_includes_weighted_nash_average_speed_formula() -> Non
     row = _build_episode_benchmark_summary_row(DummyBaseEnv(), extra={"algorithm/kind": "fixed_time"})
 
     assert row["reward/formula"] == (
-        "exp(sum(phase_weight * log(phase_average_speed + 0.1))) across green phases, "
+        "exp(sum(phase_weight * log(phase_average_speed + 0.05))) across green phases, "
         "where phase_weight = phase_max_waiting_time / sum(phase_max_waiting_time), "
         "empty phases use average_speed = 1.0 and max_waiting_time = 0, "
         "and zero total max waiting falls back to uniform phase weights"

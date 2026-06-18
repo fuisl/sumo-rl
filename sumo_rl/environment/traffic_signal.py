@@ -61,6 +61,7 @@ class TrafficSignal:
         reward_fn: Union[str, Callable, List],
         reward_weights: List[float],
         reward_penalty_lambda: float,
+        reward_nash_epsilon: float,
         sumo,
     ):
         """Initializes a TrafficSignal object.
@@ -77,6 +78,7 @@ class TrafficSignal:
             reward_fn (Union[str, Callable]): The reward function. Can be a string with the name of the reward function or a callable function.
             reward_weights (List[float]): The weights of the reward function.
             reward_penalty_lambda (float): Coefficient for penalty-based reward functions.
+            reward_nash_epsilon (float): Positive smoothing term added to Nash-style phase utilities.
             sumo (Sumo): The Sumo instance.
         """
         self.id = ts_id
@@ -95,6 +97,7 @@ class TrafficSignal:
         self.reward_fn = reward_fn
         self.reward_weights = reward_weights
         self.reward_penalty_lambda = float(reward_penalty_lambda)
+        self.reward_nash_epsilon = float(reward_nash_epsilon)
         self.sumo = sumo
         self._last_fixed_cycle_phase_index = None
         self._phase_stats_cache_step = None
@@ -284,19 +287,21 @@ class TrafficSignal:
         return self.get_average_speed()
 
     def _nash_average_speed_reward(self):
+        epsilon = float(getattr(self, "reward_nash_epsilon", self.NASH_AVERAGE_SPEED_EPSILON))
         phase_average_speeds = self.get_phase_average_speeds()
         if not phase_average_speeds:
-            return self.get_average_speed() + self.NASH_AVERAGE_SPEED_EPSILON
+            return self.get_average_speed() + epsilon
 
-        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + self.NASH_AVERAGE_SPEED_EPSILON
+        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + epsilon
         return float(np.exp(np.mean(np.log(phase_utilities))))
 
     def _weighted_nash_average_speed_reward(self):
+        epsilon = float(getattr(self, "reward_nash_epsilon", self.NASH_AVERAGE_SPEED_EPSILON))
         phase_average_speeds = self.get_phase_average_speeds()
         if not phase_average_speeds:
-            return self.get_average_speed() + self.NASH_AVERAGE_SPEED_EPSILON
+            return self.get_average_speed() + epsilon
 
-        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + self.NASH_AVERAGE_SPEED_EPSILON
+        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + epsilon
         phase_max_waiting_times = np.asarray(self.get_phase_max_waiting_times(), dtype=np.float64)
 
         if phase_max_waiting_times.size != phase_utilities.size:
