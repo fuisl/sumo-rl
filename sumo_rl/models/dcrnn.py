@@ -94,21 +94,22 @@ class DiffusionGraphConv(nn.Module):
         batch_size = inputs.shape[0]  # (B, num_nodes * input_dim * history)
         inputs = inputs.reshape(batch_size, self.num_nodes, -1)
         state = state.reshape(batch_size, self.num_nodes, -1)
-        x = torch.cat([inputs, state], dim=-1)
-        x = x.permute(1, 2, 0).reshape(self.num_nodes, -1)
+        x0 = torch.cat([inputs, state], dim=-1)
+        weight = self.weight.reshape(self.input_size, self.num_matrices, -1)
 
-        diffusion_terms = [x]
+        projected = torch.einsum("bni,io->bno", x0, weight[:, 0, :])
+        weight_index = 1
+
         for support in self.supports:
-            x_k = x
+            support = support.to(device=x0.device, dtype=x0.dtype)
+            x_k = x0
             for _ in range(self.max_diffusion_step):
-                x_k = torch.matmul(support.to(device=x.device, dtype=x.dtype), x_k)
-                diffusion_terms.append(x_k)
+                x_k = torch.einsum("nm,bmi->bni", support, x_k)
+                projected = projected + torch.einsum("bni,io->bno", x_k, weight[:, weight_index, :])
+                weight_index += 1
 
-        x = torch.stack(diffusion_terms, dim=0)
-        x = x.reshape(self.num_matrices, self.num_nodes, self.input_size, batch_size)
-        x = x.permute(3, 1, 2, 0).reshape(batch_size * self.num_nodes, self.input_size * self.num_matrices)
-        x = torch.matmul(x, self.weight) + self.bias
-        return x.reshape(batch_size, -1)
+        projected = projected + self.bias
+        return projected.reshape(batch_size, -1)
 
 
 class DCGRUCell(nn.Module):
