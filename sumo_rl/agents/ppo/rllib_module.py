@@ -123,10 +123,8 @@ def build_ppo_dcrnn_shared_module_class():
             return backbone
 
         def _encode(self, batch: Dict[str, Any]):
-            return self._require_shared_backbone().forward_for_agent(
-                batch[Columns.OBS],
-                agent_index=self.agent_index,
-            )
+            obs = batch[Columns.OBS]
+            return self._require_shared_backbone().forward_for_agent(obs, agent_index=self.agent_index)
 
         def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
             del kwargs
@@ -166,6 +164,7 @@ def build_ppo_dcrnn_shared_module_class():
 
 def build_ppo_dcrnn_shared_multi_module_class():
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModule
+    from ray.rllib.core.columns import Columns
     from ray.rllib.utils.numpy import convert_to_numpy
     from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 
@@ -194,6 +193,66 @@ def build_ppo_dcrnn_shared_multi_module_class():
 
         def move_shared_backbone_to_device(self, device) -> None:
             self.shared_backbone.to(device)
+
+        def _shared_obs_batch(self, batch: Dict[str, Any]):
+            shared_items = [(mid, batch[mid]) for mid in batch.keys() if mid in self]
+            if not shared_items:
+                return None, None
+
+            first_mid, first_batch = shared_items[0]
+            first_obs = first_batch.get(Columns.OBS)
+            if first_obs is None:
+                return None, None
+
+            for module_id, module_batch in shared_items[1:]:
+                obs = module_batch.get(Columns.OBS)
+                if obs is None or obs.shape != first_obs.shape or not obs.device == first_obs.device:
+                    return None, None
+                if not obs.dtype == first_obs.dtype or not obs.requires_grad == first_obs.requires_grad:
+                    return None, None
+                if not obs.equal(first_obs):
+                    return None, None
+            return [mid for mid, _ in shared_items], first_obs
+
+        def _forward_shared(self, batch: Dict[str, Any], *, include_values: bool, include_embeddings: bool):
+            module_ids, shared_obs = self._shared_obs_batch(batch)
+            if not module_ids or shared_obs is None:
+                return None
+
+            encoded, latest_features = self.shared_backbone.encode_graph(shared_obs)
+            outputs = {}
+            for module_id in module_ids:
+                module = self._rl_modules[module_id]
+                latent = self.shared_backbone.select_agent_latent(
+                    encoded,
+                    latest_features,
+                    agent_index=module.agent_index,
+                )
+                module_out = {Columns.ACTION_DIST_INPUTS: module.policy_head(latent)}
+                if include_values:
+                    module_out[Columns.VF_PREDS] = module.value_head(latent).squeeze(-1)
+                if include_embeddings:
+                    module_out[Columns.EMBEDDINGS] = latent
+                outputs[module_id] = module_out
+            return outputs
+
+        def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            shared_outputs = self._forward_shared(batch, include_values=False, include_embeddings=False)
+            if shared_outputs is not None:
+                return shared_outputs
+            return super()._forward(batch, **kwargs)
+
+        def _forward_exploration(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            shared_outputs = self._forward_shared(batch, include_values=True, include_embeddings=False)
+            if shared_outputs is not None:
+                return shared_outputs
+            return super()._forward_exploration(batch, **kwargs)
+
+        def _forward_train(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+            shared_outputs = self._forward_shared(batch, include_values=True, include_embeddings=True)
+            if shared_outputs is not None:
+                return shared_outputs
+            return super()._forward_train(batch, **kwargs)
 
         def get_state(
             self,

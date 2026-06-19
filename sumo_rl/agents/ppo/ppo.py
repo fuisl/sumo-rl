@@ -64,7 +64,9 @@ def _warn_if_ppo_graph_memory_is_large(context) -> None:
         f"One full on-policy rollout across all policies stores about {_format_gib(rollout_obs_bytes)} of observations; "
         f"one learner minibatch holds about {_format_gib(minibatch_obs_bytes)} of observations. "
         f"Effective train_batch_size_per_learner is capped to {effective_train_batch_size} by the episode horizon. "
-        f"If memory spikes, lower sgd_minibatch_size or history_len before changing the backbone."
+        f"Shared-backbone PPO reuses one graph encode across agent heads, so remaining memory pressure is mostly "
+        f"rollout duplication plus learner minibatch size. If memory spikes, lower sgd_minibatch_size or history_len "
+        f"before changing the backbone."
     )
 
 
