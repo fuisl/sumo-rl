@@ -10,6 +10,8 @@ experiment:
 
 algorithm:
   params:
+    replay_buffer_type: MultiAgentEpisodeReplayBuffer
+    training_intensity: 1.0
     model_config:
       architecture_tag: fgs_mlp_gatv2_sac
       local_encoder:
