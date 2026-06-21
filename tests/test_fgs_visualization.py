@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -43,7 +45,7 @@ def test_fgs_visualization_writes_pipeline_svgs_and_json(tmp_path):
     net_file = tmp_path / "tiny.net.xml"
     _write_tiny_mismatched_net(net_file)
 
-    paths = render_fgs_visualization(net_file, tmp_path / "visualization", width=700)
+    paths = render_fgs_visualization(net_file, tmp_path / "visualization", width=700, gif_width=420)
 
     for path in paths.values():
         assert path.exists()
@@ -52,26 +54,30 @@ def test_fgs_visualization_writes_pipeline_svgs_and_json(tmp_path):
     topology_svg = paths["topology_svg"].read_text(encoding="utf-8")
     node_json = json.loads(paths["node_json"].read_text(encoding="utf-8"))
     topology_json = json.loads(paths["topology_json"].read_text(encoding="utf-8"))
+    gif = Image.open(paths["algorithm_gif"])
 
     assert 'id="underlying-network"' in node_svg
     assert 'class="ordinary-junction"' in node_svg
     assert 'class="tls-program-controlled"' in node_svg
     assert "program_a" in node_svg
     assert 'id="fgs-super-edges"' in topology_svg
-    assert 'marker-end="url(#fgs-arrow)"' in topology_svg
+    assert 'marker-end="url(#fgs-arrow)"' not in topology_svg
     assert "program_a" in topology_svg
     assert node_json["counts"]["junctions"] == 4
     assert node_json["tls_program_to_junction"]["program_a"] == "cluster_a"
     assert topology_json["workers"] == ["program_a", "tls_b"]
+    assert gif.is_animated
+    assert gif.n_frames >= 6
 
 
 def test_fgs_visualization_ingolstadt21_metadata_keeps_all_tls_workers(tmp_path):
     net_file = ROOT / "sumo_rl/nets/RESCO/ingolstadt21/ingolstadt21.net.xml"
 
-    paths = render_fgs_visualization(net_file, tmp_path / "ingolstadt21", width=900)
+    paths = render_fgs_visualization(net_file, tmp_path / "ingolstadt21", width=900, gif_width=520)
 
     topology_json = json.loads(paths["topology_json"].read_text(encoding="utf-8"))
     assert len(topology_json["workers"]) == 21
+    assert paths["algorithm_gif"].exists()
     assert {
         "gneJ143",
         "gneJ207",

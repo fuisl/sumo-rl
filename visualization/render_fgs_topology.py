@@ -59,7 +59,14 @@ class NodeExtraction:
         }
 
 
-def render_fgs_visualization(net_file: str | Path, output_dir: str | Path, *, width: int = 1400) -> dict[str, Path]:
+def render_fgs_visualization(
+    net_file: str | Path,
+    output_dir: str | Path,
+    *,
+    width: int = 1400,
+    gif_width: int = 900,
+    make_gif: bool = True,
+) -> dict[str, Path]:
     """Render the node extraction and final FGS topology stages for a SUMO net."""
 
     net_path = Path(net_file)
@@ -71,6 +78,7 @@ def render_fgs_visualization(net_file: str | Path, output_dir: str | Path, *, wi
 
     node_svg = out_dir / "01_node_extraction.svg"
     topology_svg = out_dir / "02_fgs_extracted_topology.svg"
+    algorithm_gif = out_dir / "03_fgs_algorithm_steps.gif"
     node_json = out_dir / "node_extraction.json"
     topology_json = out_dir / "fgs_topology.json"
 
@@ -79,15 +87,26 @@ def render_fgs_visualization(net_file: str | Path, output_dir: str | Path, *, wi
         _topology_svg(topology, node_extraction=node_extraction, net_path=net_path, width=width),
         encoding="utf-8",
     )
+    if make_gif:
+        _algorithm_gif(
+            topology,
+            node_extraction=node_extraction,
+            net_path=net_path,
+            output_path=algorithm_gif,
+            width=gif_width,
+        )
     node_json.write_text(json.dumps(node_extraction.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
     topology_json.write_text(json.dumps(topology.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
 
-    return {
+    paths = {
         "node_svg": node_svg,
         "topology_svg": topology_svg,
         "node_json": node_json,
         "topology_json": topology_json,
     }
+    if make_gif:
+        paths["algorithm_gif"] = algorithm_gif
+    return paths
 
 
 def extract_node_stage(net_file: str | Path) -> NodeExtraction:
@@ -222,7 +241,7 @@ def _node_extraction_svg(extraction: NodeExtraction, *, net_path: Path, width: i
         f"Road polylines: {len(extraction.road_polylines)}",
         f"TLS programs: {len(extraction.tls_program_to_junction)}",
     ]))
-    lines.append('<g id="underlying-network" fill="none" stroke="#9ca3af" stroke-width="1.1" stroke-opacity="0.45">')
+    lines.append('<g id="underlying-network" fill="none" stroke="#64748b" stroke-width="1.15" stroke-opacity="0.58">')
     for road in extraction.road_polylines:
         lines.append(f'<polyline points="{_polyline([project(point) for point in road])}" />')
     lines.append("</g>")
@@ -279,7 +298,7 @@ def _topology_svg(topology: TLSTopology, *, node_extraction: NodeExtraction, net
         f"TLS workers: {len(topology.workers)}",
         f"Directed super-edges: {len(topology.directed_edges)}",
     ]))
-    lines.append('<g id="underlying-network" fill="none" stroke="#cbd5e1" stroke-width="1.0" stroke-opacity="0.28">')
+    lines.append('<g id="underlying-network" fill="none" stroke="#64748b" stroke-width="1.15" stroke-opacity="0.42">')
     for road in node_extraction.road_polylines:
         lines.append(f'<polyline points="{_polyline([project(point) for point in road])}" />')
     lines.append("</g>")
@@ -299,7 +318,7 @@ def _topology_svg(topology: TLSTopology, *, node_extraction: NodeExtraction, net
         title = html.escape(f"{source} -> {target}")
         lines.append(
             f'<line x1="{start[0]:.2f}" y1="{start[1]:.2f}" x2="{end[0]:.2f}" y2="{end[1]:.2f}" '
-            f'stroke-width="{stroke_width:.2f}" stroke-opacity="{opacity:.2f}" marker-end="url(#fgs-arrow)">'
+            f'stroke-width="{stroke_width:.2f}" stroke-opacity="{opacity:.2f}">'
             f"<title>{title}</title></line>"
         )
     lines.append("</g>")
@@ -322,16 +341,190 @@ def _topology_svg(topology: TLSTopology, *, node_extraction: NodeExtraction, net
     return "\n".join(lines) + "\n"
 
 
+def _algorithm_gif(
+    topology: TLSTopology,
+    *,
+    node_extraction: NodeExtraction,
+    net_path: Path,
+    output_path: Path,
+    width: int,
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    points = [point for road in node_extraction.road_polylines for point in road] + [
+        junction.position for junction in node_extraction.junctions
+    ] + list(topology.positions.values())
+    project, height = _projector(points, width)
+    font = ImageFont.load_default()
+    large_font = ImageFont.load_default()
+
+    frames = []
+    stage_specs = [
+        ("Step 1 - parse SUMO network", "Read non-internal road polylines from the .net.xml file.", 0.0, False, False),
+        ("Step 2 - extract junction nodes", "Add every non-internal junction with a valid position.", 0.0, True, False),
+        (
+            "Step 3 - identify TLS programs",
+            "Map tlLogic IDs onto their physical controlled junctions.",
+            0.0,
+            True,
+            True,
+        ),
+        (
+            "Step 4 - search downstream paths",
+            "Follow legal SUMO connections from each TLS to its nearest downstream TLS.",
+            0.35,
+            True,
+            True,
+        ),
+        (
+            "Step 5 - contract paths",
+            "Convert nearest downstream road paths into directed TLS super-edges.",
+            0.7,
+            True,
+            True,
+        ),
+        (
+            "Step 6 - final FGS topology",
+            "Use the extracted super-edge graph for FGS message passing.",
+            1.0,
+            True,
+            True,
+        ),
+    ]
+    for title, subtitle, edge_fraction, show_junctions, show_tls in stage_specs:
+        image = Image.new("RGB", (width, height), "#ffffff")
+        draw = ImageDraw.Draw(image)
+        _draw_gif_roads(draw, node_extraction.road_polylines, project)
+        if show_junctions:
+            _draw_gif_junctions(draw, node_extraction.junctions, project, show_tls=show_tls)
+        if edge_fraction > 0:
+            _draw_gif_super_edges(draw, topology, project, edge_fraction=edge_fraction)
+        if show_tls:
+            _draw_gif_tls_labels(draw, topology, project, font)
+        _draw_gif_overlay(
+            draw,
+            width=width,
+            title=title,
+            subtitle=subtitle,
+            net_name=net_path.name,
+            counts=[
+                f"junctions: {len(node_extraction.junctions)}",
+                f"TLS workers: {len(topology.workers)}",
+                f"super-edges: {len(topology.directed_edges)}",
+            ],
+            font=font,
+            large_font=large_font,
+        )
+        frames.append(image)
+
+    frames[0].save(
+        output_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=[900, 900, 1000, 1000, 1000, 1400],
+        loop=0,
+        optimize=True,
+    )
+
+
+def _draw_gif_roads(draw, road_polylines: list[list[Point]], project: Callable[[Point], Point]) -> None:
+    for road in road_polylines:
+        points = [_int_point(project(point)) for point in road]
+        if len(points) >= 2:
+            draw.line(points, fill="#cbd5e1", width=1)
+
+
+def _draw_gif_junctions(
+    draw,
+    junctions: list[JunctionInfo],
+    project: Callable[[Point], Point],
+    *,
+    show_tls: bool,
+) -> None:
+    for junction in junctions:
+        x, y = _int_point(project(junction.position))
+        if show_tls and junction.tls_program_ids:
+            radius = 5
+            fill = "#0f766e"
+            outline = "#ffffff"
+        elif junction.junction_type == "traffic_light":
+            radius = 4
+            fill = "#f59e0b"
+            outline = "#ffffff"
+        else:
+            radius = 2
+            fill = "#64748b"
+            outline = fill
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill, outline=outline)
+
+
+def _draw_gif_super_edges(
+    draw,
+    topology: TLSTopology,
+    project: Callable[[Point], Point],
+    *,
+    edge_fraction: float,
+) -> None:
+    edge_count = max(1, int(len(topology.directed_edges) * edge_fraction))
+    visible_edges = topology.directed_edges[:edge_count]
+    directed_edge_set = set(topology.directed_edges)
+    edge_by_pair = {(edge.source, edge.target): edge for edge in topology.super_edges}
+    max_weight = max((1.0 / edge.travel_time for edge in topology.super_edges if edge.travel_time > 0), default=1.0)
+    for source, target in visible_edges:
+        if source not in topology.positions or target not in topology.positions:
+            continue
+        start = project(topology.positions[source])
+        end = project(topology.positions[target])
+        if (target, source) in directed_edge_set:
+            start, end = _offset_line(start, end, 4.0 if source < target else -4.0)
+        start, end = _shorten_line(start, end, 8.0)
+        super_edge = edge_by_pair.get((source, target))
+        weight = 1.0 / super_edge.travel_time if super_edge is not None and super_edge.travel_time > 0 else 1.0
+        strength = weight / max(max_weight, 1e-9)
+        line_width = max(2, int(round(2 + 3 * strength)))
+        draw.line((_int_point(start), _int_point(end)), fill="#2563eb", width=line_width)
+
+
+def _draw_gif_tls_labels(draw, topology: TLSTopology, project: Callable[[Point], Point], font) -> None:
+    for worker, point in sorted(topology.positions.items()):
+        x, y = _int_point(project(point))
+        radius = 6
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill="#0f766e", outline="#ffffff", width=2)
+        draw.text((x + 8, y - 10), worker, fill="#0f172a", font=font, stroke_width=2, stroke_fill="#ffffff")
+
+
+def _draw_gif_overlay(
+    draw,
+    *,
+    width: int,
+    title: str,
+    subtitle: str,
+    net_name: str,
+    counts: list[str],
+    font,
+    large_font,
+) -> None:
+    box = (18, 18, min(width - 18, 480), 142)
+    draw.rectangle(box, fill="#ffffff", outline="#cbd5e1")
+    draw.text((32, 34), title, fill="#0f172a", font=large_font)
+    draw.text((32, 54), subtitle, fill="#334155", font=font)
+    draw.text((32, 74), f"net: {net_name}", fill="#334155", font=font)
+    draw.text((32, 96), " | ".join(counts), fill="#0f172a", font=font)
+    draw.rectangle((32, 116, 44, 128), fill="#0f766e")
+    draw.text((52, 116), "TLS worker", fill="#0f172a", font=font)
+    draw.line((150, 122, 192, 122), fill="#2563eb", width=4)
+    draw.text((202, 116), "FGS super-edge", fill="#0f172a", font=font)
+
+
+def _int_point(point: Point) -> tuple[int, int]:
+    return int(round(point[0])), int(round(point[1]))
+
+
 def _svg_header(width: int, height: int, *, title: str) -> list[str]:
     escaped_title = html.escape(title)
     return [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
         f"<title>{escaped_title}</title>",
-        "<defs>",
-        '<marker id="fgs-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">',
-        '<path d="M0,0 L9,4.5 L0,9 Z" fill="#2563eb" />',
-        "</marker>",
-        "</defs>",
         '<rect width="100%" height="100%" fill="#ffffff" />',
     ]
 
@@ -452,14 +645,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--net-file", type=Path, default=DEFAULT_NET_FILE, help="SUMO .net.xml file to visualize.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Directory for SVG and JSON artifacts.")
     parser.add_argument("--width", type=int, default=1400, help="SVG width in pixels.")
+    parser.add_argument("--gif-width", type=int, default=900, help="Animated GIF width in pixels.")
+    parser.add_argument("--skip-gif", action="store_true", help="Only write SVG and JSON artifacts.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
-    paths = render_fgs_visualization(args.net_file, args.output_dir, width=args.width)
+    paths = render_fgs_visualization(
+        args.net_file,
+        args.output_dir,
+        width=args.width,
+        gif_width=args.gif_width,
+        make_gif=not args.skip_gif,
+    )
     print(f"Wrote node extraction SVG: {paths['node_svg']}")
     print(f"Wrote FGS topology SVG: {paths['topology_svg']}")
+    if "algorithm_gif" in paths:
+        print(f"Wrote algorithm GIF: {paths['algorithm_gif']}")
     print(f"Wrote metadata JSON: {paths['node_json']}")
     print(f"Wrote topology JSON: {paths['topology_json']}")
     return 0
