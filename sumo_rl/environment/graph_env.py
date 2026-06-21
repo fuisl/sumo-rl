@@ -57,6 +57,7 @@ class GraphParallelEnv:
         self.base_env = resolve_sumo_base_env(env)
         self.graph = build_traffic_signal_graph(
             traffic_signals_from_base_env(self.base_env),
+            net_file=getattr(self.base_env, "_net", getattr(self.base_env, "net_file", None)),
             include_virtual_nodes=include_virtual_nodes,
             add_self_loops=add_self_loops,
             feature_layout=feature_layout,

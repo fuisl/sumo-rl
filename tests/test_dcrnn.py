@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 from gymnasium.spaces import Box, Discrete
 
 import sumo_rl
+from sumo_rl.environment.graph_env import GraphParallelEnv
 from sumo_rl.models.graph import GraphObservationHistory, build_traffic_signal_graph, pack_density_queue_features
 
 
@@ -118,6 +119,100 @@ def test_graph_feature_packing_supports_legacy_density_queue_layout():
     assert features.shape == (4, 4)
     assert features[graph.ts_index["tls_0"]].tolist() == [0.25, 0.0, 0.5, 0.0]
     assert np.allclose(features[graph.ts_index["tls_1"]], [0.75, 0.1, 0.2, 0.3])
+
+
+def test_graph_topology_construction_uses_fgsv3_tls_super_edges_when_net_file_is_available(tmp_path):
+    net_file = tmp_path / "tiny_tls.net.xml"
+    net_file.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<net version="1.20">
+    <edge id="in_0" from="src_0" to="tls_0" priority="1">
+        <lane id="in_0_0" index="0" speed="10.00" length="30.00" shape="-30.00,0.00 0.00,0.00"/>
+    </edge>
+    <edge id="mid" from="tls_0" to="tls_1" priority="1">
+        <lane id="mid_0" index="0" speed="10.00" length="50.00" shape="0.00,0.00 50.00,0.00"/>
+    </edge>
+    <edge id="out_1" from="tls_1" to="sink_1" priority="1">
+        <lane id="out_1_0" index="0" speed="10.00" length="30.00" shape="50.00,0.00 80.00,0.00"/>
+    </edge>
+    <connection from="in_0" to="mid" fromLane="0" toLane="0" tl="tls_0" linkIndex="0" dir="s" state="O"/>
+    <connection from="mid" to="out_1" fromLane="0" toLane="0" tl="tls_1" linkIndex="0" dir="s" state="O"/>
+    <tlLogic id="tls_0" type="static" programID="0" offset="0"><phase duration="30" state="G"/></tlLogic>
+    <tlLogic id="tls_1" type="static" programID="0" offset="0"><phase duration="30" state="G"/></tlLogic>
+    <junction id="src_0" type="dead_end" x="-30.00" y="0.00" incLanes="" intLanes=""/>
+    <junction id="tls_0" type="traffic_light" x="0.00" y="0.00" incLanes="in_0_0" intLanes=""/>
+    <junction id="tls_1" type="traffic_light" x="50.00" y="0.00" incLanes="mid_0" intLanes=""/>
+    <junction id="sink_1" type="dead_end" x="80.00" y="0.00" incLanes="out_1_0" intLanes=""/>
+</net>
+""",
+        encoding="utf-8",
+    )
+
+    graph = build_traffic_signal_graph(_fake_signals(), net_file=net_file, include_virtual_nodes=True)
+
+    assert graph.topology_source == "tls_super_edges"
+    assert graph.num_nodes == 2
+    assert graph.incoming_node_index is None
+    assert graph.outgoing_node_index is None
+    assert graph.adjacency[graph.ts_index["tls_0"], graph.ts_index["tls_1"]] == 1.0
+    assert graph.adjacency[graph.ts_index["tls_1"], graph.ts_index["tls_0"]] == 0.0
+    assert np.all(np.diag(graph.adjacency) == 1.0)
+
+
+def test_graph_parallel_env_uses_base_env_net_file_for_dcrnn_graph(tmp_path):
+    net_file = tmp_path / "mismatched_tls.net.xml"
+    net_file.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<net version="1.20">
+    <edge id="in_a" from="source" to="cluster_a" priority="1">
+        <lane id="in_a_0" index="0" speed="10.00" length="30.00" shape="-30.00,0.00 0.00,0.00"/>
+    </edge>
+    <edge id="ab" from="cluster_a" to="mid" priority="1">
+        <lane id="ab_0" index="0" speed="10.00" length="50.00" shape="0.00,0.00 50.00,0.00"/>
+    </edge>
+    <edge id="bc" from="mid" to="tls_b" priority="1">
+        <lane id="bc_0" index="0" speed="10.00" length="50.00" shape="50.00,0.00 100.00,0.00"/>
+    </edge>
+    <connection from="in_a" to="ab" fromLane="0" toLane="0" tl="program_a" linkIndex="0" dir="s" state="O"/>
+    <connection from="ab" to="bc" fromLane="0" toLane="0"/>
+    <tlLogic id="program_a" type="static" programID="0" offset="0"><phase duration="30" state="G"/></tlLogic>
+    <tlLogic id="tls_b" type="static" programID="0" offset="0"><phase duration="30" state="G"/></tlLogic>
+    <junction id="source" type="dead_end" x="-30.00" y="0.00" incLanes="" intLanes=""/>
+    <junction id="cluster_a" type="traffic_light" x="0.00" y="0.00" incLanes="in_a_0" intLanes=""/>
+    <junction id="mid" type="priority" x="50.00" y="0.00" incLanes="ab_0" intLanes=""/>
+    <junction id="tls_b" type="traffic_light" x="100.00" y="0.00" incLanes="bc_0" intLanes=""/>
+</net>
+""",
+        encoding="utf-8",
+    )
+
+    class _NetAwareParallelEnv(_DummyDCRNNParallelEnv):
+        possible_agents = ["program_a", "tls_b"]
+        agents = ["program_a", "tls_b"]
+
+        def __init__(self):
+            signals = [
+                _FakeTrafficSignal("program_a", ["in_a"], ["ab"], [0.2], [0.1], num_green_phases=2),
+                _FakeTrafficSignal("tls_b", ["bc"], ["out_b"], [0.3], [0.2], num_green_phases=2),
+            ]
+            self._net = str(net_file)
+            self.ts_ids = [signal.id for signal in signals]
+            self.traffic_signals = {signal.id: signal for signal in signals}
+
+        def observation_space(self, agent_id):
+            del agent_id
+            return Box(low=0.0, high=1.0, shape=(5, 2, 4), dtype=np.float32)
+
+        def action_space(self, agent_id):
+            del agent_id
+            return Discrete(2)
+
+    env = GraphParallelEnv(_NetAwareParallelEnv(), history_len=3)
+
+    assert env.graph.topology_source == "tls_super_edges"
+    assert env.graph.ts_ids == ("program_a", "tls_b")
+    assert env.graph.adjacency[env.graph.ts_index["program_a"], env.graph.ts_index["tls_b"]] == 1.0
+    assert np.all(np.diag(env.graph.adjacency) == 1.0)
 
 
 def test_dcrnn_q_network_outputs_one_q_value_per_action():

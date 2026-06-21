@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Deque, Iterable, Mapping, Sequence
 
 import numpy as np
 from gymnasium import spaces
+
+from sumo_rl.agents.fgs.topology import extract_tls_topology
 
 
 def _normalize_feature_layout(feature_layout: str | None) -> str:
@@ -39,6 +42,7 @@ class TrafficSignalGraph:
     feature_layout: str = "phase_min_green_density_queue"
     incoming_node_index: int | None = None
     outgoing_node_index: int | None = None
+    topology_source: str = "tls_super_edges"
 
     @property
     def phase_dim(self) -> int:
@@ -80,6 +84,7 @@ class TrafficSignalGraph:
             "max_green_phases": int(self.max_green_phases),
             "density_offset": int(self.density_offset),
             "queue_offset": int(self.queue_offset),
+            "topology_source": self.topology_source,
         }
         if self.min_green_index is not None:
             config["min_green_index"] = int(self.min_green_index)
@@ -132,14 +137,14 @@ def _pack_feature_row(ts: Any, graph: TrafficSignalGraph) -> np.ndarray:
     return features
 
 
-def build_traffic_signal_graph(
+def _legacy_build_traffic_signal_graph(
     traffic_signals: Mapping[str, Any] | Sequence[Any],
     *,
     include_virtual_nodes: bool = True,
     add_self_loops: bool = True,
     feature_layout: str = "phase_min_green_density_queue",
 ) -> TrafficSignalGraph:
-    """Build a deterministic directed graph from traffic signal in/out lanes."""
+    """Legacy lane-link graph builder kept as a fallback when no net file exists."""
 
     ts_list = _ordered_traffic_signals(traffic_signals)
     if not ts_list:
@@ -203,6 +208,67 @@ def build_traffic_signal_graph(
         feature_layout=normalized_feature_layout,
         incoming_node_index=incoming_node_index,
         outgoing_node_index=outgoing_node_index,
+        topology_source="legacy_lane_links",
+    )
+
+
+def build_traffic_signal_graph(
+    traffic_signals: Mapping[str, Any] | Sequence[Any],
+    *,
+    net_file: str | Path | None = None,
+    include_virtual_nodes: bool = True,
+    add_self_loops: bool = True,
+    feature_layout: str = "phase_min_green_density_queue",
+) -> TrafficSignalGraph:
+    """Build a deterministic traffic-signal graph, preferring the FGSv3 TLS topology."""
+
+    ts_list = _ordered_traffic_signals(traffic_signals)
+    if not ts_list:
+        raise ValueError("Cannot build a traffic-signal graph without traffic signals.")
+
+    normalized_feature_layout = _normalize_feature_layout(feature_layout)
+    ts_ids = tuple(_signal_id(ts) for ts in ts_list)
+    ts_index = {ts_id: index for index, ts_id in enumerate(ts_ids)}
+    max_lanes = max(1, max(len(getattr(ts, "lanes", []) or []) for ts in ts_list))
+    max_green_phases = max(1, max(int(getattr(ts, "num_green_phases", 1) or 1) for ts in ts_list))
+    incoming_node_index = None
+    outgoing_node_index = None
+    num_nodes = len(ts_ids)
+    adjacency = np.zeros((num_nodes, num_nodes), dtype=np.float32)
+    topology_source = "tls_super_edges"
+
+    topology = None
+    if net_file:
+        try:
+            topology = extract_tls_topology(net_file)
+        except ValueError:
+            topology = None
+    if topology is None:
+        return _legacy_build_traffic_signal_graph(
+            traffic_signals,
+            include_virtual_nodes=include_virtual_nodes,
+            add_self_loops=add_self_loops,
+            feature_layout=feature_layout,
+        )
+
+    for source_id, target_id in topology.directed_edges:
+        if source_id in ts_index and target_id in ts_index:
+            adjacency[ts_index[source_id], ts_index[target_id]] = 1.0
+    if add_self_loops:
+        np.fill_diagonal(adjacency, 1.0)
+    edge_index = np.asarray(np.nonzero(adjacency), dtype=np.int64)
+    return TrafficSignalGraph(
+        ts_ids=ts_ids,
+        ts_index=ts_index,
+        num_nodes=num_nodes,
+        max_lanes=max_lanes,
+        max_green_phases=max_green_phases,
+        adjacency=adjacency,
+        edge_index=edge_index,
+        feature_layout=normalized_feature_layout,
+        incoming_node_index=incoming_node_index,
+        outgoing_node_index=outgoing_node_index,
+        topology_source=topology_source,
     )
 
 

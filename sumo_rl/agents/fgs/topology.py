@@ -79,15 +79,17 @@ def extract_tls_topology(net_file: str | Path) -> TLSTopology:
     """Extract a contracted TLS graph from a SUMO ``.net.xml`` file."""
 
     root = ET.parse(str(net_file)).getroot()
-    positions = _extract_positions(root)
-    tls_ids = _extract_tls_ids(root, positions)
-    edge_catalog, outgoing_by_node = _build_edge_catalog(root, positions)
+    junction_positions = _extract_positions(root)
+    edge_catalog, outgoing_by_node = _build_edge_catalog(root, junction_positions)
+    tls_junctions = _extract_tls_junctions(root, junction_positions, edge_catalog)
+    tls_ids = sorted(tls_junctions)
     transitions = _build_edge_transitions(root, edge_catalog)
     super_edges = _build_super_edges(
         edge_catalog=edge_catalog,
         outgoing_by_node=outgoing_by_node,
         transitions=transitions,
         tls_ids=tls_ids,
+        tls_junctions=tls_junctions,
     )
 
     directed_edges = sorted({(edge.source, edge.target) for edge in super_edges})
@@ -104,8 +106,8 @@ def extract_tls_topology(net_file: str | Path) -> TLSTopology:
         edges=undirected_edges,
         edge_weights={edge: edge_weights[edge] for edge in undirected_edges},
         super_edges=[edge for edge in super_edges],
-        positions={worker: positions[worker] for worker in tls_ids},
-        road_polylines=_extract_road_polylines(root, positions),
+        positions={worker: junction_positions[tls_junctions[worker]] for worker in tls_ids},
+        road_polylines=_extract_road_polylines(root, junction_positions),
     )
 
 
@@ -132,21 +134,51 @@ def render_fgs_topology(topology: TLSTopology, output_dir: Path, *, width: int =
     return {"json": json_path, "svg": svg_path}
 
 
-def _extract_tls_ids(root: ET.Element, positions: dict[str, Point]) -> list[str]:
-    tls_ids = []
+def _extract_tls_junctions(
+    root: ET.Element,
+    positions: dict[str, Point],
+    edge_catalog: dict[str, RoadEdge],
+) -> dict[str, str]:
+    tls_junctions: dict[str, str] = {}
     for tls in root.findall("tlLogic"):
         tls_id = tls.get("id")
-        if tls_id and tls_id in positions:
-            tls_ids.append(tls_id)
-    if not tls_ids:
+        if not tls_id:
+            continue
+        if tls_id in positions:
+            tls_junctions[tls_id] = tls_id
+            continue
+        junction_id = _infer_tls_junction(root, tls_id, positions, edge_catalog)
+        if junction_id is not None:
+            tls_junctions[tls_id] = junction_id
+    if not tls_junctions:
         for junction in root.findall("junction"):
             junction_id = junction.get("id")
             if junction_id and junction.get("type") == "traffic_light" and junction_id in positions:
-                tls_ids.append(junction_id)
-    tls_ids = sorted(set(tls_ids))
-    if not tls_ids:
+                tls_junctions[junction_id] = junction_id
+    if not tls_junctions:
         raise ValueError("No traffic light IDs with junction positions found in SUMO net.")
-    return tls_ids
+    return dict(sorted(tls_junctions.items()))
+
+
+def _infer_tls_junction(
+    root: ET.Element,
+    tls_id: str,
+    positions: dict[str, Point],
+    edge_catalog: dict[str, RoadEdge],
+) -> Optional[str]:
+    counts: dict[str, int] = defaultdict(int)
+    for connection in root.findall("connection"):
+        if connection.get("tl") != tls_id:
+            continue
+        from_edge = edge_catalog.get(str(connection.get("from") or ""))
+        if from_edge is not None and from_edge.target_node in positions:
+            counts[from_edge.target_node] += 1
+        to_edge = edge_catalog.get(str(connection.get("to") or ""))
+        if to_edge is not None and to_edge.source_node in positions:
+            counts[to_edge.source_node] += 1
+    if not counts:
+        return None
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
 def _extract_positions(root: ET.Element) -> dict[str, Point]:
@@ -200,29 +232,38 @@ def _build_super_edges(
     outgoing_by_node: dict[str, list[str]],
     transitions: dict[str, list[str]],
     tls_ids: list[str],
+    tls_junctions: dict[str, str],
 ) -> list[TLSSuperEdge]:
-    tls_set = set(tls_ids)
+    node_to_tls: dict[str, list[str]] = defaultdict(list)
+    for tls_id in tls_ids:
+        node_to_tls[tls_junctions[tls_id]].append(tls_id)
+    for node_id in node_to_tls:
+        node_to_tls[node_id] = sorted(node_to_tls[node_id])
+    tls_node_set = set(node_to_tls)
     best_by_pair: dict[Edge, TLSSuperEdge] = {}
     for source in tls_ids:
-        for start_edge in outgoing_by_node.get(source, []):
-            result = _find_nearest_tls(edge_catalog, transitions, tls_set, source, start_edge)
+        source_node = tls_junctions[source]
+        for start_edge in outgoing_by_node.get(source_node, []):
+            result = _find_nearest_tls(edge_catalog, transitions, tls_node_set, source_node, start_edge)
             if result is None:
                 continue
-            candidate = _super_edge_from_path(source, result[0], result[1], edge_catalog)
-            if candidate.source == candidate.target:
-                continue
-            key = (candidate.source, candidate.target)
-            existing = best_by_pair.get(key)
-            if existing is None or candidate.travel_time < existing.travel_time:
-                best_by_pair[key] = candidate
+            target_node, path_edge_ids = result
+            for target in node_to_tls[target_node]:
+                candidate = _super_edge_from_path(source, target, path_edge_ids, edge_catalog)
+                if candidate.source == candidate.target:
+                    continue
+                key = (candidate.source, candidate.target)
+                existing = best_by_pair.get(key)
+                if existing is None or candidate.travel_time < existing.travel_time:
+                    best_by_pair[key] = candidate
     return [best_by_pair[key] for key in sorted(best_by_pair)]
 
 
 def _find_nearest_tls(
     edge_catalog: dict[str, RoadEdge],
     transitions: dict[str, list[str]],
-    tls_set: set[str],
-    source: str,
+    tls_node_set: set[str],
+    source_node: str,
     start_edge: str,
 ) -> Optional[tuple[str, list[str]]]:
     queue: list[tuple[float, str]] = []
@@ -235,7 +276,7 @@ def _find_nearest_tls(
         if current_cost != best_cost.get(current_edge):
             continue
         target_node = edge_catalog[current_edge].target_node
-        if target_node in tls_set and target_node != source:
+        if target_node in tls_node_set and target_node != source_node:
             path_edge_ids = []
             cursor: Optional[str] = current_edge
             while cursor is not None:
