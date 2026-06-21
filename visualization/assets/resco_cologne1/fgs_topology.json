@@ -1,0 +1,15 @@
+{
+  "directed_edges": [],
+  "edge_weights": {},
+  "edges": [],
+  "positions": {
+    "GS_cluster_357187_359543": [
+      11796.42,
+      13327.95
+    ]
+  },
+  "super_edges": [],
+  "workers": [
+    "GS_cluster_357187_359543"
+  ]
+}

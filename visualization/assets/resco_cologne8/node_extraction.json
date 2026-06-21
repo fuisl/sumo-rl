@@ -1,0 +1,738 @@
+{
+  "counts": {
+    "junctions": 78,
+    "road_polylines": 149,
+    "tls_program_controlled_junctions": 8,
+    "tls_programs": 8
+  },
+  "junctions": [
+    {
+      "id": "1679948677",
+      "position": [
+        14594.6,
+        17239.41
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1679948681",
+      "position": [
+        14175.4,
+        17233.18
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2340562483",
+      "position": [
+        14649.33,
+        17221.64
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "247379907",
+      "position": [
+        14057.43,
+        18072.2
+      ],
+      "tls_program_ids": [
+        "247379907"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "247379910",
+      "position": [
+        14293.53,
+        18337.23
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "247380547",
+      "position": [
+        14044.81,
+        17402.32
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "247380550",
+      "position": [
+        13965.41,
+        16962.63
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "247380551",
+      "position": [
+        14025.02,
+        17209.85
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252015689",
+      "position": [
+        13684.35,
+        17442.41
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252016108",
+      "position": [
+        13738.75,
+        16989.03
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "252016270",
+      "position": [
+        13890.89,
+        17135.31
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252016271",
+      "position": [
+        13798.52,
+        17146.27
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252016273",
+      "position": [
+        13915.61,
+        17389.67
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "252016274",
+      "position": [
+        13903.95,
+        17224.77
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252016275",
+      "position": [
+        13837.68,
+        17056.65
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252016277",
+      "position": [
+        13864.09,
+        17035.65
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "252016278",
+      "position": [
+        13936.92,
+        16980.58
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "252016280",
+      "position": [
+        13948.44,
+        16844.42
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252016281",
+      "position": [
+        13825.06,
+        16882.4
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252016282",
+      "position": [
+        13935.05,
+        16901.31
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "252017285",
+      "position": [
+        13791.17,
+        17242.08
+      ],
+      "tls_program_ids": [
+        "252017285"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "252017289",
+      "position": [
+        13700.25,
+        17352.03
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252041405",
+      "position": [
+        14010.68,
+        17120.11
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "252046468",
+      "position": [
+        13717.25,
+        17233.68
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "252046469",
+      "position": [
+        13667.7,
+        17348.43
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "256189976",
+      "position": [
+        13995.09,
+        17054.48
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "256189977",
+      "position": [
+        14085.91,
+        17031.54
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "256189978",
+      "position": [
+        14156.22,
+        17014.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "256190118",
+      "position": [
+        14101.37,
+        17201.47
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "256190139",
+      "position": [
+        14191.82,
+        17402.74
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "256190156",
+      "position": [
+        14118.44,
+        17402.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "256201389",
+      "position": [
+        14498.06,
+        17266.64
+      ],
+      "tls_program_ids": [
+        "256201389"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "256490868",
+      "position": [
+        13835.85,
+        16795.57
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258346770",
+      "position": [
+        13761.0,
+        17496.85
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258346772",
+      "position": [
+        13919.14,
+        17587.35
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258346773",
+      "position": [
+        13912.4,
+        17493.27
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "258346776",
+      "position": [
+        13982.09,
+        17491.99
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "258347996",
+      "position": [
+        14199.1,
+        17460.28
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258347997",
+      "position": [
+        13912.69,
+        17464.27
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "258347999",
+      "position": [
+        13983.82,
+        17552.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258348002",
+      "position": [
+        13981.0,
+        17463.26
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "258348232",
+      "position": [
+        14050.68,
+        17462.21
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "258348233",
+      "position": [
+        14063.8,
+        17549.67
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258348534",
+      "position": [
+        13829.45,
+        17599.66
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258348535",
+      "position": [
+        13840.67,
+        17429.3
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "258585973",
+      "position": [
+        14433.2,
+        18069.42
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "26110729",
+      "position": [
+        14266.03,
+        18073.9
+      ],
+      "tls_program_ids": [
+        "26110729"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "266570009",
+      "position": [
+        13901.87,
+        18087.55
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "266574870",
+      "position": [
+        14519.03,
+        17439.27
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "26715772",
+      "position": [
+        13733.34,
+        16897.0
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "26716586",
+      "position": [
+        13821.79,
+        16906.36
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "26718384",
+      "position": [
+        13775.78,
+        17075.35
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "268061678",
+      "position": [
+        14124.74,
+        18160.01
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "268197981",
+      "position": [
+        13712.51,
+        17066.34
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "274331914",
+      "position": [
+        14287.03,
+        17397.19
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274333875",
+      "position": [
+        14276.68,
+        17316.48
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274353299",
+      "position": [
+        14657.34,
+        17350.63
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "280120513",
+      "position": [
+        14184.47,
+        17335.59
+      ],
+      "tls_program_ids": [
+        "280120513"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "294223020",
+      "position": [
+        13673.67,
+        17866.3
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3008854750",
+      "position": [
+        14164.8,
+        17109.23
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "315372838",
+      "position": [
+        13911.88,
+        17314.48
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "315373118",
+      "position": [
+        14035.86,
+        17310.22
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "32319828",
+      "position": [
+        13831.28,
+        16834.98
+      ],
+      "tls_program_ids": [
+        "32319828"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "32319829",
+      "position": [
+        13734.18,
+        16813.85
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "3302156369",
+      "position": [
+        14506.15,
+        17166.0
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3302422976",
+      "position": [
+        14312.27,
+        17309.06
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3302422984",
+      "position": [
+        14296.05,
+        17207.33
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3329935579",
+      "position": [
+        13565.01,
+        17528.89
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3588475451",
+      "position": [
+        14523.37,
+        17259.48
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "476189",
+      "position": [
+        13810.68,
+        16999.7
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "62426694",
+      "position": [
+        14172.42,
+        17193.44
+      ],
+      "tls_program_ids": [
+        "62426694"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "652791048",
+      "position": [
+        14588.95,
+        17240.93
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "762399659",
+      "position": [
+        13612.57,
+        17398.43
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "796761043",
+      "position": [
+        13775.8,
+        17376.72
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_1098574052_1098574061_247379905",
+      "position": [
+        13743.75,
+        17609.43
+      ],
+      "tls_program_ids": [
+        "cluster_1098574052_1098574061_247379905"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_252046467_252046470",
+      "position": [
+        13679.2,
+        17228.67
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_258346775_2665408833",
+      "position": [
+        13836.14,
+        17496.26
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "cluster_26718385_738066527_738066531_738066575",
+      "position": [
+        13794.5,
+        17102.27
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    }
+  ],
+  "tls_program_to_junction": {
+    "247379907": "247379907",
+    "252017285": "252017285",
+    "256201389": "256201389",
+    "26110729": "26110729",
+    "280120513": "280120513",
+    "32319828": "32319828",
+    "62426694": "62426694",
+    "cluster_1098574052_1098574061_247379905": "cluster_1098574052_1098574061_247379905"
+  }
+}

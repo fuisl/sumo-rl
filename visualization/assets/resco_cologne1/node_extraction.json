@@ -1,0 +1,96 @@
+{
+  "counts": {
+    "junctions": 9,
+    "road_polylines": 10,
+    "tls_program_controlled_junctions": 1,
+    "tls_programs": 1
+  },
+  "junctions": [
+    {
+      "id": "360018",
+      "position": [
+        11749.43,
+        13418.1
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "360027",
+      "position": [
+        11772.93,
+        13425.53
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "360130",
+      "position": [
+        11724.09,
+        13311.82
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "360135",
+      "position": [
+        11550.47,
+        13289.43
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "364075",
+      "position": [
+        11765.94,
+        13377.1
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364088",
+      "position": [
+        11821.64,
+        13229.07
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "364089",
+      "position": [
+        11839.04,
+        13228.14
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "cluster_309733003_3214708408_3214708428_3259525887_3259525888_357183",
+      "position": [
+        12159.14,
+        13366.26
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_357187_359543",
+      "position": [
+        11796.42,
+        13327.95
+      ],
+      "tls_program_ids": [
+        "GS_cluster_357187_359543"
+      ],
+      "type": "traffic_light"
+    }
+  ],
+  "tls_program_to_junction": {
+    "GS_cluster_357187_359543": "cluster_357187_359543"
+  }
+}

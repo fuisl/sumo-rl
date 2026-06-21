@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 520" width="1400" height="520">
+<title>FGS extracted topology</title>
+<rect width="100%" height="100%" fill="#ffffff" />
+<g id="summary" font-family="Arial, sans-serif">
+<rect x="18" y="18" width="390" height="112" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="32" y="44" font-size="15" font-weight="700" fill="#0f172a">FGS extracted topology: cologne1.net.xml</text>
+<text x="32" y="63" font-size="12" font-weight="400" fill="#0f172a">Junctions: 9</text>
+<text x="32" y="82" font-size="12" font-weight="400" fill="#0f172a">Road polylines: 10</text>
+<text x="32" y="101" font-size="12" font-weight="400" fill="#0f172a">TLS workers: 1</text>
+<text x="32" y="120" font-size="12" font-weight="400" fill="#0f172a">Directed super-edges: 0</text>
+</g>
+<g id="underlying-network" fill="none" stroke="#64748b" stroke-width="1.15" stroke-opacity="0.42">
+<polyline points="541.22,256.81 531.07,259.18 426.09,282.28" />
+<polyline points="1319.56,165.28 1259.45,196.32 1173.97,220.68 1063.04,233.42 1016.64,233.07 875.45,223.20 756.15,219.23 693.71,224.91 622.83,238.69 612.55,240.68 608.83,241.52" />
+<polyline points="69.57,338.22 59.70,301.18 56.00,283.31 76.55,261.37 98.95,255.98 168.19,239.31 188.39,234.64 274.00,214.85 333.74,199.61 345.16,196.72 374.76,189.18 384.90,186.59 394.82,184.07 487.12,160.57 493.91,158.85 500.87,158.27" />
+<polyline points="668.82,463.77 605.21,274.76" />
+<polyline points="477.51,73.66 507.34,147.78" />
+<polyline points="514.51,164.99 548.12,241.75 548.65,243.09" />
+<polyline points="430.35,301.66 535.45,278.52 545.74,276.10" />
+<polyline points="591.87,230.62 532.23,56.00" />
+<polyline points="613.19,260.86 616.59,260.09 626.59,258.15 696.52,244.58 756.73,239.11 874.42,242.99 1015.86,252.90 1064.11,253.26 1177.85,240.18 1266.80,214.87 1328.67,182.90" />
+<polyline points="564.50,287.61 626.61,464.00" />
+</g>
+<g id="fgs-super-edges" fill="none" stroke="#2563eb" stroke-linecap="round">
+</g>
+<g id="fgs-tls-nodes" font-family="Arial, sans-serif" font-size="10">
+<circle cx="577.64" cy="258.65" r="6.0" fill="#0f766e" stroke="#ffffff" stroke-width="1.4" />
+<text x="584.64" y="251.65" fill="#0f172a" paint-order="stroke" stroke="#ffffff" stroke-width="3">GS_cluster_357187_359543</text>
+</g>
+<g id="legend" font-family="Arial, sans-serif" font-size="12">
+<rect x="24" y="428" width="260" height="86" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="36" y="448" font-weight="700" fill="#0f172a">Legend</text>
+<circle cx="42" cy="466" r="5" fill="#cbd5e1" />
+<text x="56" y="470" fill="#0f172a">Underlying SUMO network</text>
+<circle cx="42" cy="486" r="5" fill="#2563eb" />
+<text x="56" y="490" fill="#0f172a">FGS directed super-edge</text>
+<circle cx="42" cy="506" r="5" fill="#0f766e" />
+<text x="56" y="510" fill="#0f172a">FGS TLS worker</text>
+</g>
+</svg>

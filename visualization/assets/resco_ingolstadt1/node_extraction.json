@@ -1,0 +1,87 @@
+{
+  "counts": {
+    "junctions": 8,
+    "road_polylines": 11,
+    "tls_program_controlled_junctions": 1,
+    "tls_programs": 1
+  },
+  "junctions": [
+    {
+      "id": "1200363969",
+      "position": [
+        212989.38,
+        451522.35
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "1200363973",
+      "position": [
+        213001.95,
+        451493.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274041341",
+      "position": [
+        212893.09,
+        451433.2
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "cluster_1041665560_1641678966",
+      "position": [
+        212975.57,
+        451424.61
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_1041665625_cluster_1387938793_1387938796_cluster_1757124361_1757124367_32564126",
+      "position": [
+        213023.53,
+        451299.65
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "cluster_1526094852_194342371",
+      "position": [
+        212969.58,
+        451449.54
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_274083968_cluster_1200364014_1200364088",
+      "position": [
+        212989.97,
+        451459.17
+      ],
+      "tls_program_ids": [
+        "gneJ207"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_306484187_cluster_1200363791_1200363826_1200363834_1200363898_1200363927_1200363938_1200363947_1200364074_1200364103_1507566554_1507566556_255882157_306484190",
+      "position": [
+        213035.92,
+        451601.45
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    }
+  ],
+  "tls_program_to_junction": {
+    "gneJ207": "cluster_274083968_cluster_1200364014_1200364088"
+  }
+}

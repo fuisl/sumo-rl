@@ -431,7 +431,7 @@ def _draw_gif_roads(draw, road_polylines: list[list[Point]], project: Callable[[
     for road in road_polylines:
         points = [_int_point(project(point)) for point in road]
         if len(points) >= 2:
-            draw.line(points, fill="#cbd5e1", width=1)
+            draw.line(points, fill="#94a3b8", width=1)
 
 
 def _draw_gif_junctions(
@@ -468,8 +468,6 @@ def _draw_gif_super_edges(
     edge_count = max(1, int(len(topology.directed_edges) * edge_fraction))
     visible_edges = topology.directed_edges[:edge_count]
     directed_edge_set = set(topology.directed_edges)
-    edge_by_pair = {(edge.source, edge.target): edge for edge in topology.super_edges}
-    max_weight = max((1.0 / edge.travel_time for edge in topology.super_edges if edge.travel_time > 0), default=1.0)
     for source, target in visible_edges:
         if source not in topology.positions or target not in topology.positions:
             continue
@@ -478,11 +476,7 @@ def _draw_gif_super_edges(
         if (target, source) in directed_edge_set:
             start, end = _offset_line(start, end, 4.0 if source < target else -4.0)
         start, end = _shorten_line(start, end, 8.0)
-        super_edge = edge_by_pair.get((source, target))
-        weight = 1.0 / super_edge.travel_time if super_edge is not None and super_edge.travel_time > 0 else 1.0
-        strength = weight / max(max_weight, 1e-9)
-        line_width = max(2, int(round(2 + 3 * strength)))
-        draw.line((_int_point(start), _int_point(end)), fill="#2563eb", width=line_width)
+        draw.line((_int_point(start), _int_point(end)), fill="#2563eb", width=3)
 
 
 def _draw_gif_tls_labels(draw, topology: TLSTopology, project: Callable[[Point], Point], font) -> None:

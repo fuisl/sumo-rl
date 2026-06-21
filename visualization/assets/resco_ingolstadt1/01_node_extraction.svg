@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1800" width="1400" height="1800">
+<title>FGS node extraction</title>
+<rect width="100%" height="100%" fill="#ffffff" />
+<g id="summary" font-family="Arial, sans-serif">
+<rect x="18" y="18" width="390" height="112" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="32" y="44" font-size="15" font-weight="700" fill="#0f172a">Node extraction: ingolstadt1.net.xml</text>
+<text x="32" y="63" font-size="12" font-weight="400" fill="#0f172a">Junctions: 8</text>
+<text x="32" y="82" font-size="12" font-weight="400" fill="#0f172a">Road polylines: 11</text>
+<text x="32" y="101" font-size="12" font-weight="400" fill="#0f172a">TLS programs: 1</text>
+</g>
+<g id="underlying-network" fill="none" stroke="#64748b" stroke-width="1.15" stroke-opacity="0.58">
+<polyline points="540.61,825.23 493.19,838.17" />
+<polyline points="443.12,853.04 277.76,905.65 56.00,960.29" />
+<polyline points="568.98,489.00 566.67,508.78 558.74,578.13 556.42,658.16 560.89,740.29 567.94,794.99 568.71,801.60" />
+<polyline points="690.77,790.91 690.05,782.87 687.57,728.56 685.15,670.33" />
+<polyline points="703.44,633.70 714.45,491.43 850.07,56.55" />
+<polyline points="577.41,898.76 591.90,960.73 619.00,1089.51 660.31,1275.41 744.81,1670.74" />
+<polyline points="509.99,899.81 557.47,886.86" />
+<polyline points="873.26,1642.54 795.32,1287.75 752.24,1092.04 722.39,953.13 708.89,881.35 707.35,867.97" />
+<polyline points="740.95,1742.57 706.19,1744.00 693.03,1739.98 676.72,1725.16 666.04,1697.95 664.50,1672.34 668.46,1646.78 658.44,1592.36 527.84,1042.42" />
+<polyline points="521.06,1013.61 498.92,920.74" />
+<polyline points="71.31,1022.31 295.11,967.17 462.51,913.91" />
+</g>
+<g id="junctions" stroke="#ffffff" stroke-width="0.8">
+<circle class="ordinary-junction" cx="591.95" cy="491.70" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="661.19" cy="650.89" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="61.56" cy="982.76" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="515.88" cy="1030.08" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="780.06" cy="1718.39" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="482.89" cy="892.76" r="2.4" fill="#64748b" />
+<circle class="tls-program-controlled" cx="595.20" cy="839.71" r="4.8" fill="#0f766e" />
+<circle class="ordinary-junction" cx="848.31" cy="56.00" r="2.4" fill="#64748b" />
+</g>
+<g id="tls-program-labels" font-family="Arial, sans-serif" font-size="10">
+<text x="601.20" y="833.71" fill="#0f172a" paint-order="stroke" stroke="#ffffff" stroke-width="3">gneJ207</text>
+</g>
+<g id="legend" font-family="Arial, sans-serif" font-size="12">
+<rect x="24" y="1708" width="260" height="86" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="36" y="1728" font-weight="700" fill="#0f172a">Legend</text>
+<circle cx="42" cy="1746" r="5" fill="#64748b" />
+<text x="56" y="1750" fill="#0f172a">Non-internal junction</text>
+<circle cx="42" cy="1766" r="5" fill="#f59e0b" />
+<text x="56" y="1770" fill="#0f172a">Traffic-light junction</text>
+<circle cx="42" cy="1786" r="5" fill="#0f766e" />
+<text x="56" y="1790" fill="#0f172a">TLS-program-controlled junction</text>
+</g>
+</svg>

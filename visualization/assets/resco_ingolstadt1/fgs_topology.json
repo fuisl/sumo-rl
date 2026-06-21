@@ -1,0 +1,15 @@
+{
+  "directed_edges": [],
+  "edge_weights": {},
+  "edges": [],
+  "positions": {
+    "gneJ207": [
+      212989.97,
+      451459.17
+    ]
+  },
+  "super_edges": [],
+  "workers": [
+    "gneJ207"
+  ]
+}

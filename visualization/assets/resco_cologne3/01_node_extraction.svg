@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 841" width="1400" height="841">
+<title>FGS node extraction</title>
+<rect width="100%" height="100%" fill="#ffffff" />
+<g id="summary" font-family="Arial, sans-serif">
+<rect x="18" y="18" width="390" height="112" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="32" y="44" font-size="15" font-weight="700" fill="#0f172a">Node extraction: cologne3.net.xml</text>
+<text x="32" y="63" font-size="12" font-weight="400" fill="#0f172a">Junctions: 29</text>
+<text x="32" y="82" font-size="12" font-weight="400" fill="#0f172a">Road polylines: 48</text>
+<text x="32" y="101" font-size="12" font-weight="400" fill="#0f172a">TLS programs: 3</text>
+</g>
+<g id="underlying-network" fill="none" stroke="#64748b" stroke-width="1.15" stroke-opacity="0.58">
+<polyline points="1188.86,393.32 1133.59,221.89" />
+<polyline points="353.41,656.28 343.81,661.16 341.54,662.43" />
+<polyline points="850.66,362.19 785.53,400.14" />
+<polyline points="950.60,302.42 877.12,345.61 866.44,352.54" />
+<polyline points="979.69,285.49 967.28,292.68" />
+<polyline points="1114.39,207.87 1109.46,210.36 1044.00,247.40 991.95,278.29" />
+<polyline points="1263.93,135.18 1131.87,199.19" />
+<polyline points="512.51,562.00 442.84,604.77 413.78,622.29 394.65,632.99 391.87,634.52" />
+<polyline points="609.14,504.20 570.22,526.86 533.37,549.26" />
+<polyline points="657.58,475.47 626.15,494.17" />
+<polyline points="765.92,411.67 724.07,436.48 686.46,458.51 670.53,467.84" />
+<polyline points="571.90,712.23 532.49,575.28" />
+<polyline points="326.91,670.34 312.78,679.16 247.64,720.03" />
+<polyline points="776.19,396.56 772.57,385.19 734.40,240.36" />
+<polyline points="867.11,376.16 945.90,528.56" />
+<polyline points="957.81,289.22 874.39,56.00" />
+<polyline points="852.67,580.79 834.34,541.84 816.56,504.11 786.00,424.47" />
+<polyline points="524.27,545.61 524.11,545.00 497.29,331.63 468.80,116.82" />
+<polyline points="617.39,490.22 544.15,106.46" />
+<polyline points="56.00,322.65 197.42,479.70 299.08,592.56 313.56,597.17 327.58,596.71" />
+<polyline points="1129.54,223.20 1184.81,394.63" />
+<polyline points="347.79,673.59 349.83,672.45 359.21,667.68" />
+<polyline points="398.06,645.71 400.86,644.15 420.21,633.35 449.48,615.69 519.20,572.90" />
+<polyline points="791.97,411.20 857.10,373.25" />
+<polyline points="873.39,363.27 883.84,356.51 957.08,313.46" />
+<polyline points="973.72,303.74 986.11,296.55" />
+<polyline points="998.47,289.29 1050.42,258.46 1115.48,221.63 1120.15,219.28" />
+<polyline points="1137.46,210.70 1269.49,146.68" />
+<polyline points="540.00,560.19 576.75,537.87 615.59,515.25" />
+<polyline points="632.68,505.16 664.13,486.48" />
+<polyline points="677.00,478.87 692.93,469.55 730.57,447.51 772.45,422.67" />
+<polyline points="443.86,777.95 440.98,771.34 432.98,753.40 420.83,726.72 405.76,695.98 398.53,680.49 391.19,660.22 390.63,658.61" />
+<polyline points="528.38,576.46 567.79,713.40" />
+<polyline points="254.43,730.88 319.57,690.00 333.70,681.18" />
+<polyline points="295.66,294.24 302.21,363.77 311.84,430.84 328.97,539.32 329.48,543.99 334.29,586.94" />
+<polyline points="336.39,602.90 337.39,609.95" />
+<polyline points="346.75,631.79 355.17,644.81 356.15,646.33" />
+<polyline points="730.27,241.45 768.47,386.39 772.14,397.86" />
+<polyline points="949.68,526.61 870.91,374.20" />
+<polyline points="674.00,489.49 739.34,627.21" />
+<polyline points="994.78,299.69 995.26,301.34 998.54,376.01 1000.01,408.06 1000.50,416.22 1002.14,487.45 1002.95,498.98" />
+<polyline points="373.08,671.89 381.57,687.68 387.15,699.33 403.26,731.80 430.80,785.00" />
+<polyline points="870.37,57.44 953.80,290.66" />
+<polyline points="782.02,426.00 812.65,505.79 830.47,543.65 848.81,582.60" />
+<polyline points="464.56,117.38 493.05,332.16 519.92,545.82 520.15,546.70" />
+<polyline points="383.02,630.43 380.21,616.72 366.21,535.27 347.99,429.71 338.82,362.31 331.47,282.24 325.67,202.91 321.38,149.23 320.57,137.29" />
+<polyline points="539.96,107.26 613.20,491.02" />
+<polyline points="339.49,633.27 339.20,641.37 336.95,654.39 335.88,657.16" />
+</g>
+<g id="junctions" stroke="#ffffff" stroke-width="0.8">
+<circle class="ordinary-junction" cx="441.90" cy="778.80" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="251.03" cy="725.46" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="466.68" cy="117.10" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="542.05" cy="106.86" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="618.28" cy="506.28" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="318.44" cy="137.44" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="732.33" cy="240.91" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="432.69" cy="784.01" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="340.30" cy="615.37" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="297.77" cy="294.04" r="2.4" fill="#64748b" />
+<circle class="tls-program-controlled" cx="1127.08" cy="208.62" r="4.8" fill="#0f766e" />
+<circle class="ordinary-junction" cx="988.93" cy="287.51" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="960.78" cy="303.86" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="862.54" cy="362.67" r="2.4" fill="#64748b" />
+<circle class="tls-program-controlled" cx="778.74" cy="411.51" r="4.8" fill="#0f766e" />
+<circle class="ordinary-junction" cx="667.96" cy="476.75" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="526.18" cy="561.11" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="872.38" cy="56.72" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="1002.95" cy="498.98" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="947.79" cy="527.58" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="850.74" cy="581.69" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="569.85" cy="712.81" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="739.34" cy="627.21" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="1186.83" cy="393.97" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="325.78" cy="678.58" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="57.59" cy="321.22" r="2.4" fill="#64748b" />
+<circle class="ordinary-junction" cx="337.01" cy="592.06" r="2.4" fill="#64748b" />
+<circle class="tls-program-controlled" cx="374.16" cy="652.23" r="4.8" fill="#0f766e" />
+<circle class="ordinary-junction" cx="1269.35" cy="146.38" r="2.4" fill="#64748b" />
+</g>
+<g id="tls-program-labels" font-family="Arial, sans-serif" font-size="10">
+<text x="1133.08" y="202.62" fill="#0f172a" paint-order="stroke" stroke="#ffffff" stroke-width="3">360082</text>
+<text x="784.74" y="405.51" fill="#0f172a" paint-order="stroke" stroke="#ffffff" stroke-width="3">360086</text>
+<text x="380.16" y="646.23" fill="#0f172a" paint-order="stroke" stroke="#ffffff" stroke-width="3">GS_cluster_2415878664_254486231_359566_359576</text>
+</g>
+<g id="legend" font-family="Arial, sans-serif" font-size="12">
+<rect x="24" y="749" width="260" height="86" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="36" y="769" font-weight="700" fill="#0f172a">Legend</text>
+<circle cx="42" cy="787" r="5" fill="#64748b" />
+<text x="56" y="791" fill="#0f172a">Non-internal junction</text>
+<circle cx="42" cy="807" r="5" fill="#f59e0b" />
+<text x="56" y="811" fill="#0f172a">Traffic-light junction</text>
+<circle cx="42" cy="827" r="5" fill="#0f766e" />
+<text x="56" y="831" fill="#0f172a">TLS-program-controlled junction</text>
+</g>
+</svg>

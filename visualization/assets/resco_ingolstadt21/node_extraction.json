@@ -1,0 +1,3504 @@
+{
+  "counts": {
+    "junctions": 381,
+    "road_polylines": 853,
+    "tls_program_controlled_junctions": 21,
+    "tls_programs": 21
+  },
+  "junctions": [
+    {
+      "id": "1041665529",
+      "position": [
+        212582.46,
+        451332.22
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1082831889",
+      "position": [
+        212060.34,
+        451566.87
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1137585389",
+      "position": [
+        212007.83,
+        452669.03
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1137585395",
+      "position": [
+        212060.38,
+        452807.52
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1195228772",
+      "position": [
+        213048.13,
+        451303.73
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1200363932",
+      "position": [
+        212993.73,
+        451609.62
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1200363969",
+      "position": [
+        212989.38,
+        451522.35
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1200363973",
+      "position": [
+        213001.95,
+        451493.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1205464844",
+      "position": [
+        213399.22,
+        452105.64
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1274337864",
+      "position": [
+        212884.78,
+        452641.16
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "1331204959",
+      "position": [
+        212954.11,
+        451613.82
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1331204963",
+      "position": [
+        212965.6,
+        451626.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1387938626",
+      "position": [
+        213077.39,
+        451168.32
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1423242655",
+      "position": [
+        212083.83,
+        451908.69
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "1423242663",
+      "position": [
+        211834.11,
+        451915.34
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1423242665",
+      "position": [
+        212088.44,
+        451922.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1423242716",
+      "position": [
+        211900.73,
+        451995.7
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1427494696",
+      "position": [
+        212297.49,
+        453068.45
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "1427494803",
+      "position": [
+        213110.57,
+        453235.06
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1427494830",
+      "position": [
+        212991.19,
+        453340.21
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1504207551",
+      "position": [
+        212242.84,
+        452413.88
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "1504207553",
+      "position": [
+        212250.99,
+        452423.88
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1504207555",
+      "position": [
+        212259.43,
+        452429.61
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1504207558",
+      "position": [
+        212243.85,
+        452439.65
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1504207559",
+      "position": [
+        212251.38,
+        452442.63
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1507566567",
+      "position": [
+        212075.14,
+        451684.91
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1507566826",
+      "position": [
+        212146.08,
+        453007.62
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1509951406",
+      "position": [
+        212193.59,
+        452965.96
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1516302011",
+      "position": [
+        212424.48,
+        452104.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1516302036",
+      "position": [
+        212392.02,
+        452249.83
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1517542714",
+      "position": [
+        213253.89,
+        452987.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1526094877",
+      "position": [
+        212908.59,
+        451655.49
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1602381826",
+      "position": [
+        211873.42,
+        452209.34
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1602381828",
+      "position": [
+        211918.08,
+        452215.14
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1602381830",
+      "position": [
+        211916.36,
+        452225.77
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1636343531",
+      "position": [
+        213621.13,
+        452132.51
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1717650207",
+      "position": [
+        212590.49,
+        452311.76
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1724786014",
+      "position": [
+        212482.82,
+        451823.39
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1737482829",
+      "position": [
+        213238.79,
+        453146.48
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "1737482881",
+      "position": [
+        213100.39,
+        453252.58
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1782978609",
+      "position": [
+        211895.28,
+        452061.72
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1782978693",
+      "position": [
+        211882.9,
+        452257.95
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1782978746",
+      "position": [
+        211987.98,
+        452434.73
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1815670952",
+      "position": [
+        211723.16,
+        451682.62
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1833941877",
+      "position": [
+        213171.38,
+        451686.57
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "1833941883",
+      "position": [
+        213124.36,
+        451697.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1833965795",
+      "position": [
+        213424.16,
+        452058.49
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1833965819",
+      "position": [
+        213421.56,
+        452069.0
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1833965838",
+      "position": [
+        213558.13,
+        452088.91
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840038411",
+      "position": [
+        211704.89,
+        451266.14
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "1840038412",
+      "position": [
+        211642.31,
+        451332.68
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840155828",
+      "position": [
+        212258.43,
+        452226.34
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840155847",
+      "position": [
+        212248.65,
+        452249.13
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840209246",
+      "position": [
+        213032.25,
+        452460.47
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840464316i",
+      "position": [
+        213381.64,
+        452420.9
+      ],
+      "tls_program_ids": [],
+      "type": "zipper"
+    },
+    {
+      "id": "1840464353",
+      "position": [
+        213343.24,
+        452435.17
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840464393",
+      "position": [
+        213385.94,
+        452470.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840464441",
+      "position": [
+        212983.42,
+        452701.24
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "1840464466",
+      "position": [
+        212908.04,
+        452747.29
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1840499770",
+      "position": [
+        212241.41,
+        452350.23
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "1840510349",
+      "position": [
+        212895.32,
+        453204.95
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1863241546",
+      "position": [
+        211854.51,
+        452218.73
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1863241614",
+      "position": [
+        211859.48,
+        452368.23
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1863241632",
+      "position": [
+        211854.06,
+        452380.69
+      ],
+      "tls_program_ids": [
+        "1863241632"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "1863241639",
+      "position": [
+        211846.53,
+        452396.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1870520941",
+      "position": [
+        212063.44,
+        452213.63
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1875873900",
+      "position": [
+        213028.99,
+        453393.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1875873944",
+      "position": [
+        213050.09,
+        453335.94
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1875873962",
+      "position": [
+        213023.03,
+        453376.12
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "194342319",
+      "position": [
+        212065.35,
+        451262.37
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "194342350",
+      "position": [
+        212494.81,
+        451334.42
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "194342352",
+      "position": [
+        212551.74,
+        451351.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "194342361",
+      "position": [
+        212729.79,
+        451411.84
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "195635398",
+      "position": [
+        211968.65,
+        452230.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1976170213",
+      "position": [
+        211892.07,
+        452200.66
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "1976170215",
+      "position": [
+        211872.51,
+        452222.04
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2001713465",
+      "position": [
+        213568.16,
+        452105.17
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2046445416",
+      "position": [
+        213173.28,
+        453145.36
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2065265145",
+      "position": [
+        212831.56,
+        453014.36
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "2068408769",
+      "position": [
+        211771.33,
+        451790.69
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2113472091",
+      "position": [
+        212725.05,
+        451713.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2117568613",
+      "position": [
+        213015.67,
+        453386.75
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2131253424",
+      "position": [
+        212359.82,
+        451328.6
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "2230685408",
+      "position": [
+        213397.93,
+        452206.54
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2247460545",
+      "position": [
+        211931.15,
+        451877.65
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "2272006403",
+      "position": [
+        213146.74,
+        452687.03
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2272006404",
+      "position": [
+        213073.21,
+        452707.71
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "2272006408",
+      "position": [
+        213232.64,
+        452715.41
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "2272006415",
+      "position": [
+        213176.36,
+        452766.99
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "2272006430",
+      "position": [
+        213171.32,
+        452820.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2277358892",
+      "position": [
+        211756.59,
+        452687.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2278775935",
+      "position": [
+        212294.4,
+        451816.22
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "2278775936",
+      "position": [
+        212206.96,
+        451813.48
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "2330725114",
+      "position": [
+        211730.78,
+        452677.54
+      ],
+      "tls_program_ids": [
+        "2330725114"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "2337351360",
+      "position": [
+        211987.12,
+        452728.88
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2337351365",
+      "position": [
+        211931.47,
+        452763.22
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243351999",
+      "position": [
+        212743.37,
+        451715.68
+      ],
+      "tls_program_ids": [
+        "243351999"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "243352002",
+      "position": [
+        212645.45,
+        451851.2
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243352010",
+      "position": [
+        212805.7,
+        451786.97
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243636066",
+      "position": [
+        212651.04,
+        451704.74
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243636067",
+      "position": [
+        212674.36,
+        451614.37
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243636071",
+      "position": [
+        212671.78,
+        451811.25
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "243636072",
+      "position": [
+        212567.66,
+        451802.98
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "243636097",
+      "position": [
+        212081.51,
+        451658.98
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "243636103",
+      "position": [
+        212138.66,
+        451615.5
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243636120",
+      "position": [
+        211748.74,
+        451769.58
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243641575",
+      "position": [
+        212990.66,
+        452191.68
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243641576",
+      "position": [
+        212934.99,
+        452174.14
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243641583",
+      "position": [
+        212873.56,
+        452361.55
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243641585",
+      "position": [
+        212838.9,
+        452442.96
+      ],
+      "tls_program_ids": [
+        "243641585"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "243641589",
+      "position": [
+        212748.61,
+        452551.29
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243749518",
+      "position": [
+        212732.0,
+        452562.83
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243749545",
+      "position": [
+        212628.08,
+        452625.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243749561",
+      "position": [
+        211996.92,
+        452411.88
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "243749571",
+      "position": [
+        212210.48,
+        452949.86
+      ],
+      "tls_program_ids": [
+        "243749571"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "245975606",
+      "position": [
+        212595.11,
+        451987.44
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "245975611",
+      "position": [
+        212677.88,
+        452008.64
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "245975614",
+      "position": [
+        212724.94,
+        451867.07
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "247957628",
+      "position": [
+        213157.53,
+        451982.0
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "247957651",
+      "position": [
+        213204.26,
+        451896.11
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "249176474",
+      "position": [
+        213191.28,
+        451809.71
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "249179921",
+      "position": [
+        211888.94,
+        451960.58
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "253813231",
+      "position": [
+        212487.89,
+        451795.91
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "267408897",
+      "position": [
+        213617.16,
+        452036.04
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267408977",
+      "position": [
+        213147.57,
+        451724.12
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267517536",
+      "position": [
+        213602.93,
+        452310.1
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "267517557",
+      "position": [
+        213628.62,
+        452137.18
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267517558",
+      "position": [
+        213619.75,
+        452148.09
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267517559",
+      "position": [
+        213389.93,
+        452295.98
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267517560",
+      "position": [
+        213485.52,
+        452302.28
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267517561",
+      "position": [
+        213494.63,
+        452087.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782464",
+      "position": [
+        213298.1,
+        452289.06
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "267782465",
+      "position": [
+        213215.38,
+        452276.2
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "267782468",
+      "position": [
+        213043.74,
+        452212.84
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "267782471",
+      "position": [
+        212929.98,
+        452448.84
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782472",
+      "position": [
+        213049.83,
+        452459.43
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782474",
+      "position": [
+        213141.5,
+        452196.97
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782476",
+      "position": [
+        213166.75,
+        452049.92
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782478",
+      "position": [
+        213264.5,
+        452067.15
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782479",
+      "position": [
+        213180.58,
+        452448.67
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782483",
+      "position": [
+        213245.36,
+        452164.11
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "267782484",
+      "position": [
+        213258.41,
+        452102.16
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782487",
+      "position": [
+        213327.69,
+        452109.07
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782490",
+      "position": [
+        213399.82,
+        452173.63
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267782492",
+      "position": [
+        213283.12,
+        452440.1
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783847",
+      "position": [
+        212871.35,
+        452153.23
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783852",
+      "position": [
+        212832.32,
+        452098.48
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783854",
+      "position": [
+        212841.86,
+        452198.82
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783860",
+      "position": [
+        212929.66,
+        452074.69
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783861",
+      "position": [
+        212847.9,
+        452050.07
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783866",
+      "position": [
+        213105.68,
+        451863.08
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783870",
+      "position": [
+        212832.79,
+        452092.68
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783873",
+      "position": [
+        212672.17,
+        452138.05
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783877",
+      "position": [
+        212253.77,
+        452056.74
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783883",
+      "position": [
+        212632.53,
+        452273.52
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783890",
+      "position": [
+        212063.04,
+        452221.08
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783891",
+      "position": [
+        211973.52,
+        452077.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783900",
+      "position": [
+        212054.09,
+        452155.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783904",
+      "position": [
+        211830.25,
+        451921.42
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783911",
+      "position": [
+        212010.2,
+        451851.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783914",
+      "position": [
+        212052.06,
+        451838.47
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783916",
+      "position": [
+        212093.16,
+        451863.85
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783920",
+      "position": [
+        212204.18,
+        451855.0
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783922",
+      "position": [
+        212293.71,
+        451858.01
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783925",
+      "position": [
+        212410.65,
+        451892.57
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783926",
+      "position": [
+        212424.89,
+        451890.33
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783927",
+      "position": [
+        212427.56,
+        451904.29
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783933",
+      "position": [
+        212171.87,
+        451860.73
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "267783934",
+      "position": [
+        212174.36,
+        451804.38
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273472398",
+      "position": [
+        212292.04,
+        452878.01
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273472509",
+      "position": [
+        213162.89,
+        453140.28
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906183",
+      "position": [
+        212029.47,
+        450766.1
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "273906267",
+      "position": [
+        211717.25,
+        451306.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906268",
+      "position": [
+        211764.61,
+        451326.94
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906276",
+      "position": [
+        211719.91,
+        451668.53
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906281",
+      "position": [
+        212085.48,
+        451362.79
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906283",
+      "position": [
+        212130.01,
+        451365.05
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906286",
+      "position": [
+        212126.24,
+        451558.7
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906289",
+      "position": [
+        212151.02,
+        451665.85
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906290",
+      "position": [
+        212100.9,
+        451438.8
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906293",
+      "position": [
+        212280.26,
+        451415.9
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "273906295",
+      "position": [
+        212283.23,
+        451556.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274041325",
+      "position": [
+        212803.06,
+        451417.15
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274041328",
+      "position": [
+        212801.8,
+        451707.22
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274041330",
+      "position": [
+        212282.54,
+        451495.46
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274041341",
+      "position": [
+        212893.09,
+        451433.2
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274041350",
+      "position": [
+        212536.65,
+        451598.84
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274081675",
+      "position": [
+        213001.5,
+        451125.4
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "274081797",
+      "position": [
+        212674.22,
+        451277.37
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "274081800",
+      "position": [
+        212569.42,
+        451359.06
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579648",
+      "position": [
+        212546.12,
+        451514.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579649",
+      "position": [
+        212436.37,
+        451590.3
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579651",
+      "position": [
+        212429.94,
+        451680.88
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579652",
+      "position": [
+        212204.41,
+        451555.5
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579654",
+      "position": [
+        212180.75,
+        451429.54
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579655",
+      "position": [
+        212347.55,
+        451497.82
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579657",
+      "position": [
+        212400.3,
+        451397.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579658",
+      "position": [
+        212481.34,
+        451373.05
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579660",
+      "position": [
+        212489.67,
+        451509.63
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579661",
+      "position": [
+        212493.54,
+        451429.81
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274579668",
+      "position": [
+        212622.56,
+        451520.97
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274591023",
+      "position": [
+        212515.67,
+        451338.55
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "274604006",
+      "position": [
+        212363.17,
+        451347.03
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "275309621",
+      "position": [
+        212812.28,
+        451802.19
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "275309623",
+      "position": [
+        212901.5,
+        451809.91
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "275309964",
+      "position": [
+        212917.39,
+        451758.97
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2769732328",
+      "position": [
+        213517.96,
+        452439.18
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "2769732333",
+      "position": [
+        213516.3,
+        452465.64
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "2769732337",
+      "position": [
+        213239.67,
+        452443.74
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2769732343",
+      "position": [
+        213242.67,
+        452467.92
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "2903266814",
+      "position": [
+        211806.67,
+        452708.18
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292572181",
+      "position": [
+        212582.0,
+        452736.51
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "292572191",
+      "position": [
+        212668.8,
+        452791.37
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292572192",
+      "position": [
+        212771.16,
+        452859.7
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292572193",
+      "position": [
+        212879.67,
+        452955.22
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292572194",
+      "position": [
+        212933.76,
+        453002.14
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292572196",
+      "position": [
+        212865.17,
+        453062.84
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292572205",
+      "position": [
+        212474.9,
+        452739.37
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292578363",
+      "position": [
+        212783.18,
+        452600.02
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292578419",
+      "position": [
+        212983.09,
+        452757.41
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292578428",
+      "position": [
+        212985.23,
+        452661.13
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292580629",
+      "position": [
+        212975.58,
+        453148.31
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292580630",
+      "position": [
+        213060.08,
+        453079.38
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292580631",
+      "position": [
+        213137.09,
+        453009.2
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292581823",
+      "position": [
+        213003.37,
+        452909.46
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292581824",
+      "position": [
+        213025.34,
+        453043.5
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292581825",
+      "position": [
+        212992.66,
+        453011.49
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292581826",
+      "position": [
+        212957.99,
+        452977.82
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "292584327",
+      "position": [
+        212753.9,
+        453185.88
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "292585212",
+      "position": [
+        213249.91,
+        452721.24
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "292588756",
+      "position": [
+        212761.13,
+        452942.56
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "292588757",
+      "position": [
+        212887.46,
+        453208.15
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "292588758",
+      "position": [
+        212823.29,
+        453002.66
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "30503242",
+      "position": [
+        211811.17,
+        452200.19
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "30503246",
+      "position": [
+        213383.65,
+        452432.38
+      ],
+      "tls_program_ids": [
+        "30503246"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "305559015",
+      "position": [
+        211778.49,
+        451535.7
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "305559019",
+      "position": [
+        211142.16,
+        451677.01
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "30624890",
+      "position": [
+        212995.87,
+        453415.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "30624895",
+      "position": [
+        213275.3,
+        452902.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "30624897",
+      "position": [
+        213349.81,
+        452646.72
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "30624898",
+      "position": [
+        213385.29,
+        452459.55
+      ],
+      "tls_program_ids": [
+        "30624898"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "307619666",
+      "position": [
+        212150.49,
+        452323.38
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "3079046105",
+      "position": [
+        211841.83,
+        451199.27
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "308796066",
+      "position": [
+        211706.63,
+        451607.94
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "310446273",
+      "position": [
+        213638.08,
+        451986.8
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "310985749",
+      "position": [
+        212242.08,
+        452459.74
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "310985750",
+      "position": [
+        212243.07,
+        452427.84
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "311487344",
+      "position": [
+        213379.72,
+        452399.07
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "313321254",
+      "position": [
+        211894.68,
+        452070.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "318410702",
+      "position": [
+        211692.46,
+        451348.01
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "320006200",
+      "position": [
+        212796.28,
+        451535.51
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "320006202",
+      "position": [
+        212886.36,
+        451535.12
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "320006204",
+      "position": [
+        212703.76,
+        451528.74
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3214665943",
+      "position": [
+        213117.29,
+        452633.6
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3214665944",
+      "position": [
+        213085.05,
+        452667.86
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "3214665955",
+      "position": [
+        213181.76,
+        453101.95
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3214665956",
+      "position": [
+        213001.67,
+        453406.91
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3214665957",
+      "position": [
+        212980.52,
+        453436.65
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "322888900",
+      "position": [
+        212145.37,
+        451643.22
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "32564060",
+      "position": [
+        213618.56,
+        452667.45
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "32564121",
+      "position": [
+        213168.51,
+        451758.74
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "32564122",
+      "position": [
+        213220.84,
+        451881.96
+      ],
+      "tls_program_ids": [
+        "32564122"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "32564123",
+      "position": [
+        213281.6,
+        452005.7
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "336359451",
+      "position": [
+        211785.99,
+        451141.95
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "344963236",
+      "position": [
+        211802.35,
+        451903.33
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "349904682",
+      "position": [
+        212950.8,
+        452030.87
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "349905397",
+      "position": [
+        212951.28,
+        452082.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "356694630",
+      "position": [
+        211644.12,
+        451841.31
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "356699998",
+      "position": [
+        211967.57,
+        451477.5
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "356700147",
+      "position": [
+        211996.75,
+        451586.57
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "356700154",
+      "position": [
+        211841.38,
+        451523.59
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "356700161",
+      "position": [
+        211825.42,
+        451340.7
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "356700396",
+      "position": [
+        211905.4,
+        451285.79
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3603265999",
+      "position": [
+        212893.11,
+        453084.8
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "3603792102",
+      "position": [
+        211989.68,
+        452429.09
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364442178",
+      "position": [
+        211736.94,
+        451276.89
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364443218",
+      "position": [
+        211685.52,
+        451514.21
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364443388",
+      "position": [
+        211559.4,
+        451534.55
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364443429",
+      "position": [
+        211675.05,
+        451458.2
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364443494",
+      "position": [
+        211594.37,
+        451450.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364443525",
+      "position": [
+        211676.57,
+        451401.65
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364443653",
+      "position": [
+        211622.35,
+        451384.29
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364444172",
+      "position": [
+        211825.55,
+        451439.15
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364444362",
+      "position": [
+        212010.08,
+        451402.09
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364444368",
+      "position": [
+        212027.54,
+        451456.83
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364444448",
+      "position": [
+        211836.46,
+        451496.41
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "364445380",
+      "position": [
+        211955.26,
+        451484.79
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "370357925",
+      "position": [
+        213095.72,
+        451124.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "371774881",
+      "position": [
+        213665.4,
+        452155.71
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "371775491",
+      "position": [
+        213484.54,
+        452072.34
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "4301348943",
+      "position": [
+        212480.59,
+        451686.09
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "434068771",
+      "position": [
+        211387.33,
+        451949.58
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "4385816806",
+      "position": [
+        211689.58,
+        451272.98
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497583472",
+      "position": [
+        212275.97,
+        452434.88
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "497583474",
+      "position": [
+        212258.87,
+        452438.01
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590080",
+      "position": [
+        212484.19,
+        453008.69
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590081",
+      "position": [
+        213254.25,
+        452951.85
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590082",
+      "position": [
+        213359.56,
+        452604.78
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590083",
+      "position": [
+        213174.04,
+        452604.78
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "497590084",
+      "position": [
+        213179.54,
+        452472.21
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590085",
+      "position": [
+        213037.54,
+        452831.86
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "497590087",
+      "position": [
+        213154.37,
+        452892.71
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "497590089",
+      "position": [
+        213204.93,
+        452924.09
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "497590113",
+      "position": [
+        213193.94,
+        452702.34
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "497590122",
+      "position": [
+        212501.65,
+        452519.66
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590134",
+      "position": [
+        212380.98,
+        452437.25
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590136",
+      "position": [
+        212386.88,
+        452327.0
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "497590145",
+      "position": [
+        213050.71,
+        452787.58
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590151",
+      "position": [
+        213071.98,
+        452710.47
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "497590155",
+      "position": [
+        213088.37,
+        452668.09
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "497590160",
+      "position": [
+        213151.03,
+        452607.67
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590164",
+      "position": [
+        213246.05,
+        452600.28
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590173",
+      "position": [
+        212358.0,
+        452826.05
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590178",
+      "position": [
+        212451.24,
+        452757.87
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590182",
+      "position": [
+        212574.83,
+        452585.22
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590188",
+      "position": [
+        212747.44,
+        452404.17
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590907",
+      "position": [
+        213095.21,
+        453261.13
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "497590919",
+      "position": [
+        213004.75,
+        453213.52
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "503422236",
+      "position": [
+        212349.16,
+        452547.92
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "503422237",
+      "position": [
+        212241.02,
+        452551.13
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "503422242",
+      "position": [
+        212559.56,
+        452908.0
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "503422247",
+      "position": [
+        212636.53,
+        452933.63
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "5320786662",
+      "position": [
+        213491.66,
+        452157.45
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "5497313246",
+      "position": [
+        213125.07,
+        452245.12
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "60044025",
+      "position": [
+        211998.78,
+        453156.02
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "674241651",
+      "position": [
+        213327.17,
+        452740.84
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "683260304",
+      "position": [
+        212883.89,
+        452797.88
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "683260762",
+      "position": [
+        212173.41,
+        452984.81
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "683260864",
+      "position": [
+        212826.05,
+        452907.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "690288770",
+      "position": [
+        213435.07,
+        453003.92
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "713557156",
+      "position": [
+        212391.31,
+        452948.01
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "765819228",
+      "position": [
+        212377.71,
+        451816.81
+      ],
+      "tls_program_ids": [],
+      "type": "right_before_left"
+    },
+    {
+      "id": "765868917",
+      "position": [
+        212582.3,
+        451989.92
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "765868918",
+      "position": [
+        212337.95,
+        452079.8
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "89127267",
+      "position": [
+        213240.97,
+        452982.48
+      ],
+      "tls_program_ids": [
+        "89127267"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "89129116",
+      "position": [
+        213098.26,
+        451297.86
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "89173751",
+      "position": [
+        211785.67,
+        451879.57
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "89173755",
+      "position": [
+        211775.72,
+        451853.73
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "89173763",
+      "position": [
+        211756.54,
+        451796.68
+      ],
+      "tls_program_ids": [
+        "89173763"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "89173808",
+      "position": [
+        211776.71,
+        451176.17
+      ],
+      "tls_program_ids": [
+        "89173808"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "89173831",
+      "position": [
+        211318.99,
+        451077.68
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "98101378",
+      "position": [
+        213809.54,
+        452248.72
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "cluster_1041665560_1641678966",
+      "position": [
+        212975.57,
+        451424.61
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_1041665625_cluster_1387938793_1387938796_cluster_1757124361_1757124367_32564126",
+      "position": [
+        213023.53,
+        451299.65
+      ],
+      "tls_program_ids": [
+        "gneJ143"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_1427494838_273472399",
+      "position": [
+        213033.65,
+        453360.65
+      ],
+      "tls_program_ids": [
+        "cluster_1427494838_273472399"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_1500083093_1500083101_1507566574_267783912",
+      "position": [
+        212021.04,
+        451702.13
+      ],
+      "tls_program_ids": [],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_1526094852_194342371",
+      "position": [
+        212969.58,
+        451449.54
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_1526094879_274041348",
+      "position": [
+        212891.62,
+        451661.68
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_1757124350_1757124352",
+      "position": [
+        213067.1,
+        451176.18
+      ],
+      "tls_program_ids": [
+        "cluster_1757124350_1757124352"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_1815670941_305559016",
+      "position": [
+        211690.95,
+        451554.93
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_1833965782_1833965806_371781950_cluster_32564118_371775504",
+      "position": [
+        213399.24,
+        452062.11
+      ],
+      "tls_program_ids": [
+        "gneJ255"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_1839947197_277421914",
+      "position": [
+        212560.5,
+        451213.85
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "cluster_1840209209_268417350",
+      "position": [
+        212852.99,
+        452415.03
+      ],
+      "tls_program_ids": [
+        "gneJ257"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_1840209252_292578437",
+      "position": [
+        213026.06,
+        452484.71
+      ],
+      "tls_program_ids": [],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_1863241547_1863241548_1976170214",
+      "position": [
+        211891.64,
+        452219.51
+      ],
+      "tls_program_ids": [
+        "cluster_1863241547_1863241548_1976170214"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_2043172766_2043172767_2071663041",
+      "position": [
+        211641.52,
+        452890.24
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "cluster_2229700350_456368155",
+      "position": [
+        211440.39,
+        452103.95
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "cluster_2302665030_2337351369",
+      "position": [
+        211969.34,
+        452776.25
+      ],
+      "tls_program_ids": [
+        "gneJ208"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_274083968_cluster_1200364014_1200364088",
+      "position": [
+        212989.97,
+        451459.17
+      ],
+      "tls_program_ids": [
+        "gneJ207"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_306484187_cluster_1200363791_1200363826_1200363834_1200363898_1200363927_1200363938_1200363947_1200364074_1200364103_1507566554_1507566556_255882157_306484190",
+      "position": [
+        213035.92,
+        451601.45
+      ],
+      "tls_program_ids": [
+        "cluster_306484187_cluster_1200363791_1200363826_1200363834_1200363898_1200363927_1200363938_1200363947_1200364074_1200364103_1507566554_1507566556_255882157_306484190"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_336359446_470954969",
+      "position": [
+        211788.98,
+        451129.28
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "cluster_371462086_469470779_98101387_cluster_371462067_371775459_371775468",
+      "position": [
+        213588.57,
+        452098.97
+      ],
+      "tls_program_ids": [
+        "gneJ210"
+      ],
+      "type": "traffic_light"
+    },
+    {
+      "id": "cluster_497590130_656751589",
+      "position": [
+        212578.61,
+        452333.17
+      ],
+      "tls_program_ids": [],
+      "type": "traffic_light"
+    },
+    {
+      "id": "gneJ10",
+      "position": [
+        211891.86,
+        452188.19
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ11",
+      "position": [
+        211892.55,
+        452102.2
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ12",
+      "position": [
+        211896.13,
+        452046.01
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ127",
+      "position": [
+        213517.45,
+        452080.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ129",
+      "position": [
+        211732.56,
+        451158.93
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ13",
+      "position": [
+        213380.05,
+        452394.67
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ132",
+      "position": [
+        211876.01,
+        451748.32
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ133",
+      "position": [
+        211899.76,
+        451740.44
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ136",
+      "position": [
+        213046.77,
+        451255.58
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ14",
+      "position": [
+        213272.52,
+        452016.64
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ15",
+      "position": [
+        213385.89,
+        452331.24
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ182",
+      "position": [
+        213341.52,
+        451638.46
+      ],
+      "tls_program_ids": [],
+      "type": "dead_end"
+    },
+    {
+      "id": "gneJ21",
+      "position": [
+        211779.55,
+        452558.81
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ22",
+      "position": [
+        211805.72,
+        452496.12
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ23",
+      "position": [
+        211823.4,
+        452452.84
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ25",
+      "position": [
+        212259.57,
+        452906.34
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ254",
+      "position": [
+        213068.54,
+        451635.56
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    },
+    {
+      "id": "gneJ26",
+      "position": [
+        212804.38,
+        452496.0
+      ],
+      "tls_program_ids": [],
+      "type": "priority"
+    }
+  ],
+  "tls_program_to_junction": {
+    "1863241632": "1863241632",
+    "2330725114": "2330725114",
+    "243351999": "243351999",
+    "243641585": "243641585",
+    "243749571": "243749571",
+    "30503246": "30503246",
+    "30624898": "30624898",
+    "32564122": "32564122",
+    "89127267": "89127267",
+    "89173763": "89173763",
+    "89173808": "89173808",
+    "cluster_1427494838_273472399": "cluster_1427494838_273472399",
+    "cluster_1757124350_1757124352": "cluster_1757124350_1757124352",
+    "cluster_1863241547_1863241548_1976170214": "cluster_1863241547_1863241548_1976170214",
+    "cluster_306484187_cluster_1200363791_1200363826_1200363834_1200363898_1200363927_1200363938_1200363947_1200364074_1200364103_1507566554_1507566556_255882157_306484190": "cluster_306484187_cluster_1200363791_1200363826_1200363834_1200363898_1200363927_1200363938_1200363947_1200364074_1200364103_1507566554_1507566556_255882157_306484190",
+    "gneJ143": "cluster_1041665625_cluster_1387938793_1387938796_cluster_1757124361_1757124367_32564126",
+    "gneJ207": "cluster_274083968_cluster_1200364014_1200364088",
+    "gneJ208": "cluster_2302665030_2337351369",
+    "gneJ210": "cluster_371462086_469470779_98101387_cluster_371462067_371775459_371775468",
+    "gneJ255": "cluster_1833965782_1833965806_371781950_cluster_32564118_371775504",
+    "gneJ257": "cluster_1840209209_268417350"
+  }
+}

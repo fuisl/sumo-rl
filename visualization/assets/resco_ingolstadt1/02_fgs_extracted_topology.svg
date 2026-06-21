@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1800" width="1400" height="1800">
+<title>FGS extracted topology</title>
+<rect width="100%" height="100%" fill="#ffffff" />
+<g id="summary" font-family="Arial, sans-serif">
+<rect x="18" y="18" width="390" height="112" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="32" y="44" font-size="15" font-weight="700" fill="#0f172a">FGS extracted topology: ingolstadt1.net.xml</text>
+<text x="32" y="63" font-size="12" font-weight="400" fill="#0f172a">Junctions: 8</text>
+<text x="32" y="82" font-size="12" font-weight="400" fill="#0f172a">Road polylines: 11</text>
+<text x="32" y="101" font-size="12" font-weight="400" fill="#0f172a">TLS workers: 1</text>
+<text x="32" y="120" font-size="12" font-weight="400" fill="#0f172a">Directed super-edges: 0</text>
+</g>
+<g id="underlying-network" fill="none" stroke="#64748b" stroke-width="1.15" stroke-opacity="0.42">
+<polyline points="540.77,824.93 493.33,837.87" />
+<polyline points="443.25,852.75 277.83,905.37 56.00,960.03" />
+<polyline points="569.15,488.59 566.84,508.37 558.90,577.75 556.59,657.81 561.05,739.96 568.10,794.68 568.87,801.29" />
+<polyline points="690.98,790.60 690.26,782.55 687.78,728.22 685.36,669.98" />
+<polyline points="703.65,633.34 714.67,491.02 850.33,56.00" />
+<polyline points="577.58,898.48 592.07,960.47 619.18,1089.30 660.51,1275.26 745.03,1670.72" />
+<polyline points="510.14,899.53 557.63,886.58" />
+<polyline points="873.52,1642.51 795.56,1287.60 752.47,1091.83 722.60,952.87 709.10,881.07 707.56,867.68" />
+<polyline points="741.17,1742.57 706.40,1744.00 693.24,1739.98 676.93,1725.16 666.24,1697.94 664.69,1672.31 668.66,1646.75 658.63,1592.31 527.99,1042.19" />
+<polyline points="521.21,1013.37 499.06,920.47" />
+<polyline points="71.32,1022.07 295.19,966.92 462.64,913.64" />
+</g>
+<g id="fgs-super-edges" fill="none" stroke="#2563eb" stroke-linecap="round">
+</g>
+<g id="fgs-tls-nodes" font-family="Arial, sans-serif" font-size="10">
+<circle cx="595.38" cy="839.42" r="6.0" fill="#0f766e" stroke="#ffffff" stroke-width="1.4" />
+<text x="602.38" y="832.42" fill="#0f172a" paint-order="stroke" stroke="#ffffff" stroke-width="3">gneJ207</text>
+</g>
+<g id="legend" font-family="Arial, sans-serif" font-size="12">
+<rect x="24" y="1708" width="260" height="86" fill="#ffffff" fill-opacity="0.9" stroke="#cbd5e1" />
+<text x="36" y="1728" font-weight="700" fill="#0f172a">Legend</text>
+<circle cx="42" cy="1746" r="5" fill="#cbd5e1" />
+<text x="56" y="1750" fill="#0f172a">Underlying SUMO network</text>
+<circle cx="42" cy="1766" r="5" fill="#2563eb" />
+<text x="56" y="1770" fill="#0f172a">FGS directed super-edge</text>
+<circle cx="42" cy="1786" r="5" fill="#0f766e" />
+<text x="56" y="1790" fill="#0f172a">FGS TLS worker</text>
+</g>
+</svg>
