@@ -170,6 +170,8 @@ class SumoEnvironment(gym.Env):
         add_per_agent_info: bool = False,
         tripinfo_output_name: Optional[str] = None,
         keep_tripinfo_output: bool = False,
+        statistic_output_name: Optional[str] = None,
+        keep_statistic_output: bool = False,
         use_libsumo: Optional[bool] = None,
         sumo_seed: Union[str, int] = "random",
         ts_ids: Optional[List[str]] = None,
@@ -220,11 +222,14 @@ class SumoEnvironment(gym.Env):
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
         self.keep_tripinfo_output = keep_tripinfo_output
+        self.statistic_output_name = statistic_output_name
+        self.keep_statistic_output = keep_statistic_output
         self.use_libsumo = bool(use_libsumo) if use_libsumo is not None else False
         self._traci_backend = _backend_module(self.use_libsumo)
         self.last_episode_summary = {}
         self.last_episode_final_info = {}
         self.last_episode_lane_waiting_times = {}
+        self.last_episode_lane_queue_levels = {}
         self.completed_episode_summaries = []
         self.num_seconds = num_seconds
         self.label = str(SumoEnvironment.CONNECTION_LABEL)
@@ -322,6 +327,11 @@ class SumoEnvironment(gym.Env):
                 sumo_cmd.extend(["--tripinfo-output.write-unfinished", "true"])
             if "--tripinfo-output.write-undeparted" not in sumo_cmd:
                 sumo_cmd.extend(["--tripinfo-output.write-undeparted", "true"])
+        statistic_output = self._build_statistic_output_path()
+        if statistic_output is not None and "--statistic-output" not in sumo_cmd:
+            sumo_cmd.extend(["--statistic-output", str(statistic_output)])
+            if not self._sumo_cmd_has_option(sumo_cmd, "--duration-log.statistics"):
+                sumo_cmd.extend(["--duration-log.statistics", "true"])
         return sumo_cmd
 
     def _start_simulation(self):
@@ -329,6 +339,9 @@ class SumoEnvironment(gym.Env):
         tripinfo_output = self._build_tripinfo_output_path()
         if tripinfo_output is not None and "--tripinfo-output" in sumo_cmd:
             tripinfo_output.parent.mkdir(parents=True, exist_ok=True)
+        statistic_output = self._build_statistic_output_path()
+        if statistic_output is not None and "--statistic-output" in sumo_cmd:
+            statistic_output.parent.mkdir(parents=True, exist_ok=True)
         if self.use_gui or self.render_mode is not None:
             sumo_cmd.extend(["--start", "--quit-on-end"])
             if self.render_mode == "rgb_array":
@@ -589,7 +602,12 @@ class SumoEnvironment(gym.Env):
             ts: [float(value) for value in self.traffic_signals[ts].get_accumulated_waiting_time_per_lane()]
             for ts in self.ts_ids
         }
+        lane_queue_levels = {
+            ts: [float(value) for value in self.traffic_signals[ts].get_lanes_queue()]
+            for ts in self.ts_ids
+        }
         self.last_lane_waiting_times = lane_waiting_times
+        self.last_lane_queue_levels = lane_queue_levels
         accumulated_waiting_time = [sum(lane_waiting_times[ts]) for ts in self.ts_ids]
         average_speed = [self.traffic_signals[ts].get_average_speed() for ts in self.ts_ids]
         info = {}
@@ -632,6 +650,11 @@ class SumoEnvironment(gym.Env):
         if not self.tripinfo_output_name:
             return None
         return Path(f"{self.tripinfo_output_name}_conn{self.label}_ep{self.episode}.xml")
+
+    def _build_statistic_output_path(self) -> Optional[Path]:
+        if not self.statistic_output_name:
+            return None
+        return Path(f"{self.statistic_output_name}_conn{self.label}_ep{self.episode}.xml")
 
     @staticmethod
     def _reward_to_scalar(value) -> Optional[float]:
@@ -857,6 +880,10 @@ class SumoEnvironment(gym.Env):
         self.last_episode_lane_waiting_times = {
             ts: [float(value) for value in values]
             for ts, values in (self.last_lane_waiting_times or {}).items()
+        }
+        self.last_episode_lane_queue_levels = {
+            ts: [float(value) for value in values]
+            for ts, values in (getattr(self, "last_lane_queue_levels", {}) or {}).items()
         }
         return summary
 

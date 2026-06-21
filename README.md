@@ -242,6 +242,41 @@ evaluation helper from a notebook, open
 `experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
 `CHECKPOINT_PATH`.
 
+For thesis-style validation across RLlib checkpoints and static baselines,
+use the unified validation CLI:
+
+```bash
+python experiments/validate_methods.py --controller rllib --run-dir outputs/rllib/2026-06-21_12-00-00 --checkpoint-selector best --seeds 1 2 3
+python experiments/validate_methods.py --controller fixed_time --scenario resco_grid4x4 --seeds 1 2 3
+python experiments/validate_methods.py --controller static_max_pressure --scenario resco_grid4x4 --seeds 1 2 3
+```
+
+The CLI writes a compact terminal table, per-seed CSV/JSON artifacts, and
+validation plots under a dedicated output directory.
+
+To export an MP4 rollout from a trained RLlib checkpoint, use:
+
+```bash
+python experiments/record_rollout.py --controller rllib --run-dir outputs/rllib/2026-06-21_12-00-00 --checkpoint outputs/rllib/2026-06-21_12-00-00/checkpoints/ppo/checkpoint_000001 --output outputs/rllib/2026-06-21_12-00-00/videos/rollout.mp4
+```
+
+The recorder restores the checkpoint, runs one evaluation rollout with
+`render_mode=rgb_array`, and writes an MP4 file. Use `--frame-skip` to reduce
+video size or `--max-steps` for a short smoke recording.
+The MP4 writer needs either OpenCV or `imageio` plus `imageio-ffmpeg`
+installed; the `.[experiments]`, `.[rendering]`, and `.[all]` extras now
+include the `imageio` path.
+
+For static baselines, use the same recorder with a different controller:
+
+```bash
+python experiments/record_rollout.py --controller fixed_time --scenario resco_grid4x4 --output outputs/recordings/fixed_time.mp4
+python experiments/record_rollout.py --controller static_max_pressure --scenario resco_grid4x4 --output outputs/recordings/max_pressure.mp4
+```
+
+You can pass extra Hydra overrides for static controllers with repeated
+`--override` flags, for example `--override env.kwargs.num_seconds=600`.
+
 RLlib runs default to `resources.ray_address=null`, so experiments start a
 local Ray instance unless you opt into cluster discovery. To share one Ray
 scheduler across multiple jobs, start a shared Ray head first, for example
