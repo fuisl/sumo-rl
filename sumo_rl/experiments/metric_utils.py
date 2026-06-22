@@ -86,6 +86,8 @@ def reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penal
         return "- mean normalized queue density across incoming lanes"
     if reward_name == "pressure":
         return "vehicle_count(outgoing_lanes) - vehicle_count(incoming_lanes)"
+    if reward_name == "presslight-pressure":
+        return "-0.25 * abs(queued_vehicles(incoming_lanes) - queued_vehicles(outgoing_lanes)), matching PressLight pressure reward"
     if reward_name == "normalized-pressure":
         return "mean outgoing lane density - mean incoming lane density"
     if reward_name == "co2":

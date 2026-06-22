@@ -280,6 +280,11 @@ class TrafficSignal:
     def _pressure_reward(self):
         return self.get_pressure()
 
+    def _presslight_pressure_reward(self):
+        incoming_queued = sum(float(self.sumo.lane.getLastStepHaltingNumber(lane)) for lane in self.lanes)
+        outgoing_queued = sum(float(self.sumo.lane.getLastStepHaltingNumber(lane)) for lane in self.out_lanes)
+        return -0.25 * abs(incoming_queued - outgoing_queued)
+
     def _average_speed_reward(self):
         return self.get_average_speed()
 
@@ -565,6 +570,7 @@ class TrafficSignal:
         "queue": _queue_reward,
         "normalized-queue": _normalized_queue_reward,
         "pressure": _pressure_reward,
+        "presslight-pressure": _presslight_pressure_reward,
         "normalized-pressure": _normalized_pressure_reward,
         "co2": _co2_reward,
     }

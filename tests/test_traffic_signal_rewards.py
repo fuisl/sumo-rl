@@ -75,6 +75,25 @@ def test_weighted_nash_average_speed_reward_uses_uniform_weights_when_waits_are_
     assert reward == pytest.approx(1.1)
 
 
+def test_presslight_pressure_reward_uses_queued_pressure_magnitude() -> None:
+    class DummyLaneAPI:
+        @staticmethod
+        def getLastStepHaltingNumber(lane):
+            return {"in_a": 4, "in_b": 2, "out_a": 1, "out_b": 3}[lane]
+
+    class DummySumo:
+        lane = DummyLaneAPI()
+
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.sumo = DummySumo()
+    signal.lanes = ["in_a", "in_b"]
+    signal.out_lanes = ["out_a", "out_b"]
+
+    reward = signal._presslight_pressure_reward()
+
+    assert reward == pytest.approx(-0.5)
+
+
 def test_phase_average_speeds_and_max_waits_handle_empty_phases() -> None:
     class DummyLaneAPI:
         @staticmethod
