@@ -10,12 +10,12 @@ This guide explains how to run SUMO-RL in fixed-time mode with Hydra and inspect
 The fixed-time presets in this thesis use five seeds, one episode per seed, and the runner averages those validation passes into one RLlib-style baseline trace.
 The summary is computed with RESCO-style formulas:
 
-- `resco_avg_delay` from completed tripinfo rows only: `timeLoss + departDelay`
-- `resco_trip_time` from completed tripinfo rows only: `duration`
-- `resco_wait` from completed tripinfo rows only: `waitingTime`
+- `resco_avg_delay` from all non-ghost tripinfo rows written by SUMO: `timeLoss + departDelay`
+- `resco_trip_time` from all non-ghost tripinfo rows written by SUMO: `duration`
+- `resco_wait` from all non-ghost tripinfo rows written by SUMO: `waitingTime`
 - `resco_queue` and `resco_max_queue` from the live queue counts in the simulator
 
-Tripinfo rows for vehicles that are still running or never departed when the episode ends are counted separately and excluded from the RESCO averages.
+Tripinfo rows for vehicles that are still running or never departed when the episode ends are counted separately and included in the RESCO averages, matching the benchmark tripinfo parser.
 
 ## How to Read These Docs
 

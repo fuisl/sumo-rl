@@ -41,7 +41,11 @@ from pettingzoo.utils.conversions import parallel_wrapper_fn
 
 from .observations import DefaultObservationFunction, ObservationFunction
 from .traffic_signal import TrafficSignal
-from ..util.tripinfo import collect_tripinfo_metrics, is_ghost_vehicle as _is_ghost_vehicle
+from ..util.tripinfo import (
+    collect_resco_tripinfo_metrics,
+    collect_tripinfo_metrics,
+    is_ghost_vehicle as _is_ghost_vehicle,
+)
 
 
 TRACI_START_RETRIES = 3
@@ -695,10 +699,14 @@ class SumoEnvironment(gym.Env):
             return parsed_empty_summary
 
         tripinfo_metrics = collect_tripinfo_metrics(vehicles)
+        resco_tripinfo_metrics = collect_resco_tripinfo_metrics(vehicles)
         delays = tripinfo_metrics.delay_values
         trip_times = tripinfo_metrics.duration_values
         waits = tripinfo_metrics.wait_values
         time_losses = tripinfo_metrics.time_loss_values
+        resco_delays = resco_tripinfo_metrics.delay_values
+        resco_trip_times = resco_tripinfo_metrics.duration_values
+        resco_waits = resco_tripinfo_metrics.wait_values
         finished_count = tripinfo_metrics.finished_count
         unfinished_count = tripinfo_metrics.unfinished_count
         total_count = tripinfo_metrics.total_count
@@ -712,6 +720,14 @@ class SumoEnvironment(gym.Env):
         max_wait = float(np.max(waits)) if waits else nan
         avg_time_loss = float(np.mean(time_losses)) if time_losses else nan
         std_time_loss = float(np.std(time_losses)) if time_losses else nan
+        resco_avg_delay = float(np.mean(resco_delays)) if resco_delays else nan
+        resco_std_delay = float(np.std(resco_delays)) if resco_delays else nan
+        resco_max_delay = float(np.max(resco_delays)) if resco_delays else nan
+        resco_avg_trip_time = float(np.mean(resco_trip_times)) if resco_trip_times else nan
+        resco_std_trip_time = float(np.std(resco_trip_times)) if resco_trip_times else nan
+        resco_avg_wait = float(np.mean(resco_waits)) if resco_waits else nan
+        resco_std_wait = float(np.std(resco_waits)) if resco_waits else nan
+        resco_max_wait = float(np.max(resco_waits)) if resco_waits else nan
         return {
             "tripinfo/finished_count": float(finished_count),
             "tripinfo/running_unfinished_count": float(tripinfo_metrics.running_unfinished_count),
@@ -728,19 +744,19 @@ class SumoEnvironment(gym.Env):
             "tripinfo/std_delay": std_delay,
             "tripinfo/max_delay": max_delay,
             "tripinfo/max_waiting_time": max_wait,
-            "resco_avg_delay": avg_delay,
-            "resco_avg_delay_std": std_delay,
-            "resco_delay_mean": avg_delay,
-            "resco_delay_max": max_delay,
-            "resco_delay_std": std_delay,
-            "resco_trip_time": avg_trip_time,
-            "resco_trip_time_std": std_trip_time,
-            "resco_trip_time_mean": avg_trip_time,
-            "resco_wait": avg_wait,
-            "resco_wait_std": std_wait,
-            "resco_wait_mean": avg_wait,
-            "resco_wait_max": max_wait,
-            "resco_tripinfo_count": float(finished_count),
+            "resco_avg_delay": resco_avg_delay,
+            "resco_avg_delay_std": resco_std_delay,
+            "resco_delay_mean": resco_avg_delay,
+            "resco_delay_max": resco_max_delay,
+            "resco_delay_std": resco_std_delay,
+            "resco_trip_time": resco_avg_trip_time,
+            "resco_trip_time_std": resco_std_trip_time,
+            "resco_trip_time_mean": resco_avg_trip_time,
+            "resco_wait": resco_avg_wait,
+            "resco_wait_std": resco_std_wait,
+            "resco_wait_mean": resco_avg_wait,
+            "resco_wait_max": resco_max_wait,
+            "resco_tripinfo_count": float(resco_tripinfo_metrics.count),
             "tripinfo/parse_success": 1.0,
             "tripinfo/parse_pending": 0.0,
         }

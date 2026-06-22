@@ -54,6 +54,14 @@ class TripinfoParseResult:
         return int(self.finished_count + self.unfinished_count)
 
 
+@dataclass
+class RescoTripinfoParseResult:
+    delay_values: list[float] = field(default_factory=list)
+    duration_values: list[float] = field(default_factory=list)
+    wait_values: list[float] = field(default_factory=list)
+    count: int = 0
+
+
 def collect_tripinfo_metrics(vehicles) -> TripinfoParseResult:
     result = TripinfoParseResult()
     for vehicle in vehicles:
@@ -76,4 +84,20 @@ def collect_tripinfo_metrics(vehicles) -> TripinfoParseResult:
         result.duration_values.append(_safe_float(vehicle.attrib.get("duration"), default=0.0))
         result.wait_values.append(_safe_float(vehicle.attrib.get("waitingTime"), default=0.0))
         result.time_loss_values.append(time_loss)
+    return result
+
+
+def collect_resco_tripinfo_metrics(vehicles) -> RescoTripinfoParseResult:
+    result = RescoTripinfoParseResult()
+    for vehicle in vehicles:
+        vehicle_id = str(vehicle.attrib.get("id", "") or "")
+        if is_ghost_vehicle(vehicle_id):
+            continue
+
+        result.count += 1
+        time_loss = _safe_float(vehicle.attrib.get("timeLoss"), default=0.0)
+        depart_delay = _safe_float(vehicle.attrib.get("departDelay"), default=0.0)
+        result.delay_values.append(time_loss + depart_delay)
+        result.duration_values.append(_safe_float(vehicle.attrib.get("duration"), default=0.0))
+        result.wait_values.append(_safe_float(vehicle.attrib.get("waitingTime"), default=0.0))
     return result

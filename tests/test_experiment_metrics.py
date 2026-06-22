@@ -100,15 +100,20 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
     assert summary["tripinfo/unfinished_count"] == 2.0
     assert summary["tripinfo/total_count"] == 4.0
     assert summary["tripinfo/avg_delay"] == 12.0
-    assert summary["resco_avg_delay"] == 12.0
-    assert summary["resco_delay_mean"] == 12.0
+    assert summary["tripinfo/avg_duration"] == 40.0
+    assert summary["tripinfo/avg_waiting_time"] == 6.0
+    assert summary["resco_avg_delay"] == 7.25
+    assert summary["resco_delay_mean"] == 7.25
     assert summary["resco_delay_max"] == 14.0
-    assert summary["resco_delay_std"] == 2.0
-    assert summary["resco_trip_time"] == 40.0
-    assert summary["resco_trip_time_mean"] == 40.0
-    assert summary["resco_wait"] == 6.0
-    assert summary["resco_wait_mean"] == 6.0
+    assert np.isclose(summary["resco_delay_std"], np.std([10.0, 14.0, 5.0, 0.0]))
+    assert summary["resco_trip_time"] == 25.0
+    assert summary["resco_trip_time_mean"] == 25.0
+    assert np.isclose(summary["resco_trip_time_std"], np.std([30.0, 50.0, 20.0, 0.0]))
+    assert summary["resco_wait"] == 3.75
+    assert summary["resco_wait_mean"] == 3.75
     assert summary["resco_wait_max"] == 7.0
+    assert np.isclose(summary["resco_wait_std"], np.std([5.0, 7.0, 3.0, 0.0]))
+    assert summary["resco_tripinfo_count"] == 4.0
     assert summary["resco_queue"] == 3.0
     assert summary["resco_queue_mean"] == 3.0
     assert summary["resco_max_queue"] == 7.0
@@ -119,7 +124,7 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
     assert summary["reward/agent/tls_1"] == 3.0
     assert summary["tripinfo/parse_success"] == 1.0
     assert summary["tripinfo/parse_pending"] == 0.0
-    assert env.completed_episode_summaries[-1]["resco_trip_time"] == 40.0
+    assert env.completed_episode_summaries[-1]["resco_trip_time"] == 25.0
     assert not tripinfo_path.exists()
 
 

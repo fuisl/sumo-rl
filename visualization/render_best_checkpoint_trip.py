@@ -21,6 +21,8 @@ from visualization.render_fgs_topology import Point, extract_node_stage
 
 DEFAULT_RUN_DIR = ROOT / "outputs/resco_ingolstadt1__fgs_mlp_gatv2_ppo/2026-06-21_01-39-09"
 DEFAULT_OUTPUT_DIR = ROOT / "visualization/outputs/resco_ingolstadt1__fgs_mlp_gatv2_ppo"
+DEFAULT_FIXED_TIME_CONFIG = "presets/resco_ingolstadt21/fixed_time"
+DEFAULT_FIXED_TIME_OUTPUT_DIR = ROOT / "visualization/outputs/resco_ingolstadt21__fixed_time"
 
 
 @dataclass(frozen=True)
@@ -204,6 +206,185 @@ def run_best_checkpoint_trip_visualization(
         "metadata": metadata_path,
         "tripinfo": Path(str(metadata.get("tripinfo_path", ""))),
     }
+
+
+def run_fixed_time_trip_visualization(
+    output_dir: str | Path = DEFAULT_FIXED_TIME_OUTPUT_DIR,
+    *,
+    config_name: str = DEFAULT_FIXED_TIME_CONFIG,
+    config_file: str | Path | None = None,
+    seed: int | None = None,
+    width: int = 1200,
+    fps: int = 12,
+    frame_count: int = 160,
+    max_render_vehicles: int = 1200,
+) -> dict[str, Path]:
+    out_dir = Path(output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tripinfo_dir = out_dir / "tripinfo"
+    trace_path = out_dir / "trip_trace.json"
+    gif_path = out_dir / "trip_animation.gif"
+    metadata_path = out_dir / "trip_animation_metadata.json"
+
+    cfg = _load_fixed_time_config(config_name=config_name, config_file=config_file)
+    trace, metadata = _evaluate_fixed_time_and_trace(
+        cfg,
+        out_dir,
+        seed=seed,
+        tripinfo_output_prefix=tripinfo_dir / "fixed_time_eval",
+    )
+    trace_path.write_text(json.dumps(trace, indent=2, sort_keys=True), encoding="utf-8")
+    render_trip_animation(
+        trace,
+        gif_path,
+        width=width,
+        fps=fps,
+        frame_count=frame_count,
+        max_render_vehicles=max_render_vehicles,
+    )
+    metadata.update(
+        {
+            "animation_path": str(gif_path),
+            "trace_path": str(trace_path),
+            "render": {
+                "width": int(width),
+                "fps": int(fps),
+                "frame_count": int(min(frame_count, len(trace.get("frames", [])))),
+                "max_render_vehicles": int(max_render_vehicles),
+            },
+        }
+    )
+    metadata_path.write_text(json.dumps(_json_safe(metadata), indent=2, sort_keys=True), encoding="utf-8")
+    return {
+        "animation": gif_path,
+        "trace": trace_path,
+        "metadata": metadata_path,
+        "tripinfo": Path(str(metadata.get("tripinfo_path", ""))),
+    }
+
+
+def _load_fixed_time_config(*, config_name: str, config_file: str | Path | None):
+    from omegaconf import OmegaConf
+
+    if config_file is not None:
+        cfg = OmegaConf.load(Path(config_file))
+    else:
+        from hydra import compose, initialize_config_dir
+        from hydra.core.global_hydra import GlobalHydra
+
+        if GlobalHydra.instance().is_initialized():
+            GlobalHydra.instance().clear()
+        with initialize_config_dir(config_dir=str(ROOT / "configs"), version_base=None):
+            cfg = compose(config_name=config_name)
+    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    cfg.experiment.fixed_ts = True
+    cfg.env.kwargs.fixed_ts = True
+    cfg.env.kwargs.use_gui = False
+    return cfg
+
+
+def _first_configured_seed(cfg: Any) -> int:
+    from omegaconf import OmegaConf
+
+    eval_seeds = getattr(getattr(cfg, "experiment", None), "eval_seeds", None)
+    if OmegaConf.is_config(eval_seeds):
+        eval_seeds = OmegaConf.to_container(eval_seeds, resolve=True)
+    if isinstance(eval_seeds, list) and eval_seeds:
+        return int(eval_seeds[0])
+    seeds = getattr(getattr(cfg, "experiment", None), "seeds", None)
+    if OmegaConf.is_config(seeds):
+        seeds = OmegaConf.to_container(seeds, resolve=True)
+    if isinstance(seeds, list) and seeds:
+        return int(seeds[0])
+    configured = getattr(getattr(cfg, "experiment", None), "seed", None)
+    return int(configured if configured is not None else 42)
+
+
+def _evaluate_fixed_time_and_trace(
+    cfg: Any,
+    run_dir: Path,
+    *,
+    seed: int | None,
+    tripinfo_output_prefix: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from sumo_rl.experiments.runner import _build_env, _get_completed_episode_summary
+
+    chosen_seed = _first_configured_seed(cfg) if seed is None else int(seed)
+    cfg.experiment.seed = chosen_seed
+    cfg.env.kwargs.tripinfo_output_name = str(tripinfo_output_prefix)
+    cfg.env.kwargs.keep_tripinfo_output = True
+    cfg.env.kwargs.fixed_ts = True
+    cfg.env.kwargs.use_gui = False
+
+    env = None
+    total_reward = 0.0
+    try:
+        env = _build_env(cfg, run_dir, seed=chosen_seed)
+        base_env = _resolve_sumo_base_env(env)
+        base_env.tripinfo_output_name = str(tripinfo_output_prefix)
+        base_env.keep_tripinfo_output = True
+        base_env.fixed_ts = True
+
+        env.reset(seed=chosen_seed)
+        tripinfo_path = _tripinfo_path(base_env)
+        trace_frames = [_capture_frame(base_env)]
+        done = False
+        while not done:
+            step_result = env.step(None)
+            if len(step_result) == 5:
+                _obs, rewards, terminated, truncated, _info = step_result
+                done = bool(terminated or truncated)
+            else:
+                _obs, rewards, dones, _info = step_result
+                done = bool(dones.get("__all__", False) if isinstance(dones, dict) else dones)
+            if isinstance(rewards, dict):
+                total_reward += float(sum(float(value) for value in rewards.values()))
+            elif rewards is not None:
+                total_reward += float(rewards)
+            trace_frames.append(_capture_frame(base_env))
+        env.close()
+        env = None
+        episode_summary = _get_completed_episode_summary(base_env)
+    finally:
+        if env is not None:
+            env.close()
+
+    net_file = Path(str(cfg.env.kwargs.net_file))
+    if not net_file.is_absolute():
+        net_file = ROOT / net_file
+    extraction = extract_node_stage(net_file)
+    tls_positions = _tls_positions_from_extraction(extraction)
+    trace = {
+        "metadata": {
+            "experiment": str(cfg.experiment.name),
+            "scenario": str(cfg.scenario.name),
+            "seed": chosen_seed,
+            "algorithm_kind": "fixed_time",
+            "total_reward": total_reward,
+            "metric_name": "resco_delay_mean",
+            "metric_value": float(episode_summary.get("resco_delay_mean", math.nan)),
+        },
+        "network": {
+            "net_file": str(net_file),
+            "route_file": str(cfg.env.kwargs.route_file),
+            "road_polylines": [[list(point) for point in road] for road in extraction.road_polylines],
+            "tls_positions": tls_positions,
+        },
+        "frames": trace_frames,
+    }
+    metadata = {
+        "run_dir": str(run_dir),
+        "algorithm_kind": "fixed_time",
+        "seed": chosen_seed,
+        "net_file": str(net_file),
+        "route_file": str(cfg.env.kwargs.route_file),
+        "tripinfo_path": str(tripinfo_path) if tripinfo_path is not None else None,
+        "trace_frames": len(trace_frames),
+        "max_live_vehicles": max((len(frame["vehicles"]) for frame in trace_frames), default=0),
+        "tls_count": len(tls_positions),
+        "episode_summary": episode_summary,
+    }
+    return trace, metadata
 
 
 def _restore_evaluate_and_trace(

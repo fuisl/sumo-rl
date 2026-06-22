@@ -387,17 +387,17 @@ These are the main thesis comparison metrics.
 
 | Metric | Formula | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `resco_avg_delay` | `mean(timeLoss + departDelay)` over completed non-ghost vehicles (`arrival >= 0` and no unfinished/vaporized marker) | SUMO tripinfo XML | episode summary |
+| `resco_avg_delay` | `mean(timeLoss + departDelay)` over all non-ghost tripinfo rows written by SUMO, including unfinished and undeparted rows | SUMO tripinfo XML | episode summary |
 | `resco_delay_mean` | same value as `resco_avg_delay` | SUMO tripinfo XML | episode summary and training trace |
-| `resco_delay_max` | `max(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
-| `resco_delay_std` | std of `timeLoss + departDelay` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
-| `resco_trip_time` | `mean(duration)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_delay_max` | `max(timeLoss + departDelay)` over all non-ghost tripinfo rows | SUMO tripinfo XML | episode summary and training trace |
+| `resco_delay_std` | std of `timeLoss + departDelay` over all non-ghost tripinfo rows | SUMO tripinfo XML | episode summary and training trace |
+| `resco_trip_time` | `mean(duration)` over all non-ghost tripinfo rows | SUMO tripinfo XML | episode summary |
 | `resco_trip_time_mean` | same value as `resco_trip_time` | SUMO tripinfo XML | episode summary and training trace |
-| `resco_wait` | `mean(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_wait` | `mean(waitingTime)` over all non-ghost tripinfo rows | SUMO tripinfo XML | episode summary |
 | `resco_wait_mean` | same value as `resco_wait` | SUMO tripinfo XML | episode summary and training trace |
-| `resco_wait_max` | `max(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
-| `resco_wait_std` | std of `waitingTime` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
-| `resco_tripinfo_count` | count of completed non-ghost tripinfo rows | SUMO tripinfo XML | episode summary |
+| `resco_wait_max` | `max(waitingTime)` over all non-ghost tripinfo rows | SUMO tripinfo XML | episode summary and training trace |
+| `resco_wait_std` | std of `waitingTime` over all non-ghost tripinfo rows | SUMO tripinfo XML | episode summary and training trace |
+| `resco_tripinfo_count` | count of all non-ghost tripinfo rows written by SUMO | SUMO tripinfo XML | episode summary |
 | `tripinfo/running_unfinished_count` | count of departed non-ghost tripinfo rows with no arrival by episode end | SUMO tripinfo XML | episode summary and final eval |
 | `tripinfo/undeparted_count` | count of non-ghost tripinfo rows that never departed by episode end | SUMO tripinfo XML | episode summary and final eval |
 | `tripinfo/unfinished_count` | `tripinfo/running_unfinished_count + tripinfo/undeparted_count` | SUMO tripinfo XML | episode summary and final eval |
