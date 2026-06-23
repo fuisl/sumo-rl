@@ -280,6 +280,11 @@ You can pass extra Hydra overrides for static controllers with repeated
 RLlib runs default to `resources.ray_address=null`, so experiments start a
 local Ray instance unless you opt into cluster discovery. To share one Ray
 scheduler across multiple jobs, start a shared Ray head first, for example
+
+To inspect the DCRNN graph topology for a scenario, open
+`experiments/visualize_dcrnn_graph.ipynb`, set `SCENARIO_NAME`, and run the
+cells to render the SUMO-map overlay plus adjacency matrix.
+
 `CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`, then
 launch one or more jobs with `resources.ray_address=auto` or an explicit head
 address. In cluster mode the head's resources come from `ray start`, not from
