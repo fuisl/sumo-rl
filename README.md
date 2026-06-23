@@ -285,11 +285,12 @@ To inspect the DCRNN graph topology for a scenario, open
 `experiments/visualize_dcrnn_graph.ipynb`, set `SCENARIO_NAME`, and run the
 cells to render the SUMO-map overlay plus adjacency matrix.
 
-To replay one retained RLlib best-validation checkpoint as a live vehicle GIF,
-open `experiments/visualize_best_checkpoint_trip.ipynb`, set `RUN_DIR`, and run
-the cells. The notebook restores one checkpoint, replays a TraCI evaluation
-episode, and writes `trip_trace.json`, `trip_animation.gif`, plus
-`trip_animation_metadata.json` under `experiments/artifacts/live_trip_viz/`.
+To replay retained RLlib best-validation checkpoints as live vehicle GIFs,
+open `experiments/visualize_best_checkpoint_trip.ipynb`, set `RUN_DIRS`, and run
+the cells. The notebook accepts one or more run directories, restores one best
+checkpoint per run, replays a TraCI evaluation episode for each, and writes
+`trip_trace.json`, `trip_animation.gif`, plus `trip_animation_metadata.json`
+under per-run folders in `experiments/artifacts/live_trip_viz/`.
 
 `CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`, then
 launch one or more jobs with `resources.ray_address=auto` or an explicit head

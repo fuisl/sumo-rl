@@ -10,6 +10,7 @@ from sumo_rl.experiments.live_trip_visualization import (
     _projector,
     render_trip_animation,
     select_best_checkpoint,
+    run_best_checkpoint_trip_visualizations,
 )
 
 
@@ -47,6 +48,38 @@ def test_select_best_checkpoint_uses_ranked_metadata(tmp_path: Path):
     assert selected.checkpoint_path == checkpoint_1
     assert selected.metric_value == 17.95
     assert selected.validation_pass_index == 2
+
+
+def test_run_best_checkpoint_trip_visualizations_creates_one_output_per_run(monkeypatch, tmp_path: Path):
+    run_a = tmp_path / "outputs" / "run_a"
+    run_b = tmp_path / "other" / "run_a"
+    run_a.mkdir(parents=True)
+    run_b.mkdir(parents=True)
+    output_root = tmp_path / "viz"
+
+    calls: list[tuple[Path, Path]] = []
+
+    def fake_single_run(run_dir, output_dir, **kwargs):
+        del kwargs
+        run_dir_path = Path(run_dir).resolve()
+        output_dir_path = Path(output_dir).resolve()
+        calls.append((run_dir_path, output_dir_path))
+        return {"animation": output_dir_path / "trip_animation.gif"}
+
+    monkeypatch.setattr(
+        "sumo_rl.experiments.live_trip_visualization.run_best_checkpoint_trip_visualization",
+        fake_single_run,
+    )
+
+    results = run_best_checkpoint_trip_visualizations([run_a, run_b], output_root)
+
+    assert list(results) == [str(run_a.resolve()), str(run_b.resolve())]
+    assert calls == [
+        (run_a.resolve(), (output_root / "run_a").resolve()),
+        (run_b.resolve(), (output_root / "run_a_2").resolve()),
+    ]
+    assert results[str(run_a.resolve())]["animation"] == (output_root / "run_a" / "trip_animation.gif").resolve()
+    assert results[str(run_b.resolve())]["animation"] == (output_root / "run_a_2" / "trip_animation.gif").resolve()
 
 
 def test_render_trip_animation_draws_vehicle_dots_and_pressure_bars(tmp_path: Path):

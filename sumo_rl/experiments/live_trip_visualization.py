@@ -101,6 +101,43 @@ def run_best_checkpoint_trip_visualization(
     }
 
 
+def run_best_checkpoint_trip_visualizations(
+    run_dirs: list[str | Path] | tuple[str | Path, ...],
+    output_dir: str | Path | None = None,
+    *,
+    best_index: int = 0,
+    width: int = 1200,
+    fps: int = 12,
+    frame_count: int = 160,
+    max_render_vehicles: int = 1200,
+) -> dict[str, dict[str, Path]]:
+    resolved_run_dirs = [Path(run_dir).resolve() for run_dir in run_dirs]
+    if not resolved_run_dirs:
+        raise ValueError("run_dirs must contain at least one run directory.")
+
+    base_output_dir = (
+        Path(output_dir).resolve()
+        if output_dir is not None
+        else ROOT / "experiments" / "artifacts" / "live_trip_viz"
+    )
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+
+    outputs: dict[str, dict[str, Path]] = {}
+    used_names: set[str] = set()
+    for run_path in resolved_run_dirs:
+        output_name = _unique_run_output_name(run_path, used_names)
+        outputs[str(run_path)] = run_best_checkpoint_trip_visualization(
+            run_path,
+            base_output_dir / output_name,
+            best_index=best_index,
+            width=width,
+            fps=fps,
+            frame_count=frame_count,
+            max_render_vehicles=max_render_vehicles,
+        )
+    return outputs
+
+
 def select_best_checkpoint(run_dir: str | Path, *, best_index: int = 0) -> BestCheckpoint:
     metadata_path = _best_validation_metadata_path(Path(run_dir))
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -255,6 +292,17 @@ def _best_validation_metadata_path(run_dir: Path) -> Path:
         return metric, str(path)
 
     return sorted(candidates, key=best_metric)[0]
+
+
+def _unique_run_output_name(run_path: Path, used_names: set[str]) -> str:
+    base_name = run_path.name or "run"
+    candidate = base_name
+    suffix = 2
+    while candidate in used_names:
+        candidate = f"{base_name}_{suffix}"
+        suffix += 1
+    used_names.add(candidate)
+    return candidate
 
 
 def _restore_evaluate_and_trace(
