@@ -21,6 +21,7 @@ The script writes one subdirectory per variant under
 
 - `resource_usage_summary.csv` and `resource_usage_summary.json`
 - per-variant `resource_usage/summary.json`
+- per-variant `resource_usage/episode_rows.csv` and `resource_usage/episode_rows.json`
 - per-variant `resource_usage/gpu_samples.csv` when `nvidia-smi` is available
 
 Reported smoke metrics:
@@ -42,6 +43,19 @@ Reported smoke metrics:
 - `inference_agent_action_ms`
 - `gpu_peak_memory_delta_mb`
 - `gpu_average_utilization_pct`
+
+Per-episode resource rows now record completed environment episodes rather than
+learner iterations. The final per-variant summary keeps run-level metadata and
+adds episode-averaged fields such as:
+
+- `episode_row_count`
+- `episode_wall_clock_seconds_mean`
+- `episode_gpu_peak_memory_delta_mb_mean`
+- `episode_gpu_average_utilization_pct_mean`
+- `episode_shared_forward_hit_rate_mean`
+
+Peak-style episode metrics also keep a run max in the final summary, for
+example `episode_gpu_peak_memory_delta_mb_run_max`.
 
 The default smoke settings intentionally shrink the PPO learner batch and SGD
 loop so the script reaches at least one learner update quickly without turning

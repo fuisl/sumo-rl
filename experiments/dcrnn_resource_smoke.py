@@ -92,6 +92,16 @@ class GpuSample:
     utilization_pct: float
 
 
+@dataclass
+class EpisodeMarker:
+    episode_index: int
+    timestamp: float
+    train_episode_index: float | None
+    train_env_step: float | None
+    shared_stats: dict[str, float]
+    cuda_metrics: dict[str, float | None]
+
+
 class GpuSampler:
     def __init__(self, *, gpu_index: int, interval_seconds: float, output_path: Path):
         self.gpu_index = gpu_index
@@ -507,6 +517,14 @@ def _shared_forward_diagnostics(module: Any, *, label: str) -> dict[str, float]:
     return {f"shared_forward_{label}_{key}": float(value) for key, value in stats.items()}
 
 
+def _shared_forward_stats_snapshot(module: Any) -> dict[str, float]:
+    getter = getattr(module, "shared_forward_stats", None)
+    if not callable(getter):
+        return {}
+    stats = getter() or {}
+    return {str(key): float(value) for key, value in stats.items()}
+
+
 def _environment_path_diagnostics(algorithm_kind: str) -> dict[str, Any]:
     normalized_kind = normalize_algorithm_kind(algorithm_kind)
     graph_eval_variants = {
@@ -527,6 +545,132 @@ def _environment_path_diagnostics(algorithm_kind: str) -> dict[str, Any]:
         "env_wrapper": "build_rllib_graph_parallel_env" if uses_graph_eval_env else "build_rllib_parallel_env",
         "env_observation_mode": "graph_history" if uses_graph_eval_env else "default",
     }
+
+
+def _cuda_episode_snapshot(module: Any) -> dict[str, float | None]:
+    snapshot = _cuda_memory_snapshot(module, label="episode")
+    return {
+        "episode_cuda_memory_allocated_mb": snapshot.get("cuda_episode_memory_allocated_mb"),
+        "episode_cuda_memory_reserved_mb": snapshot.get("cuda_episode_memory_reserved_mb"),
+        "episode_cuda_max_memory_allocated_mb": snapshot.get("cuda_episode_max_memory_allocated_mb"),
+        "episode_cuda_max_memory_reserved_mb": snapshot.get("cuda_episode_max_memory_reserved_mb"),
+    }
+
+
+def _gpu_interval_summary(
+    samples: list[GpuSample],
+    *,
+    start_timestamp: float,
+    end_timestamp: float,
+    baseline_mb: float | None,
+) -> dict[str, float | None]:
+    interval_samples = [
+        sample
+        for sample in samples
+        if start_timestamp < float(sample.timestamp) <= end_timestamp
+    ]
+    if not interval_samples:
+        return {
+            "episode_gpu_peak_memory_mb": None,
+            "episode_gpu_peak_memory_delta_mb": None,
+            "episode_gpu_average_utilization_pct": None,
+            "episode_gpu_sample_count": 0.0,
+        }
+
+    peak_memory = max(sample.memory_used_mb for sample in interval_samples)
+    average_utilization = statistics.fmean(sample.utilization_pct for sample in interval_samples)
+    peak_delta = None if baseline_mb is None else max(0.0, peak_memory - baseline_mb)
+    return {
+        "episode_gpu_peak_memory_mb": float(peak_memory),
+        "episode_gpu_peak_memory_delta_mb": None if peak_delta is None else float(peak_delta),
+        "episode_gpu_average_utilization_pct": float(average_utilization),
+        "episode_gpu_sample_count": float(len(interval_samples)),
+    }
+
+
+def _build_episode_rows(
+    episode_markers: list[EpisodeMarker],
+    *,
+    samples: list[GpuSample],
+    baseline_mb: float | None,
+    training_start_timestamp: float,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    previous_timestamp = float(training_start_timestamp)
+    previous_stats: dict[str, float] = {}
+    for marker in episode_markers:
+        current_stats = dict(marker.shared_stats)
+        episode_hits = max(
+            0.0,
+            float(current_stats.get("hits", 0.0)) - float(previous_stats.get("hits", 0.0)),
+        )
+        episode_fallbacks = max(
+            0.0,
+            float(current_stats.get("fallbacks", 0.0)) - float(previous_stats.get("fallbacks", 0.0)),
+        )
+        total_attempts = episode_hits + episode_fallbacks
+        row: dict[str, Any] = {
+            "episode_index": float(marker.episode_index),
+            "train_episode_index": marker.train_episode_index,
+            "train_env_step": marker.train_env_step,
+            "episode_wall_clock_seconds": max(0.0, float(marker.timestamp) - previous_timestamp),
+            "episode_shared_forward_hits": episode_hits,
+            "episode_shared_forward_fallbacks": episode_fallbacks,
+            "episode_shared_forward_hit_rate": (episode_hits / total_attempts) if total_attempts > 0 else None,
+        }
+        row.update(marker.cuda_metrics)
+        row.update(
+            _gpu_interval_summary(
+                samples,
+                start_timestamp=previous_timestamp,
+                end_timestamp=float(marker.timestamp),
+                baseline_mb=baseline_mb,
+            )
+        )
+        rows.append(row)
+        previous_timestamp = float(marker.timestamp)
+        previous_stats = current_stats
+    return rows
+
+
+def _episode_average_summary(episode_rows: list[dict[str, Any]]) -> dict[str, float]:
+    if not episode_rows:
+        return {"episode_row_count": 0.0}
+
+    average_fields = (
+        "episode_wall_clock_seconds",
+        "episode_gpu_peak_memory_delta_mb",
+        "episode_gpu_average_utilization_pct",
+        "episode_shared_forward_hits",
+        "episode_shared_forward_fallbacks",
+        "episode_shared_forward_hit_rate",
+        "episode_cuda_max_memory_allocated_mb",
+        "episode_cuda_max_memory_reserved_mb",
+    )
+    summary: dict[str, float] = {"episode_row_count": float(len(episode_rows))}
+    for field in average_fields:
+        values = [
+            float(row[field])
+            for row in episode_rows
+            if isinstance(row.get(field), (int, float)) and row.get(field) is not None
+        ]
+        if values:
+            summary[f"{field}_mean"] = float(statistics.fmean(values))
+
+    peak_fields = (
+        "episode_gpu_peak_memory_delta_mb",
+        "episode_cuda_max_memory_allocated_mb",
+        "episode_cuda_max_memory_reserved_mb",
+    )
+    for field in peak_fields:
+        values = [
+            float(row[field])
+            for row in episode_rows
+            if isinstance(row.get(field), (int, float)) and row.get(field) is not None
+        ]
+        if values:
+            summary[f"{field}_run_max"] = float(max(values))
+    return summary
 
 
 def _space_sample_bytes(space: Any) -> int | None:
@@ -761,14 +905,18 @@ def _train_variant(
     algorithm_kind: str,
     gpu_index: int,
     sample_interval: float,
-) -> dict[str, float | None]:
+) -> dict[str, Any]:
     ray = _init_ray_for_cfg(cfg)
     algo = None
     metrics: dict[str, float | None] = {}
+    episode_rows: list[dict[str, Any]] = []
+    wall_clock_seconds = 0.0
     gpu_log_path = run_dir / "resource_usage" / "gpu_samples.csv"
     sampler = GpuSampler(gpu_index=gpu_index, interval_seconds=sample_interval, output_path=gpu_log_path)
     baseline_sample = sampler._probe() if sampler.is_available() else None
     baseline_mb = None if baseline_sample is None else baseline_sample.memory_used_mb
+    episode_markers: list[EpisodeMarker] = []
+    training_start_timestamp = time.time()
 
     try:
         start = time.perf_counter()
@@ -781,14 +929,39 @@ def _train_variant(
             reset_shared_stats()
         _torch_cuda_reset_peak_if_needed(_module_device(module))
         first_iteration_recorded = False
+        recorded_episode_indices: set[int] = set()
 
-        def _capture_train_metrics(_emitted_metrics, _step):
-            nonlocal first_iteration_recorded
-            if first_iteration_recorded:
+        def _record_episode_marker(emitted_metrics, step: int) -> None:
+            if int(step) in recorded_episode_indices:
                 return
-            first_iteration_recorded = True
-            metrics.update(_cuda_memory_snapshot(module, label="after_first_train_iteration"))
-            metrics.update(_shared_forward_diagnostics(module, label="train_first_iteration"))
+            recorded_episode_indices.add(int(step))
+            episode_markers.append(
+                EpisodeMarker(
+                    episode_index=int(step),
+                    timestamp=time.time(),
+                    train_episode_index=(
+                        float(emitted_metrics.get("train/episode_index"))
+                        if isinstance(emitted_metrics.get("train/episode_index"), (int, float))
+                        else None
+                    ),
+                    train_env_step=(
+                        float(emitted_metrics.get("train/env_step"))
+                        if isinstance(emitted_metrics.get("train/env_step"), (int, float))
+                        else None
+                    ),
+                    shared_stats=_shared_forward_stats_snapshot(module),
+                    cuda_metrics=_cuda_episode_snapshot(module),
+                )
+            )
+            _torch_cuda_reset_peak_if_needed(_module_device(module))
+
+        def _capture_train_metrics(emitted_metrics, step):
+            nonlocal first_iteration_recorded
+            if not first_iteration_recorded:
+                first_iteration_recorded = True
+                metrics.update(_cuda_memory_snapshot(module, label="after_first_train_iteration"))
+                metrics.update(_shared_forward_diagnostics(module, label="train_first_iteration"))
+            _record_episode_marker(emitted_metrics, int(step))
 
         _train_algorithm(
             algo,
@@ -806,9 +979,22 @@ def _train_variant(
             algo.stop()
         ray.shutdown()
 
+    episode_rows = _build_episode_rows(
+        episode_markers,
+        samples=list(sampler._samples),
+        baseline_mb=baseline_mb,
+        training_start_timestamp=training_start_timestamp,
+    )
+    _write_summary_csv(run_dir / "resource_usage" / "episode_rows.csv", episode_rows)
+    _write_json(run_dir / "resource_usage" / "episode_rows.json", {"rows": episode_rows})
+
     metrics["wall_clock_training_seconds"] = wall_clock_seconds
     metrics.update(sampler.summary(baseline_mb))
-    return metrics
+    metrics.update(_episode_average_summary(episode_rows))
+    return {
+        "summary_metrics": metrics,
+        "episode_rows": episode_rows,
+    }
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -849,15 +1035,16 @@ def _run_variant(args: argparse.Namespace, variant: str) -> dict[str, Any]:
 
     try:
         result.update(_probe_variant(cfg, run_dir, normalized_variant, args.inference_repeats))
-        result.update(
-            _train_variant(
-                cfg,
-                run_dir,
-                normalized_variant,
-                gpu_index=args.gpu_index,
-                sample_interval=args.sample_interval,
-            )
+        train_result = _train_variant(
+            cfg,
+            run_dir,
+            normalized_variant,
+            gpu_index=args.gpu_index,
+            sample_interval=args.sample_interval,
         )
+        result.update(train_result.get("summary_metrics", {}))
+        result["episode_rows_path"] = str(run_dir / "resource_usage" / "episode_rows.csv")
+        result["episode_rows_json_path"] = str(run_dir / "resource_usage" / "episode_rows.json")
     except Exception as exc:
         result["status"] = "failed"
         result["error"] = f"{type(exc).__name__}: {exc}"
@@ -875,6 +1062,9 @@ def _print_summary(rows: list[dict[str, Any]]) -> None:
         "parameter_actor_count",
         "parameter_critic_count",
         "parameter_other_count",
+        "episode_row_count",
+        "episode_wall_clock_seconds_mean",
+        "episode_gpu_peak_memory_delta_mb_mean",
         "wall_clock_training_seconds",
         "inference_joint_decision_ms",
         "inference_agent_action_ms",
