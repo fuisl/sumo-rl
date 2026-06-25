@@ -22,27 +22,24 @@ The script writes one subdirectory per variant under
 - `resource_usage_summary.csv` and `resource_usage_summary.json`
 - per-variant `resource_usage/summary.json`
 - per-variant `resource_usage/episode_rows.csv` and `resource_usage/episode_rows.json`
-- per-variant `resource_usage/gpu_samples.csv` when `nvidia-smi` is available
 
-Reported smoke metrics:
+Recommended comparison fields:
 
 - `parameter_count`
 - `parameter_encoder_count`
 - `parameter_actor_count`
 - `parameter_critic_count`
 - `parameter_other_count`
-- `history_len`, `num_nodes`, `feature_dim`, `num_policies`
 - `per_sample_obs_bytes`, `rollout_obs_bytes`, `minibatch_obs_bytes`
-- `train_batch_size_per_learner_actual`, `minibatch_size_actual`
-- `cuda_post_build_*`, `cuda_after_warmup_inference_*`
-- `cuda_train_post_build_*`, `cuda_after_first_train_iteration_*`, `cuda_after_training_end_*`
-- `shared_forward_inference_*`, `shared_forward_train_first_iteration_*`, `shared_forward_train_total_*`
+- `used_cuda`
+- `cuda_post_build_*`, `cuda_after_warmup_inference_*`, `cuda_after_training_end_*`
 - `env_pipeline`, `env_base_factory`, `env_wrapper`, `env_observation_mode`
-- `wall_clock_training_seconds`
 - `inference_joint_decision_ms`
 - `inference_agent_action_ms`
-- `gpu_peak_memory_delta_mb`
-- `gpu_average_utilization_pct`
+- `episode_row_count`
+- `episode_wall_clock_seconds_mean`
+- `episode_shared_forward_hit_rate_mean`
+- `wall_clock_training_seconds`
 
 Per-episode resource rows now record completed environment episodes rather than
 learner iterations. The final per-variant summary keeps run-level metadata and
@@ -50,12 +47,10 @@ adds episode-averaged fields such as:
 
 - `episode_row_count`
 - `episode_wall_clock_seconds_mean`
-- `episode_gpu_peak_memory_delta_mb_mean`
-- `episode_gpu_average_utilization_pct_mean`
 - `episode_shared_forward_hit_rate_mean`
 
-Peak-style episode metrics also keep a run max in the final summary, for
-example `episode_gpu_peak_memory_delta_mb_run_max`.
+Peak-style internal CUDA episode metrics also keep a run max in the final
+summary, for example `episode_cuda_max_memory_allocated_mb_run_max`.
 
 The default smoke settings intentionally shrink the PPO learner batch and SGD
 loop so the script reaches at least one learner update quickly without turning
@@ -63,6 +58,6 @@ the smoke run into a full experiment.
 
 `per_sample_obs_bytes` is computed directly from the Gymnasium observation
 space when possible, so flat PPO observations and graph-history DCRNN
-observations are both covered. The `history_len` / `num_nodes` /
-`feature_dim` fields are populated only for graph-style `[H, N, F]`
-observations.
+observations are both covered. Device-level `nvidia-smi` sampling is no longer
+part of the main smoke comparison because it is too noisy on shared servers;
+prefer the internal `torch.cuda.*` fields instead.

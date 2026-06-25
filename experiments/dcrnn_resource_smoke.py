@@ -436,6 +436,10 @@ def _parameter_breakdown(module: Any) -> dict[str, float]:
         modules = [item for item in module if item is not None]
         if not modules:
             return metrics
+        total_modules = [
+            *modules,
+            *(getattr(item, "_shared_backbone_ref", None) for item in modules),
+        ]
         metrics["parameter_encoder_count"] = float(
             _count_unique_trainable_parameters_from_modules(
                 *(getattr(item, "backbone", None) for item in modules),
@@ -709,8 +713,6 @@ def _gpu_interval_summary(
 def _build_episode_rows(
     episode_markers: list[EpisodeMarker],
     *,
-    samples: list[GpuSample],
-    baseline_mb: float | None,
     training_start_timestamp: float,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -737,14 +739,6 @@ def _build_episode_rows(
             "episode_shared_forward_hit_rate": (episode_hits / total_attempts) if total_attempts > 0 else None,
         }
         row.update(marker.cuda_metrics)
-        row.update(
-            _gpu_interval_summary(
-                samples,
-                start_timestamp=previous_timestamp,
-                end_timestamp=float(marker.timestamp),
-                baseline_mb=baseline_mb,
-            )
-        )
         rows.append(row)
         previous_timestamp = float(marker.timestamp)
         previous_stats = current_stats
@@ -757,8 +751,6 @@ def _episode_average_summary(episode_rows: list[dict[str, Any]]) -> dict[str, fl
 
     average_fields = (
         "episode_wall_clock_seconds",
-        "episode_gpu_peak_memory_delta_mb",
-        "episode_gpu_average_utilization_pct",
         "episode_shared_forward_hits",
         "episode_shared_forward_fallbacks",
         "episode_shared_forward_hit_rate",
@@ -775,11 +767,7 @@ def _episode_average_summary(episode_rows: list[dict[str, Any]]) -> dict[str, fl
         if values:
             summary[f"{field}_mean"] = float(statistics.fmean(values))
 
-    peak_fields = (
-        "episode_gpu_peak_memory_delta_mb",
-        "episode_cuda_max_memory_allocated_mb",
-        "episode_cuda_max_memory_reserved_mb",
-    )
+    peak_fields = ("episode_cuda_max_memory_allocated_mb", "episode_cuda_max_memory_reserved_mb")
     for field in peak_fields:
         values = [
             float(row[field])
@@ -1031,16 +1019,11 @@ def _train_variant(
     metrics: dict[str, float | None] = {}
     episode_rows: list[dict[str, Any]] = []
     wall_clock_seconds = 0.0
-    gpu_log_path = run_dir / "resource_usage" / "gpu_samples.csv"
-    sampler = GpuSampler(gpu_index=gpu_index, interval_seconds=sample_interval, output_path=gpu_log_path)
-    baseline_sample = sampler._probe() if sampler.is_available() else None
-    baseline_mb = None if baseline_sample is None else baseline_sample.memory_used_mb
     episode_markers: list[EpisodeMarker] = []
     training_start_timestamp = time.time()
 
     try:
         start = time.perf_counter()
-        sampler.start()
         algo = _build_algo(cfg, run_dir, algorithm_kind)
         module = algo.get_module() if hasattr(algo, "get_module") else None
         resolved_modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
@@ -1096,22 +1079,18 @@ def _train_variant(
         metrics.update(_cuda_memory_snapshot(resolved_modules or module, label="after_training_end"))
         metrics.update(_shared_forward_diagnostics(module, label="train_total"))
     finally:
-        sampler.stop()
         if algo is not None and hasattr(algo, "stop"):
             algo.stop()
         ray.shutdown()
 
     episode_rows = _build_episode_rows(
         episode_markers,
-        samples=list(sampler._samples),
-        baseline_mb=baseline_mb,
         training_start_timestamp=training_start_timestamp,
     )
     _write_summary_csv(run_dir / "resource_usage" / "episode_rows.csv", episode_rows)
     _write_json(run_dir / "resource_usage" / "episode_rows.json", {"rows": episode_rows})
 
     metrics["wall_clock_training_seconds"] = wall_clock_seconds
-    metrics.update(sampler.summary(baseline_mb))
     metrics.update(_episode_average_summary(episode_rows))
     return {
         "summary_metrics": metrics,
@@ -1179,19 +1158,28 @@ def _print_summary(rows: list[dict[str, Any]]) -> None:
     headers = [
         "variant",
         "status",
+        "env_pipeline",
+        "used_cuda",
         "parameter_count",
         "parameter_encoder_count",
         "parameter_actor_count",
         "parameter_critic_count",
         "parameter_other_count",
+        "per_sample_obs_bytes",
+        "rollout_obs_bytes",
+        "minibatch_obs_bytes",
         "episode_row_count",
         "episode_wall_clock_seconds_mean",
-        "episode_gpu_peak_memory_delta_mb_mean",
-        "wall_clock_training_seconds",
+        "episode_shared_forward_hit_rate_mean",
+        "cuda_post_build_memory_allocated_mb",
+        "cuda_post_build_memory_reserved_mb",
+        "cuda_after_warmup_inference_memory_allocated_mb",
+        "cuda_after_warmup_inference_memory_reserved_mb",
+        "cuda_after_training_end_memory_allocated_mb",
+        "cuda_after_training_end_memory_reserved_mb",
         "inference_joint_decision_ms",
         "inference_agent_action_ms",
-        "gpu_peak_memory_delta_mb",
-        "gpu_average_utilization_pct",
+        "wall_clock_training_seconds",
     ]
     print()
     print("DCRNN resource smoke summary")
