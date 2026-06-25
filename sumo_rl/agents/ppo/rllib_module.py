@@ -173,6 +173,16 @@ def build_ppo_dcrnn_shared_multi_module_class():
 
         def setup(self):
             self._rl_modules = {}
+            self._shared_forward_stats = {
+                "calls": 0,
+                "hits": 0,
+                "fallbacks": 0,
+                "fallback_no_shared_items": 0,
+                "fallback_missing_obs": 0,
+                "fallback_shape_or_device_mismatch": 0,
+                "fallback_dtype_or_grad_mismatch": 0,
+                "fallback_value_mismatch": 0,
+            }
             module_specs = self.rl_module_specs
             framework = None
             first_spec = next(iter(module_specs.values()))
@@ -194,31 +204,46 @@ def build_ppo_dcrnn_shared_multi_module_class():
         def move_shared_backbone_to_device(self, device) -> None:
             self.shared_backbone.to(device)
 
+        def reset_shared_forward_stats(self) -> None:
+            for key in self._shared_forward_stats:
+                self._shared_forward_stats[key] = 0
+
+        def shared_forward_stats(self) -> Dict[str, int]:
+            return dict(self._shared_forward_stats)
+
         def _shared_obs_batch(self, batch: Dict[str, Any]):
             shared_items = [(mid, batch[mid]) for mid in batch.keys() if mid in self]
             if not shared_items:
+                self._shared_forward_stats["fallback_no_shared_items"] += 1
                 return None, None
 
             first_mid, first_batch = shared_items[0]
             first_obs = first_batch.get(Columns.OBS)
             if first_obs is None:
+                self._shared_forward_stats["fallback_missing_obs"] += 1
                 return None, None
 
             for module_id, module_batch in shared_items[1:]:
                 obs = module_batch.get(Columns.OBS)
                 if obs is None or obs.shape != first_obs.shape or not obs.device == first_obs.device:
+                    self._shared_forward_stats["fallback_shape_or_device_mismatch"] += 1
                     return None, None
                 if not obs.dtype == first_obs.dtype or not obs.requires_grad == first_obs.requires_grad:
+                    self._shared_forward_stats["fallback_dtype_or_grad_mismatch"] += 1
                     return None, None
                 if not obs.equal(first_obs):
+                    self._shared_forward_stats["fallback_value_mismatch"] += 1
                     return None, None
             return [mid for mid, _ in shared_items], first_obs
 
         def _forward_shared(self, batch: Dict[str, Any], *, include_values: bool, include_embeddings: bool):
+            self._shared_forward_stats["calls"] += 1
             module_ids, shared_obs = self._shared_obs_batch(batch)
             if not module_ids or shared_obs is None:
+                self._shared_forward_stats["fallbacks"] += 1
                 return None
 
+            self._shared_forward_stats["hits"] += 1
             encoded, latest_features = self.shared_backbone.encode_graph(shared_obs)
             outputs = {}
             for module_id in module_ids:
