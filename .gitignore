@@ -121,3 +121,5 @@ multirun/
 
 # pytest temp
 .pytest_tmp/
+
+experiments/artifacts/
