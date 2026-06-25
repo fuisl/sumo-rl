@@ -115,6 +115,10 @@ settings.json
 /wandb
 
 outputs/
+!visualization/outputs/
+visualization/outputs/**
+!visualization/outputs/**/
+!visualization/outputs/**/*.gif
 multirun/
 
 .netrc
