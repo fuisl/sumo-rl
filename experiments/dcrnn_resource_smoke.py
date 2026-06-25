@@ -355,6 +355,73 @@ def _count_unique_trainable_parameters_from_modules(*modules: Any) -> int:
     return total
 
 
+def _collect_algo_modules(
+    algo: Any,
+    cfg: DictConfig,
+    run_dir: Path,
+    algorithm_kind: str,
+) -> list[Any]:
+    modules: list[Any] = []
+    seen: set[int] = set()
+
+    def _add(candidate: Any) -> None:
+        if candidate is None:
+            return
+        if id(candidate) in seen:
+            return
+        seen.add(id(candidate))
+        modules.append(candidate)
+
+    get_module = getattr(algo, "get_module", None)
+    if callable(get_module):
+        try:
+            _add(get_module())
+        except Exception:
+            pass
+
+    policy_ids: set[str] = set()
+    env = None
+    try:
+        env = _build_eval_env(
+            cfg,
+            run_dir,
+            seed=int(cfg.experiment.seed),
+            algorithm_kind=normalize_algorithm_kind(algorithm_kind),
+            policy_mode=_policy_mode(cfg),
+        )
+        reset_result = env.reset(seed=int(cfg.experiment.seed))
+        observations = reset_result[0] if isinstance(reset_result, tuple) else reset_result
+        for agent_id in (observations or {}).keys():
+            policy_ids.add(_policy_id_for_agent(str(agent_id), _policy_mode(cfg)))
+    except Exception:
+        pass
+    finally:
+        if env is not None:
+            env.close()
+
+    if callable(get_module):
+        for policy_id in sorted(policy_ids):
+            try:
+                _add(get_module(policy_id))
+            except Exception:
+                continue
+
+    get_policy = getattr(algo, "get_policy", None)
+    if callable(get_policy):
+        candidate_policy_ids = list(sorted(policy_ids)) or [None]
+        for policy_id in candidate_policy_ids:
+            try:
+                policy = get_policy(policy_id) if policy_id is not None else get_policy()
+            except Exception:
+                policy = None
+            if policy is None:
+                continue
+            for attr_name in ("model", "module"):
+                _add(getattr(policy, attr_name, None))
+
+    return modules
+
+
 def _parameter_breakdown(module: Any) -> dict[str, float]:
     metrics = {
         "parameter_encoder_count": 0.0,
@@ -363,6 +430,35 @@ def _parameter_breakdown(module: Any) -> dict[str, float]:
         "parameter_other_count": 0.0,
     }
     if module is None:
+        return metrics
+
+    if isinstance(module, (list, tuple)):
+        modules = [item for item in module if item is not None]
+        if not modules:
+            return metrics
+        metrics["parameter_encoder_count"] = float(
+            _count_unique_trainable_parameters_from_modules(
+                *(getattr(item, "backbone", None) for item in modules),
+                *(getattr(item, "_shared_backbone_ref", None) for item in modules),
+            )
+        )
+        metrics["parameter_actor_count"] = float(
+            _count_unique_trainable_parameters_from_modules(
+                *(getattr(item, "policy_head", None) for item in modules)
+            )
+        )
+        metrics["parameter_critic_count"] = float(
+            _count_unique_trainable_parameters_from_modules(
+                *(getattr(item, "value_head", None) for item in modules)
+            )
+        )
+        total = float(_count_unique_trainable_parameters_from_modules(*modules))
+        accounted = (
+            metrics["parameter_encoder_count"]
+            + metrics["parameter_actor_count"]
+            + metrics["parameter_critic_count"]
+        )
+        metrics["parameter_other_count"] = max(0.0, total - accounted)
         return metrics
 
     child_modules = getattr(module, "_rl_modules", None)
@@ -410,10 +506,24 @@ def _parameter_breakdown(module: Any) -> dict[str, float]:
 
 
 def _module_device(module: Any) -> torch.device:
+    if isinstance(module, (list, tuple)):
+        for item in module:
+            device = _module_device(item)
+            if device.type == "cuda":
+                return device
+        for item in module:
+            device = _module_device(item)
+            if device is not None:
+                return device
+        return torch.device("cpu")
     try:
         return next(module.parameters()).device
     except (AttributeError, StopIteration):
         return torch.device("cpu")
+
+
+def _used_cuda(module: Any) -> bool:
+    return _module_device(module).type == "cuda"
 
 
 def _torch_cuda_sync_if_needed(device: torch.device) -> None:
@@ -458,14 +568,22 @@ def _observation_storage_diagnostics(cfg: DictConfig, module: Any) -> dict[str, 
         "minibatch_obs_bytes": None,
     }
 
-    child_modules = getattr(module, "_rl_modules", None)
-    if isinstance(child_modules, dict) and child_modules:
-        metrics["num_policies"] = float(len(child_modules))
-        first_module = next(iter(child_modules.values()))
-        obs_space = getattr(first_module, "observation_space", None)
+    if isinstance(module, (list, tuple)):
+        modules = [item for item in module if item is not None]
+        if modules:
+            metrics["num_policies"] = float(len(modules))
+            obs_space = getattr(modules[0], "observation_space", None)
+        else:
+            obs_space = None
     else:
-        metrics["num_policies"] = 1.0 if module is not None else None
-        obs_space = getattr(module, "observation_space", None)
+        child_modules = getattr(module, "_rl_modules", None)
+        if isinstance(child_modules, dict) and child_modules:
+            metrics["num_policies"] = float(len(child_modules))
+            first_module = next(iter(child_modules.values()))
+            obs_space = getattr(first_module, "observation_space", None)
+        else:
+            metrics["num_policies"] = 1.0 if module is not None else None
+            obs_space = getattr(module, "observation_space", None)
 
     raw_sample_bytes = _space_sample_bytes(obs_space)
     if raw_sample_bytes is not None:
@@ -829,7 +947,8 @@ def _measure_inference(
             }
 
         module = algo.get_module() if hasattr(algo, "get_module") else None
-        device = _module_device(module)
+        resolved_modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
+        device = _module_device(resolved_modules or module)
         agent_ids = list(observations.keys())
         reset_shared_stats = getattr(module, "reset_shared_forward_stats", None)
         if callable(reset_shared_stats):
@@ -845,7 +964,7 @@ def _measure_inference(
                     algorithm_kind=algorithm_kind,
                 )
         _torch_cuda_sync_if_needed(device)
-        warmup_metrics = _cuda_memory_snapshot(module, label="after_warmup_inference")
+        warmup_metrics = _cuda_memory_snapshot(resolved_modules or module, label="after_warmup_inference")
 
         start = time.perf_counter()
         total_agent_actions = 0
@@ -883,14 +1002,15 @@ def _probe_variant(
     algo = None
     try:
         algo = _build_algo(cfg, run_dir, algorithm_kind)
-        module = algo.get_module() if hasattr(algo, "get_module") else None
+        modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
         metrics = {
-            "parameter_count": float(_count_unique_trainable_parameters(module)),
+            "parameter_count": float(_count_unique_trainable_parameters_from_modules(*modules)),
+            "used_cuda": float(1.0 if _used_cuda(modules) else 0.0),
         }
-        metrics.update(_parameter_breakdown(module))
-        metrics.update(_observation_storage_diagnostics(cfg, module))
-        metrics.update(_cuda_memory_snapshot(module, label="post_build"))
-        _torch_cuda_reset_peak_if_needed(_module_device(module))
+        metrics.update(_parameter_breakdown(modules))
+        metrics.update(_observation_storage_diagnostics(cfg, modules))
+        metrics.update(_cuda_memory_snapshot(modules, label="post_build"))
+        _torch_cuda_reset_peak_if_needed(_module_device(modules))
         metrics.update(_measure_inference(algo, cfg, run_dir, algorithm_kind, repeats))
         return metrics
     finally:
@@ -923,11 +1043,13 @@ def _train_variant(
         sampler.start()
         algo = _build_algo(cfg, run_dir, algorithm_kind)
         module = algo.get_module() if hasattr(algo, "get_module") else None
-        metrics.update(_cuda_memory_snapshot(module, label="train_post_build"))
+        resolved_modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
+        metrics.update(_cuda_memory_snapshot(resolved_modules or module, label="train_post_build"))
+        metrics["used_cuda"] = float(1.0 if _used_cuda(resolved_modules or module) else 0.0)
         reset_shared_stats = getattr(module, "reset_shared_forward_stats", None)
         if callable(reset_shared_stats):
             reset_shared_stats()
-        _torch_cuda_reset_peak_if_needed(_module_device(module))
+        _torch_cuda_reset_peak_if_needed(_module_device(resolved_modules or module))
         first_iteration_recorded = False
         recorded_episode_indices: set[int] = set()
 
@@ -950,16 +1072,16 @@ def _train_variant(
                         else None
                     ),
                     shared_stats=_shared_forward_stats_snapshot(module),
-                    cuda_metrics=_cuda_episode_snapshot(module),
+                    cuda_metrics=_cuda_episode_snapshot(resolved_modules or module),
                 )
             )
-            _torch_cuda_reset_peak_if_needed(_module_device(module))
+            _torch_cuda_reset_peak_if_needed(_module_device(resolved_modules or module))
 
         def _capture_train_metrics(emitted_metrics, step):
             nonlocal first_iteration_recorded
             if not first_iteration_recorded:
                 first_iteration_recorded = True
-                metrics.update(_cuda_memory_snapshot(module, label="after_first_train_iteration"))
+                metrics.update(_cuda_memory_snapshot(resolved_modules or module, label="after_first_train_iteration"))
                 metrics.update(_shared_forward_diagnostics(module, label="train_first_iteration"))
             _record_episode_marker(emitted_metrics, int(step))
 
@@ -971,7 +1093,7 @@ def _train_variant(
             validate=lambda metrics, step: {},
         )
         wall_clock_seconds = time.perf_counter() - start
-        metrics.update(_cuda_memory_snapshot(module, label="after_training_end"))
+        metrics.update(_cuda_memory_snapshot(resolved_modules or module, label="after_training_end"))
         metrics.update(_shared_forward_diagnostics(module, label="train_total"))
     finally:
         sampler.stop()
