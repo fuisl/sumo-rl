@@ -123,3 +123,4 @@ multirun/
 .pytest_tmp/
 
 wandb_*/
+experiments/artifacts/
