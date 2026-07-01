@@ -196,6 +196,15 @@ WANDB_PROJECT=sumo-rl
 WANDB_ENTITY=your-entity
 ```
 
+To download tagged W&B runs for local inspection, reuse the same repo-root `.env` and run:
+
+```bash
+python experiments/download_wandb_runs.py --tag thesis --tag resco_grid4x4 --dry-run
+python experiments/download_wandb_runs.py --tag thesis --tag resco_grid4x4
+```
+
+By default the downloader writes matching runs to `wandb_downloads/<entity>/<project>/` and saves `run.json`, `config.json`, `summary.json`, and `history.jsonl` for each exported run.
+
 ### Fixed-time control in a RESCO scenario:
 ```bash
 python experiments/fixed_time.py scenario=resco_grid4x4
@@ -228,6 +237,22 @@ python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 expe
 python experiments/rllib.py algorithm=sac_dcrnn_full_mlp scenario=resco_grid4x4 experiment.episodes=1
 python experiments/rllib.py algorithm=sac_dcrnn_shared_mlp scenario=resco_grid4x4 experiment.episodes=1
 ```
+
+For a short Experiment Group C resource-usage pass on the PPO DCRNN variants,
+use:
+
+```bash
+python experiments/dcrnn_resource_smoke.py --variants ppo_dcrnn_mlp ppo_dcrnn_shared_mlp --scenario resco_grid4x4 --episodes 2 --episode-seconds 300
+```
+
+That smoke harness writes per-variant JSON/CSV artifacts under
+`outputs/dcrnn_resource_smoke/<timestamp>/` and reports parameter count,
+encoder/actor/critic parameter breakdown, training wall time, inference
+latency, rollout/minibatch observation-storage estimates, CUDA memory
+checkpoints, shared-forward reuse counters for the shared PPO variant, peak
+sampled GPU memory delta, and average sampled GPU utilization. The fuller note
+lives in
+[docs/thesis/resource_usage_smoke.md](docs/thesis/resource_usage_smoke.md).
 
 Scenario-first RLlib presets are launched by keeping the config root at
 `configs/` and passing the preset path as the config name:
@@ -372,8 +397,20 @@ communication and PyTorch Geometric `GATv2Conv` ablations:
 `configs/presets/resco_cologne8/fgs_frap_gatv2_sac.yaml` and
 `configs/presets/resco_cologne8/fgs_mlp_gatv2_sac.yaml`.
 
-SAC now uses RLlib's native discrete-action support for the traffic-light
-policies in this repo, so it does not depend on a custom joint continuous-action
+SAC complements PPO and DQN because it comes from a different RL family. PPO is
+an on-policy policy-gradient method, DQN is a value-based off-policy method,
+and SAC is an entropy-regularized actor-critic method, so including SAC helps
+check whether observed reward behavior is robust across more than one
+optimization style.
+
+The original SAC formulation targets continuous action spaces. In this repo the
+traffic-light policies remain discrete, and RLlib handles that adaptation
+internally. Instead of relying on a project-side continuous-action wrapper,
+RLlib uses its discrete SAC variant: the actor produces a categorical
+distribution over phase actions, and the critics produce one Q-value per
+discrete action while preserving the entropy-regularized SAC objective.
+
+That means SAC in this repo does not depend on a custom joint continuous-action
 adapter anymore.
 Use `algorithm=sac_builtin` as the reference RLlib baseline. Use
 `algorithm=sac_mlp` when you want to expose and modify the SAC RLModule

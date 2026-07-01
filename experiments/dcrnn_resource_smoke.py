@@ -100,6 +100,7 @@ class EpisodeMarker:
     train_env_step: float | None
     shared_stats: dict[str, float]
     cuda_metrics: dict[str, float | None]
+    inference_probe_metrics: dict[str, float | None]
 
 
 class GpuSampler:
@@ -355,6 +356,13 @@ def _count_unique_trainable_parameters_from_modules(*modules: Any) -> int:
     return total
 
 
+def _configured_num_gpus(cfg: DictConfig) -> float:
+    params = OmegaConf.to_container(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}, resolve=True)
+    if not isinstance(params, dict):
+        params = {}
+    return float(_resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto"))))
+
+
 def _collect_algo_modules(
     algo: Any,
     cfg: DictConfig,
@@ -422,6 +430,94 @@ def _collect_algo_modules(
     return modules
 
 
+def _tracking_module(algo: Any, resolved_modules: list[Any] | None = None) -> Any:
+    get_module = getattr(algo, "get_module", None)
+    if callable(get_module):
+        try:
+            candidate = get_module()
+        except Exception:
+            candidate = None
+        if candidate is not None and (
+            hasattr(candidate, "shared_forward_stats") or hasattr(candidate, "reset_shared_forward_stats")
+        ):
+            return candidate
+
+    for candidate in resolved_modules or []:
+        if candidate is not None and (
+            hasattr(candidate, "shared_forward_stats") or hasattr(candidate, "reset_shared_forward_stats")
+        ):
+            return candidate
+    return None
+
+
+def _encoder_profile_targets(module: Any) -> list[Any]:
+    targets: list[Any] = []
+    seen: set[int] = set()
+    modules = module if isinstance(module, (list, tuple)) else [module]
+    for item in modules:
+        if item is None:
+            continue
+        for attr_name in ("backbone", "_shared_backbone_ref", "shared_backbone"):
+            target = getattr(item, attr_name, None)
+            if target is None or id(target) in seen or not hasattr(target, "encode_graph"):
+                continue
+            seen.add(id(target))
+            targets.append(target)
+    return targets
+
+
+def _reset_encoder_profile(targets: list[Any]) -> None:
+    for target in targets:
+        object.__setattr__(target, "_smoke_encoder_call_count", 0)
+        object.__setattr__(target, "_smoke_encoder_total_ms", 0.0)
+        if getattr(target, "_smoke_encoder_wrapped", False):
+            continue
+        original = target.encode_graph
+
+        def _wrapped(obs, _original=original, _target=target):
+            sync_device = None
+            try:
+                sync_device = next(_target.parameters()).device
+            except (AttributeError, StopIteration):
+                sync_device = None
+            if sync_device is not None and sync_device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.synchronize(sync_device)
+            start = time.perf_counter()
+            result = _original(obs)
+            if sync_device is not None and sync_device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.synchronize(sync_device)
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            object.__setattr__(
+                _target,
+                "_smoke_encoder_call_count",
+                int(getattr(_target, "_smoke_encoder_call_count", 0)) + 1,
+            )
+            object.__setattr__(
+                _target,
+                "_smoke_encoder_total_ms",
+                float(getattr(_target, "_smoke_encoder_total_ms", 0.0)) + elapsed_ms,
+            )
+            return result
+
+        object.__setattr__(target, "encode_graph", _wrapped)
+        object.__setattr__(target, "_smoke_encoder_wrapped", True)
+
+
+def _snapshot_encoder_profile(targets: list[Any], *, label: str, joint_decisions: int) -> dict[str, float | None]:
+    call_count = sum(int(getattr(target, "_smoke_encoder_call_count", 0)) for target in targets)
+    total_ms = sum(float(getattr(target, "_smoke_encoder_total_ms", 0.0)) for target in targets)
+    metrics: dict[str, float | None] = {
+        f"{label}_encoder_call_count": float(call_count),
+        f"{label}_encoder_time_ms": float(total_ms),
+        f"{label}_encoder_calls_per_joint_decision": None,
+        f"{label}_encoder_time_per_joint_decision_ms": None,
+    }
+    if joint_decisions > 0:
+        metrics[f"{label}_encoder_calls_per_joint_decision"] = float(call_count) / float(joint_decisions)
+        metrics[f"{label}_encoder_time_per_joint_decision_ms"] = float(total_ms) / float(joint_decisions)
+    return metrics
+
+
 def _parameter_breakdown(module: Any) -> dict[str, float]:
     metrics = {
         "parameter_encoder_count": 0.0,
@@ -456,7 +552,7 @@ def _parameter_breakdown(module: Any) -> dict[str, float]:
                 *(getattr(item, "value_head", None) for item in modules)
             )
         )
-        total = float(_count_unique_trainable_parameters_from_modules(*modules))
+        total = float(_count_unique_trainable_parameters_from_modules(*total_modules))
         accounted = (
             metrics["parameter_encoder_count"]
             + metrics["parameter_actor_count"]
@@ -544,16 +640,16 @@ def _cuda_memory_snapshot(module: Any, *, label: str) -> dict[str, float | None]
     device = _module_device(module)
     if device.type != "cuda" or not torch.cuda.is_available():
         return {
-            f"cuda_{label}_memory_allocated_mb": None,
-            f"cuda_{label}_memory_reserved_mb": None,
-            f"cuda_{label}_max_memory_allocated_mb": None,
-            f"cuda_{label}_max_memory_reserved_mb": None,
+            f"driver_cuda_{label}_memory_allocated_mb": None,
+            f"driver_cuda_{label}_memory_reserved_mb": None,
+            f"driver_cuda_{label}_max_memory_allocated_mb": None,
+            f"driver_cuda_{label}_max_memory_reserved_mb": None,
         }
     return {
-        f"cuda_{label}_memory_allocated_mb": float(torch.cuda.memory_allocated(device) / float(1024**2)),
-        f"cuda_{label}_memory_reserved_mb": float(torch.cuda.memory_reserved(device) / float(1024**2)),
-        f"cuda_{label}_max_memory_allocated_mb": float(torch.cuda.max_memory_allocated(device) / float(1024**2)),
-        f"cuda_{label}_max_memory_reserved_mb": float(torch.cuda.max_memory_reserved(device) / float(1024**2)),
+        f"driver_cuda_{label}_memory_allocated_mb": float(torch.cuda.memory_allocated(device) / float(1024**2)),
+        f"driver_cuda_{label}_memory_reserved_mb": float(torch.cuda.memory_reserved(device) / float(1024**2)),
+        f"driver_cuda_{label}_max_memory_allocated_mb": float(torch.cuda.max_memory_allocated(device) / float(1024**2)),
+        f"driver_cuda_{label}_max_memory_reserved_mb": float(torch.cuda.max_memory_reserved(device) / float(1024**2)),
     }
 
 
@@ -672,10 +768,10 @@ def _environment_path_diagnostics(algorithm_kind: str) -> dict[str, Any]:
 def _cuda_episode_snapshot(module: Any) -> dict[str, float | None]:
     snapshot = _cuda_memory_snapshot(module, label="episode")
     return {
-        "episode_cuda_memory_allocated_mb": snapshot.get("cuda_episode_memory_allocated_mb"),
-        "episode_cuda_memory_reserved_mb": snapshot.get("cuda_episode_memory_reserved_mb"),
-        "episode_cuda_max_memory_allocated_mb": snapshot.get("cuda_episode_max_memory_allocated_mb"),
-        "episode_cuda_max_memory_reserved_mb": snapshot.get("cuda_episode_max_memory_reserved_mb"),
+        "episode_driver_cuda_memory_allocated_mb": snapshot.get("driver_cuda_episode_memory_allocated_mb"),
+        "episode_driver_cuda_memory_reserved_mb": snapshot.get("driver_cuda_episode_memory_reserved_mb"),
+        "episode_driver_cuda_max_memory_allocated_mb": snapshot.get("driver_cuda_episode_max_memory_allocated_mb"),
+        "episode_driver_cuda_max_memory_reserved_mb": snapshot.get("driver_cuda_episode_max_memory_reserved_mb"),
     }
 
 
@@ -739,6 +835,7 @@ def _build_episode_rows(
             "episode_shared_forward_hit_rate": (episode_hits / total_attempts) if total_attempts > 0 else None,
         }
         row.update(marker.cuda_metrics)
+        row.update(marker.inference_probe_metrics)
         rows.append(row)
         previous_timestamp = float(marker.timestamp)
         previous_stats = current_stats
@@ -754,8 +851,14 @@ def _episode_average_summary(episode_rows: list[dict[str, Any]]) -> dict[str, fl
         "episode_shared_forward_hits",
         "episode_shared_forward_fallbacks",
         "episode_shared_forward_hit_rate",
-        "episode_cuda_max_memory_allocated_mb",
-        "episode_cuda_max_memory_reserved_mb",
+        "episode_inference_joint_decision_ms",
+        "episode_inference_encoder_call_count",
+        "episode_inference_encoder_time_ms",
+        "episode_inference_encoder_calls_per_joint_decision",
+        "episode_inference_encoder_time_per_joint_decision_ms",
+        "episode_inference_shared_forward_hit_rate",
+        "episode_driver_cuda_max_memory_allocated_mb",
+        "episode_driver_cuda_max_memory_reserved_mb",
     )
     summary: dict[str, float] = {"episode_row_count": float(len(episode_rows))}
     for field in average_fields:
@@ -767,7 +870,7 @@ def _episode_average_summary(episode_rows: list[dict[str, Any]]) -> dict[str, fl
         if values:
             summary[f"{field}_mean"] = float(statistics.fmean(values))
 
-    peak_fields = ("episode_cuda_max_memory_allocated_mb", "episode_cuda_max_memory_reserved_mb")
+    peak_fields = ("episode_driver_cuda_max_memory_allocated_mb", "episode_driver_cuda_max_memory_reserved_mb")
     for field in peak_fields:
         values = [
             float(row[field])
@@ -936,9 +1039,12 @@ def _measure_inference(
 
         module = algo.get_module() if hasattr(algo, "get_module") else None
         resolved_modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
+        stats_module = _tracking_module(algo, resolved_modules)
+        encoder_targets = _encoder_profile_targets(resolved_modules or module)
+        _reset_encoder_profile(encoder_targets)
         device = _module_device(resolved_modules or module)
         agent_ids = list(observations.keys())
-        reset_shared_stats = getattr(module, "reset_shared_forward_stats", None)
+        reset_shared_stats = getattr(stats_module, "reset_shared_forward_stats", None)
         if callable(reset_shared_stats):
             reset_shared_stats()
         _torch_cuda_reset_peak_if_needed(device)
@@ -974,7 +1080,92 @@ def _measure_inference(
             "inference_agent_count": float(len(agent_ids)),
         }
         metrics.update(warmup_metrics)
-        metrics.update(_shared_forward_diagnostics(module, label="inference"))
+        metrics.update(_snapshot_encoder_profile(encoder_targets, label="inference", joint_decisions=max(1, repeats)))
+        metrics.update(_shared_forward_diagnostics(stats_module, label="inference"))
+        inference_hits = metrics.get("shared_forward_inference_hits")
+        inference_fallbacks = metrics.get("shared_forward_inference_fallbacks")
+        if isinstance(inference_hits, (int, float)) and isinstance(inference_fallbacks, (int, float)):
+            total_attempts = float(inference_hits) + float(inference_fallbacks)
+            metrics["inference_shared_forward_hit_rate"] = (
+                float(inference_hits) / total_attempts if total_attempts > 0 else None
+            )
+        return metrics
+    finally:
+        env.close()
+
+
+def _measure_episode_inference_probe(
+    algo: Any,
+    cfg: DictConfig,
+    run_dir: Path,
+    algorithm_kind: str,
+) -> dict[str, float | None]:
+    algorithm_kind = normalize_algorithm_kind(algorithm_kind)
+    env = _build_eval_env(
+        cfg,
+        run_dir,
+        seed=int(cfg.experiment.seed),
+        algorithm_kind=algorithm_kind,
+        policy_mode=_policy_mode(cfg),
+    )
+    try:
+        reset_result = env.reset(seed=int(cfg.experiment.seed))
+        observations = reset_result[0] if isinstance(reset_result, tuple) else reset_result
+        if not observations:
+            return {
+                "episode_inference_joint_decision_ms": 0.0,
+                "episode_inference_agent_count": 0.0,
+                "episode_inference_shared_forward_hit_rate": None,
+                "episode_inference_encoder_call_count": 0.0,
+                "episode_inference_encoder_time_ms": 0.0,
+                "episode_inference_encoder_calls_per_joint_decision": None,
+                "episode_inference_encoder_time_per_joint_decision_ms": None,
+            }
+
+        module = algo.get_module() if hasattr(algo, "get_module") else None
+        resolved_modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
+        stats_module = _tracking_module(algo, resolved_modules)
+        encoder_targets = _encoder_profile_targets(resolved_modules or module)
+        _reset_encoder_profile(encoder_targets)
+        reset_shared_stats = getattr(stats_module, "reset_shared_forward_stats", None)
+        if callable(reset_shared_stats):
+            reset_shared_stats()
+        device = _module_device(resolved_modules or module)
+        agent_ids = list(observations.keys())
+
+        start = time.perf_counter()
+        for agent_id in agent_ids:
+            _compute_single_action(
+                algo,
+                observations[agent_id],
+                policy_id=_policy_id_for_agent(agent_id, _policy_mode(cfg)),
+                algorithm_kind=algorithm_kind,
+            )
+        _torch_cuda_sync_if_needed(device)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        metrics: dict[str, float | None] = {
+            "episode_inference_joint_decision_ms": float(elapsed_ms),
+            "episode_inference_agent_count": float(len(agent_ids)),
+        }
+        metrics.update(
+            _snapshot_encoder_profile(
+                encoder_targets,
+                label="episode_inference",
+                joint_decisions=1,
+            )
+        )
+        shared_metrics = _shared_forward_diagnostics(stats_module, label="episode_inference")
+        metrics.update(shared_metrics)
+        hits = shared_metrics.get("shared_forward_episode_inference_hits")
+        fallbacks = shared_metrics.get("shared_forward_episode_inference_fallbacks")
+        if isinstance(hits, (int, float)) and isinstance(fallbacks, (int, float)):
+            total_attempts = float(hits) + float(fallbacks)
+            metrics["episode_inference_shared_forward_hit_rate"] = (
+                float(hits) / total_attempts if total_attempts > 0 else None
+            )
+        else:
+            metrics["episode_inference_shared_forward_hit_rate"] = None
         return metrics
     finally:
         env.close()
@@ -991,9 +1182,10 @@ def _probe_variant(
     try:
         algo = _build_algo(cfg, run_dir, algorithm_kind)
         modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
+        configured_gpus = _configured_num_gpus(cfg)
         metrics = {
             "parameter_count": float(_count_unique_trainable_parameters_from_modules(*modules)),
-            "used_cuda": float(1.0 if _used_cuda(modules) else 0.0),
+            "used_cuda": float(1.0 if (_used_cuda(modules) or configured_gpus > 0.0) else 0.0),
         }
         metrics.update(_parameter_breakdown(modules))
         metrics.update(_observation_storage_diagnostics(cfg, modules))
@@ -1027,9 +1219,13 @@ def _train_variant(
         algo = _build_algo(cfg, run_dir, algorithm_kind)
         module = algo.get_module() if hasattr(algo, "get_module") else None
         resolved_modules = _collect_algo_modules(algo, cfg, run_dir, algorithm_kind)
+        stats_module = _tracking_module(algo, resolved_modules)
+        configured_gpus = _configured_num_gpus(cfg)
         metrics.update(_cuda_memory_snapshot(resolved_modules or module, label="train_post_build"))
-        metrics["used_cuda"] = float(1.0 if _used_cuda(resolved_modules or module) else 0.0)
-        reset_shared_stats = getattr(module, "reset_shared_forward_stats", None)
+        metrics["used_cuda"] = float(
+            1.0 if (_used_cuda(resolved_modules or module) or configured_gpus > 0.0) else 0.0
+        )
+        reset_shared_stats = getattr(stats_module, "reset_shared_forward_stats", None)
         if callable(reset_shared_stats):
             reset_shared_stats()
         _torch_cuda_reset_peak_if_needed(_module_device(resolved_modules or module))
@@ -1040,6 +1236,7 @@ def _train_variant(
             if int(step) in recorded_episode_indices:
                 return
             recorded_episode_indices.add(int(step))
+            probe_metrics = _measure_episode_inference_probe(algo, cfg, run_dir, algorithm_kind)
             episode_markers.append(
                 EpisodeMarker(
                     episode_index=int(step),
@@ -1054,8 +1251,9 @@ def _train_variant(
                         if isinstance(emitted_metrics.get("train/env_step"), (int, float))
                         else None
                     ),
-                    shared_stats=_shared_forward_stats_snapshot(module),
+                    shared_stats=_shared_forward_stats_snapshot(stats_module),
                     cuda_metrics=_cuda_episode_snapshot(resolved_modules or module),
+                    inference_probe_metrics=probe_metrics,
                 )
             )
             _torch_cuda_reset_peak_if_needed(_module_device(resolved_modules or module))
@@ -1065,7 +1263,7 @@ def _train_variant(
             if not first_iteration_recorded:
                 first_iteration_recorded = True
                 metrics.update(_cuda_memory_snapshot(resolved_modules or module, label="after_first_train_iteration"))
-                metrics.update(_shared_forward_diagnostics(module, label="train_first_iteration"))
+                metrics.update(_shared_forward_diagnostics(stats_module, label="train_first_iteration"))
             _record_episode_marker(emitted_metrics, int(step))
 
         _train_algorithm(
@@ -1077,7 +1275,7 @@ def _train_variant(
         )
         wall_clock_seconds = time.perf_counter() - start
         metrics.update(_cuda_memory_snapshot(resolved_modules or module, label="after_training_end"))
-        metrics.update(_shared_forward_diagnostics(module, label="train_total"))
+        metrics.update(_shared_forward_diagnostics(stats_module, label="train_total"))
     finally:
         if algo is not None and hasattr(algo, "stop"):
             algo.stop()
@@ -1171,12 +1369,20 @@ def _print_summary(rows: list[dict[str, Any]]) -> None:
         "episode_row_count",
         "episode_wall_clock_seconds_mean",
         "episode_shared_forward_hit_rate_mean",
-        "cuda_post_build_memory_allocated_mb",
-        "cuda_post_build_memory_reserved_mb",
-        "cuda_after_warmup_inference_memory_allocated_mb",
-        "cuda_after_warmup_inference_memory_reserved_mb",
-        "cuda_after_training_end_memory_allocated_mb",
-        "cuda_after_training_end_memory_reserved_mb",
+        "inference_encoder_call_count",
+        "inference_encoder_time_ms",
+        "inference_encoder_calls_per_joint_decision",
+        "inference_shared_forward_hit_rate",
+        "episode_inference_encoder_call_count_mean",
+        "episode_inference_encoder_time_ms_mean",
+        "episode_inference_encoder_calls_per_joint_decision_mean",
+        "episode_inference_shared_forward_hit_rate_mean",
+        "driver_cuda_post_build_memory_allocated_mb",
+        "driver_cuda_post_build_memory_reserved_mb",
+        "driver_cuda_after_warmup_inference_memory_allocated_mb",
+        "driver_cuda_after_warmup_inference_memory_reserved_mb",
+        "driver_cuda_after_training_end_memory_allocated_mb",
+        "driver_cuda_after_training_end_memory_reserved_mb",
         "inference_joint_decision_ms",
         "inference_agent_action_ms",
         "wall_clock_training_seconds",

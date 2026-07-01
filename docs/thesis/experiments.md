@@ -146,13 +146,24 @@ capacity-normalized lane-count observations. If you switch away from
 `diff-waiting-time`, prefer `normalized-queue` or `normalized-pressure` before
 using raw queue or pressure rewards.
 
-SAC now uses RLlib's native discrete-action support. The repo hands each traffic
-signal its own discrete action space through the multi-agent RLlib wrapper, and
-the built-in/custom SAC paths train directly on those discrete policies.
+SAC complements PPO and DQN because it belongs to a different RL family. PPO is
+an on-policy policy-gradient method, DQN is a value-based off-policy method,
+and SAC is an entropy-regularized actor-critic method. Including SAC therefore
+helps test whether the reward behavior observed in this thesis stays consistent
+across more than one optimization style rather than depending on a single RL
+family.
 
-That means there is no project-side joint Box action adapter in the current SAC
-path. If SAC fails, the issue is in the RLlib discrete SAC path or the env/policy
-setup, not in a custom continuous-action wrapper.
+The original SAC formulation is designed for continuous control. In this repo,
+the traffic-light action space is still discrete, and RLlib handles that
+adaptation internally. Instead of a project-side continuous `Box` wrapper,
+RLlib switches SAC to its discrete variant: the actor predicts a categorical
+distribution over the available phase actions, and the critics output one
+Q-value per discrete action while keeping the same entropy-regularized SAC
+training objective.
+
+That means there is no project-side joint continuous-action adapter in the
+current SAC path. If SAC fails, the issue is in the RLlib discrete SAC path or
+the env/policy setup, not in a custom conversion wrapper inside this project.
 
 `sac_builtin` should be treated as the reference RLlib SAC baseline.
 `sac_mlp` uses the same trainer and replay setup, but replaces the RLModule
