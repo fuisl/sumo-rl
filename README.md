@@ -267,6 +267,19 @@ evaluation helper from a notebook, open
 `experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
 `CHECKPOINT_PATH`.
 
+To continue RLlib training from a compatible checkpoint through the main Hydra
+launcher, pass:
+
+```bash
+python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4 logging.resume_from_checkpoint=outputs/rllib/2026-06-21_12-00-00/checkpoints/ppo logging.checkpoint_every_episodes=50
+```
+
+Periodic RLlib checkpoints are enabled by default and are written under
+`outputs/<run>/checkpoints/<algorithm_kind>/periodic/`. The trip-based
+`resco_*` metrics in this thesis codebase now aggregate dispatched non-ghost
+vehicles: finished plus running-unfinished, while still excluding undeparted
+and ghost vehicles.
+
 For thesis-style validation across RLlib checkpoints and static baselines,
 use the unified validation CLI:
 

@@ -1489,8 +1489,31 @@ def _should_save_best_validation_checkpoints(logging_cfg: Any) -> bool:
     return bool(getattr(logging_cfg, "save_best_validation_checkpoints", False))
 
 
+def _should_save_periodic_checkpoints(logging_cfg: Any) -> bool:
+    return bool(getattr(logging_cfg, "save_periodic_checkpoints", False))
+
+
+def _periodic_checkpoint_interval(logging_cfg: Any) -> int:
+    value = getattr(logging_cfg, "checkpoint_every_episodes", 50)
+    return max(1, int(value or 50))
+
+
+def _resume_checkpoint_path(logging_cfg: Any) -> Optional[Path]:
+    raw_value = getattr(logging_cfg, "resume_from_checkpoint", None)
+    if raw_value is None:
+        return None
+    text = str(raw_value).strip()
+    if text.lower() in {"", "none", "null"}:
+        return None
+    return Path(text).expanduser().resolve()
+
+
 def _best_validation_directory(run_dir: Path, algorithm_kind: str) -> Path:
     return run_dir / "checkpoints" / algorithm_kind / "best_validation"
+
+
+def _periodic_checkpoint_directory(run_dir: Path, algorithm_kind: str) -> Path:
+    return run_dir / "checkpoints" / algorithm_kind / "periodic"
 
 
 def _best_metric_value(metrics: Dict[str, Any], metric_name: str) -> Optional[float]:
@@ -1640,6 +1663,16 @@ def _write_best_validation_metadata(metadata_path: Path, state: Dict[str, Any]) 
     metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _write_periodic_checkpoint_metadata(metadata_path: Path, state: Dict[str, Any]) -> None:
+    payload = {
+        "interval_episodes": int(state["interval"]),
+        "resumed_run": bool(state["resumed_run"]),
+        "saved": [_json_safe_value(dict(entry)) for entry in state["saved"]],
+    }
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def _init_best_validation_checkpoint_state(run_dir: Path, algorithm_kind: str, logging_cfg: Any) -> Dict[str, Any]:
     base_dir = _best_validation_directory(run_dir, algorithm_kind)
     return {
@@ -1650,6 +1683,26 @@ def _init_best_validation_checkpoint_state(run_dir: Path, algorithm_kind: str, l
         "metadata_path": base_dir / "metadata.json",
         "retained": [],
         "validation_pass_index": 0,
+    }
+
+
+def _init_periodic_checkpoint_state(
+    run_dir: Path,
+    algorithm_kind: str,
+    logging_cfg: Any,
+    *,
+    resumed_run: bool,
+) -> Dict[str, Any]:
+    base_dir = _periodic_checkpoint_directory(run_dir, algorithm_kind)
+    return {
+        "enabled": _should_save_periodic_checkpoints(logging_cfg),
+        "interval": _periodic_checkpoint_interval(logging_cfg),
+        "base_dir": base_dir,
+        "metadata_path": base_dir / "metadata.json",
+        "saved": [],
+        "last_saved_multiple": 0,
+        "bootstrapped": not resumed_run,
+        "resumed_run": bool(resumed_run),
     }
 
 
@@ -1715,6 +1768,56 @@ def _consider_best_validation_checkpoint(
     state["retained"] = keep
     _write_best_validation_metadata(state["metadata_path"], state)
     return entry
+
+
+def _maybe_save_periodic_checkpoint(
+    state: Dict[str, Any],
+    algo,
+    *,
+    completed_episode: int,
+    env_step: int,
+) -> list[Dict[str, Any]]:
+    if not state.get("enabled", False):
+        return []
+
+    completed_episode = max(0, int(completed_episode))
+    env_step = max(0, int(env_step))
+    interval = max(1, int(state["interval"]))
+    current_multiple = completed_episode // interval
+    if current_multiple <= 0:
+        return []
+
+    if not bool(state.get("bootstrapped", False)):
+        state["last_saved_multiple"] = current_multiple
+        state["bootstrapped"] = True
+        return []
+
+    saved_entries: list[Dict[str, Any]] = []
+    while int(state.get("last_saved_multiple", 0)) < current_multiple:
+        next_multiple = int(state.get("last_saved_multiple", 0)) + 1
+        milestone_episode = next_multiple * interval
+        candidate_dir = state["base_dir"] / (
+            f"episode_{milestone_episode:05d}"
+            f"__observed_{completed_episode:05d}"
+            f"__step_{env_step:07d}"
+        )
+        checkpoint_path = _save_checkpoint(algo, candidate_dir)
+        if checkpoint_path is None:
+            break
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "milestone_episode": int(milestone_episode),
+            "observed_episode": int(completed_episode),
+            "env_step": int(env_step),
+            "checkpoint_path": str(checkpoint_path.resolve()),
+        }
+        state["saved"].append(entry)
+        state["last_saved_multiple"] = next_multiple
+        saved_entries.append(entry)
+
+    if saved_entries:
+        _write_periodic_checkpoint_metadata(state["metadata_path"], state)
+    return saved_entries
 
 
 def _evaluate_with_details(
@@ -2041,6 +2144,9 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     run_dir.mkdir(parents=True, exist_ok=True)
     logging_cfg = cfg.logging
     _validate_manual_evaluation_backend_config(cfg)
+    resume_checkpoint_path = _resume_checkpoint_path(logging_cfg)
+    if resume_checkpoint_path is not None and not resume_checkpoint_path.exists():
+        raise FileNotFoundError(f"Resume checkpoint path does not exist: {resume_checkpoint_path}")
     run_name = _rllib_run_name(cfg, algorithm_kind)
     wandb_run = _init_wandb(cfg, run_dir, run_name=run_name, include_final_metrics=False)
     csv_run = _LocalMetricsCsvLogger(run_dir / "csv" / f"{cfg.experiment.name}.csv")
@@ -2122,6 +2228,12 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     algo = None
     final_summary: Dict[str, Any] = {}
     best_validation_state = _init_best_validation_checkpoint_state(run_dir, algorithm_kind, logging_cfg)
+    periodic_checkpoint_state = _init_periodic_checkpoint_state(
+        run_dir,
+        algorithm_kind,
+        logging_cfg,
+        resumed_run=resume_checkpoint_path is not None,
+    )
     latest_training_state: Dict[str, int] = {"env_step": 0, "episode_index": 0}
     validation_pass_state: Dict[str, int] = {"index": 0}
     last_validation_state: Dict[str, Any] = {"env_step": None, "episode_index": None, "row": None}
@@ -2130,20 +2242,31 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
         config = _build_algorithm_config(cfg, run_dir, algorithm_kind)
         build_algo = getattr(config, "build_algo", None)
         algo = build_algo() if callable(build_algo) else config.build()
+        if resume_checkpoint_path is not None:
+            _restore_checkpoint(algo, resume_checkpoint_path)
+            print(f"[{algorithm_kind}] restored checkpoint from {resume_checkpoint_path}")
 
         def _emit_training_metrics(metrics: Dict[str, Any], step: int) -> None:
+            env_step = int(_summary_step_from_metrics(metrics) or 0)
+            episode_index = int(_summary_episode_index_from_metrics(metrics) or 0)
             latest_training_state["env_step"] = max(
                 int(latest_training_state.get("env_step", 0)),
-                int(_summary_step_from_metrics(metrics) or 0),
+                env_step,
             )
             latest_training_state["episode_index"] = max(
                 int(latest_training_state.get("episode_index", 0)),
-                int(_summary_episode_index_from_metrics(metrics) or 0),
+                episode_index,
             )
             best_summary_rows["best_train"] = _consider_best_metrics_row(
                 best_summary_rows.get("best_train"),
                 metrics,
                 metric_name="train/resco_delay_mean",
+            )
+            _maybe_save_periodic_checkpoint(
+                periodic_checkpoint_state,
+                algo,
+                completed_episode=episode_index,
+                env_step=env_step,
             )
             _log_outputs(wandb_run, csv_run, metrics, step=step)
 

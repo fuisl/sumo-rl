@@ -274,16 +274,16 @@ The validation image payloads can be disabled independently to reduce overhead:
 - `logging.validation_log_tripinfo_distributions`
 
 `validation/tripinfo_wait_distribution` and `validation/tripinfo_delay_distribution`
-are network-level fairness diagnostics built directly from the completed vehicles in
-each validation seed's tripinfo XML:
+are network-level fairness diagnostics built directly from the dispatched
+vehicles included in each validation seed's tripinfo XML:
 
 - x-axis: vehicle percentile
 - y-axis: seconds
 - thin lines: one percentile curve per validation seed
-- thick line: pooled completed-vehicle percentile curve across all validation seeds
+- thick line: pooled dispatched-vehicle percentile curve across all validation seeds
 - waiting time uses the tripinfo `waitingTime` field
 - delay uses `timeLoss + departDelay`
-- the panel caption reports total seeds, seeds with completed trips, completed trips used, and unfinished trips observed
+- the panel caption reports total seeds, seeds with dispatched trips in scope, trips used, and unfinished trips observed
 
 For multi-seed validation, the runner:
 
@@ -375,6 +375,23 @@ For reproducible comparison, keep the same:
 
 Restored evaluation results may not be bit-identical across machines or library versions, but they should stay close to the stored validation result within a documented tolerance.
 
+### Resuming RLlib training
+
+The main RLlib launcher can resume training from a compatible checkpoint through:
+
+- `logging.resume_from_checkpoint`
+- `logging.save_periodic_checkpoints`
+- `logging.checkpoint_every_episodes`
+
+Periodic checkpoints are saved under:
+
+- `outputs/<run>/checkpoints/<algorithm_kind>/periodic/`
+
+The default cadence is one periodic checkpoint every 50 completed episodes.
+When a run starts from `logging.resume_from_checkpoint`, the periodic saver
+bootstraps from the restored episode progress and only saves the next due
+milestone instead of backfilling older milestones.
+
 ## Shared Episode Summary Metrics
 
 The final episode summary is built from cached data from the last completed episode.
@@ -384,19 +401,21 @@ The runner now uses cached episode data instead of reading the fresh post-reset 
 ### Benchmark metrics
 
 These are the main thesis comparison metrics.
+They intentionally diverge from strict RESCO completed-only aggregation by
+including running-unfinished dispatched vehicles in the trip-based averages.
 
 | Metric | Formula | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `resco_avg_delay` | `mean(timeLoss + departDelay)` over completed non-ghost vehicles (`arrival >= 0` and no unfinished/vaporized marker) | SUMO tripinfo XML | episode summary |
+| `resco_avg_delay` | `mean(timeLoss + departDelay)` over dispatched non-ghost vehicles: finished plus running-unfinished, excluding undeparted rows | SUMO tripinfo XML | episode summary |
 | `resco_delay_mean` | same value as `resco_avg_delay` | SUMO tripinfo XML | episode summary and training trace |
-| `resco_delay_max` | `max(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
-| `resco_delay_std` | std of `timeLoss + departDelay` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
-| `resco_trip_time` | `mean(duration)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_delay_max` | `max(timeLoss + departDelay)` over dispatched non-ghost vehicles included in the aggregate | SUMO tripinfo XML | episode summary and training trace |
+| `resco_delay_std` | std of `timeLoss + departDelay` over dispatched non-ghost vehicles included in the aggregate | SUMO tripinfo XML | episode summary and training trace |
+| `resco_trip_time` | `mean(duration)` over dispatched non-ghost vehicles included in the aggregate | SUMO tripinfo XML | episode summary |
 | `resco_trip_time_mean` | same value as `resco_trip_time` | SUMO tripinfo XML | episode summary and training trace |
-| `resco_wait` | `mean(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_wait` | `mean(waitingTime)` over dispatched non-ghost vehicles included in the aggregate | SUMO tripinfo XML | episode summary |
 | `resco_wait_mean` | same value as `resco_wait` | SUMO tripinfo XML | episode summary and training trace |
-| `resco_wait_max` | `max(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
-| `resco_wait_std` | std of `waitingTime` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
+| `resco_wait_max` | `max(waitingTime)` over dispatched non-ghost vehicles included in the aggregate | SUMO tripinfo XML | episode summary and training trace |
+| `resco_wait_std` | std of `waitingTime` over dispatched non-ghost vehicles included in the aggregate | SUMO tripinfo XML | episode summary and training trace |
 | `resco_tripinfo_count` | count of completed non-ghost tripinfo rows | SUMO tripinfo XML | episode summary |
 | `tripinfo/running_unfinished_count` | count of departed non-ghost tripinfo rows with no arrival by episode end | SUMO tripinfo XML | episode summary and final eval |
 | `tripinfo/undeparted_count` | count of non-ghost tripinfo rows that never departed by episode end | SUMO tripinfo XML | episode summary and final eval |
@@ -424,7 +443,9 @@ These `train/*` fields are not recomputed from a separate source.
 They are copied from the cached completed-episode summary that the environment builds at episode end.
 
 When `--tripinfo-output.write-unfinished` and `--tripinfo-output.write-undeparted` are enabled, SUMO also writes rows for vehicles that did not finish before the episode ended.
-Those rows are excluded from `resco_*` delay, wait, and trip-time aggregates and are only counted under the `tripinfo/*unfinished*` fields.
+The current thesis metrics include running-unfinished dispatched rows in the
+`resco_*` and `tripinfo/*avg*` aggregates, while still excluding undeparted and
+ghost rows from those aggregates.
 
 Only the episode-facing throughput totals stay in `train/*`.
 The end-of-episode live-state efficiency snapshot fields move to `debug/*`
@@ -582,7 +603,7 @@ Use this checklist whenever you add PPO, DQN, SAC, or any future method.
 
 1. Make sure the env config keeps `add_system_info: true`, `add_per_agent_info: true`, and a non-null `tripinfo_output_name`.
 2. Run a short smoke experiment first, not the full horizon.
-3. If you need to inspect raw XML, run with `logging.save_tripinfo_output=true`, then open `outputs/<run>/tripinfo/*.xml` and confirm completed vehicles are present.
+3. If you need to inspect raw XML, run with `logging.save_tripinfo_output=true`, then open `outputs/<run>/tripinfo/*.xml` and confirm both completed and running-unfinished dispatched vehicles are present.
 4. Open `outputs/<run>/logs/metrics.csv` and confirm the final row has non-zero `resco_*` and non-empty `efficiency_*` and `safety_*` fields when traffic exists.
 5. In W&B, compare the run summary values against the final CSV row. They should agree for the final benchmark metrics.
 6. If you use a separate evaluation env, make sure the final summary is built from the last completed episode cache, not from the post-reset live env state.

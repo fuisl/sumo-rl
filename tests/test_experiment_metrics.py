@@ -78,7 +78,7 @@ def test_namespaced_metrics_split_efficiency_and_safety() -> None:
     assert metrics["safety_total_collisions"] == 2.0
 
 
-def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path) -> None:
+def test_resco_tripinfo_metrics_include_dispatched_unfinished_vehicles_and_delete_xml(tmp_path) -> None:
     env, tripinfo_path = _summary_env(
         tmp_path,
         """
@@ -99,15 +99,15 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
     assert summary["tripinfo/undeparted_count"] == 1.0
     assert summary["tripinfo/unfinished_count"] == 2.0
     assert summary["tripinfo/total_count"] == 4.0
-    assert summary["tripinfo/avg_delay"] == 12.0
-    assert summary["resco_avg_delay"] == 12.0
-    assert summary["resco_delay_mean"] == 12.0
+    assert abs(summary["tripinfo/avg_delay"] - (29.0 / 3.0)) <= 1e-9
+    assert abs(summary["resco_avg_delay"] - (29.0 / 3.0)) <= 1e-9
+    assert abs(summary["resco_delay_mean"] - (29.0 / 3.0)) <= 1e-9
     assert summary["resco_delay_max"] == 14.0
-    assert summary["resco_delay_std"] == 2.0
-    assert summary["resco_trip_time"] == 40.0
-    assert summary["resco_trip_time_mean"] == 40.0
-    assert summary["resco_wait"] == 6.0
-    assert summary["resco_wait_mean"] == 6.0
+    assert abs(summary["resco_delay_std"] - np.std([10.0, 14.0, 5.0])) <= 1e-9
+    assert abs(summary["resco_trip_time"] - (100.0 / 3.0)) <= 1e-9
+    assert abs(summary["resco_trip_time_mean"] - (100.0 / 3.0)) <= 1e-9
+    assert summary["resco_wait"] == 5.0
+    assert summary["resco_wait_mean"] == 5.0
     assert summary["resco_wait_max"] == 7.0
     assert summary["resco_queue"] == 3.0
     assert summary["resco_queue_mean"] == 3.0
@@ -119,7 +119,7 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
     assert summary["reward/agent/tls_1"] == 3.0
     assert summary["tripinfo/parse_success"] == 1.0
     assert summary["tripinfo/parse_pending"] == 0.0
-    assert env.completed_episode_summaries[-1]["resco_trip_time"] == 40.0
+    assert abs(env.completed_episode_summaries[-1]["resco_trip_time"] - (100.0 / 3.0)) <= 1e-9
     assert not tripinfo_path.exists()
 
 

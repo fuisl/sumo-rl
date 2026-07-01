@@ -9,12 +9,12 @@ This page covers the non-learning static baselines for the thesis RESCO scenario
 It also matches the fixed-time benchmark style used in the thesis, which follows the same five-seed averaging pattern.
 The logged summary values follow the RESCO formulas:
 
-- `resco_avg_delay` from completed tripinfo rows only: `timeLoss + departDelay`
-- `resco_trip_time` from completed tripinfo rows only: `duration`
-- `resco_wait` from completed tripinfo rows only: `waitingTime`
+- `resco_avg_delay` from dispatched non-ghost tripinfo rows: finished plus running-unfinished, excluding undeparted
+- `resco_trip_time` from the same dispatched row set: `duration`
+- `resco_wait` from the same dispatched row set: `waitingTime`
 - `resco_queue` and `resco_max_queue` from live queue counts in the simulator
 
-Tripinfo rows for vehicles that are still running or never departed when the episode ends are counted separately and excluded from the RESCO averages.
+Tripinfo rows for vehicles that are still running or never departed when the episode ends are still counted separately. Running vehicles now contribute to the trip-based averages, while never-departed vehicles remain excluded.
 
 ## What to Run
 
