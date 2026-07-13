@@ -323,6 +323,12 @@ To inspect the DCRNN graph topology for a scenario, open
 `experiments/visualize_dcrnn_graph.ipynb`, set `SCENARIO_NAME`, and run the
 cells to render the SUMO-map overlay plus adjacency matrix.
 
+To generate thesis-style spatiotemporal-dependency evidence for Cologne8, open
+`experiments/cologne8_spatiotemporal_dependency.ipynb`, keep the default
+`SCENARIO_NAME=resco_cologne8`, and run the cells to produce the selected TLS
+map, temporal autocorrelation panel, lagged 1-hop cross-correlation panel, and
+the graph-distance boxplot from a real fixed-time or max-pressure rollout.
+
 To replay retained RLlib best-validation checkpoints as live vehicle GIFs,
 open `experiments/visualize_best_checkpoint_trip.ipynb`, set `RUN_DIRS`, and run
 the cells. The notebook accepts one or more run directories, restores one best

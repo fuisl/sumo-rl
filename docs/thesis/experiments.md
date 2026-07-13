@@ -10,6 +10,9 @@ If you are onboarding to the codebase, read [docs/thesis/engineering_guide.md](e
 
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
 If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
+If you need the resource-usage smoke metrics or the parameter-counting
+definitions behind those tables, read
+[docs/thesis/resource_usage_smoke.md](resource_usage_smoke.md).
 
 The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, FRAP, SAC, and DCRNN.
 
