@@ -1,7 +1,6 @@
 """DCRNN-specific RLlib config, training loop, and training metrics."""
 
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -22,6 +21,7 @@ from sumo_rl.agents.rllib_common import (
     plain_dict,
     policy_mode,
     scenario_factory_name,
+    training_episode_jump,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
@@ -41,6 +41,12 @@ def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
         "history_len": int(params.get("history_len", model_config.get("history_len", 5))),
         "include_virtual_nodes": bool(params.get("include_virtual_nodes", model_config.get("include_virtual_nodes", True))),
         "add_self_loops": bool(params.get("add_self_loops", model_config.get("add_self_loops", True))),
+        "feature_layout": str(
+            params.get(
+                "feature_layout",
+                model_config.get("feature_layout", "phase_min_green_density_queue"),
+            )
+        ),
     }
 
 
@@ -73,11 +79,17 @@ def _dcrnn_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str
     return model_config
 
 
-def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def build_graph_eval_env(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
-    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params))
+    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params), use_libsumo=use_libsumo)
 
 
 def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algorithm_kind: str) -> str:
@@ -98,6 +110,48 @@ def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algo
 
     register_env(env_name, _creator)
     return env_name
+
+def _format_gib(num_bytes: float) -> str:
+    return f"{num_bytes / float(1024 ** 3):.2f} GiB"
+
+
+def _warn_if_graph_memory_is_large(
+    *,
+    algorithm_kind: str,
+    sample_env: Any,
+    params: Dict[str, Any],
+    episode_steps_value: int,
+) -> None:
+    num_agents = max(1, len(sample_env.possible_agents))
+    history_len = int(sample_env.history.history_len)
+    num_nodes = int(sample_env.graph.num_nodes)
+    feature_dim = int(sample_env.graph.feature_dim)
+    dtype_name = str(sample_env.history.observation_space.dtype)
+    obs_bytes_per_agent = history_len * num_nodes * feature_dim * 4
+    all_agents_step_bytes = obs_bytes_per_agent * num_agents
+    episode_obs_bytes = all_agents_step_bytes * max(1, int(episode_steps_value))
+    replay_type = str(params.get("replay_buffer_type", "MultiAgentPrioritizedEpisodeReplayBuffer"))
+    train_batch_size = max(1, int(params.get("train_batch_size_per_learner", 1)))
+
+    # DCRNN already carries temporal context in the stacked observation, so the
+    # large-memory failure mode comes from duplicating full graph histories
+    # across agents and then sampling whole episodes from an episode replay
+    # buffer on large RESCO maps such as ingolstadt21.
+    if "EpisodeReplayBuffer" not in replay_type:
+        return
+
+    projected_batch_bytes = float(train_batch_size) * float(episode_obs_bytes) * 2.0
+    if projected_batch_bytes < 512 * 1024 * 1024:
+        return
+
+    print(
+        f"[{algorithm_kind}] Large DCRNN replay footprint detected: "
+        f"{num_agents} agents x [{history_len}, {num_nodes}, {feature_dim}] {dtype_name} graph observations. "
+        f"One full multi-agent episode stores about {_format_gib(episode_obs_bytes)} of observations; "
+        f"a train batch of {train_batch_size} episode samples can reach about {_format_gib(projected_batch_bytes)} "
+        f"for obs+next_obs before learner overhead. If GPU memory spikes, lower "
+        f"train_batch_size_per_learner, history_len, or switch away from episode replay."
+    )
 
 
 def build_graph_algorithm_context(
@@ -123,6 +177,12 @@ def build_graph_algorithm_context(
         params=_graph_params(params),
     )
     try:
+        _warn_if_graph_memory_is_large(
+            algorithm_kind=algorithm_kind,
+            sample_env=sample_env,
+            params=params,
+            episode_steps_value=episode_steps(cfg),
+        )
         policies = {}
         model_configs = {}
         for agent_id in sample_env.possible_agents:
@@ -241,12 +301,22 @@ def train(
     callbacks_class.reset_episode_summary_tracking()
     iteration = 0
     last_logged_step = 0
+    last_completed_episode = 0
+    observed_completed_episodes = 0
     last_validation_progress = 0
     while True:
         iteration += 1
         result = algo.train()
         metrics = extract_training_metrics(result, iteration)
+        progress_jump = training_episode_jump(metrics, cfg, last_completed_episode=last_completed_episode)
+        metrics["train/rllib/rollout_jump"] = float(progress_jump)
+        metrics["debug/rllib/rollout_jump"] = float(progress_jump)
         episode_summaries = callbacks_class.drain_pending_episode_summaries()
+        observed_completed_episodes += len(episode_summaries)
+        metrics["train/observed_completed_episodes_jump"] = float(len(episode_summaries))
+        metrics["train/observed_completed_episodes_total"] = float(observed_completed_episodes)
+        metrics["debug/env_completed_episodes_jump"] = float(len(episode_summaries))
+        metrics["debug/env_completed_episodes_total"] = float(observed_completed_episodes)
         is_final = training_should_stop(metrics, cfg)
         last_logged_step = emit_training_episode_rows(
             metrics,
@@ -264,6 +334,13 @@ def train(
             validate=validate,
         )
         completed_episodes = completed_training_episodes(metrics, cfg)
+        last_completed_episode = completed_episodes
+        if progress_jump > 1:
+            print(
+                f"[{KIND}] RLlib episode jump detected: +{progress_jump} "
+                f"(from {completed_episodes - progress_jump} to {completed_episodes}) "
+                f"at iteration={iteration}"
+            )
         print(
             f"[{KIND}] episode={min(completed_episodes, training_episode_target(cfg))}/"
             f"{training_episode_target(cfg)} iteration={iteration} "

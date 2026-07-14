@@ -23,6 +23,7 @@ from sumo_rl.agents.rllib_common import (
     flatten_numeric_metrics,
     plain_dict,
     extract_rllib_result_metrics,
+    training_episode_jump,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
@@ -40,8 +41,15 @@ DCRNN_ACTOR_KIND = "sac_dcrnn_actor"
 DCRNN_FULL_KIND = "sac_dcrnn_full"
 DCRNN_ACTOR_MLP_KIND = "sac_dcrnn_actor_mlp"
 DCRNN_FULL_MLP_KIND = "sac_dcrnn_full_mlp"
+DCRNN_SHARED_MLP_KIND = "sac_dcrnn_shared_mlp"
 CUSTOM_ALIASES = {"sac_custom"}
-GRAPH_KINDS = {DCRNN_ACTOR_KIND, DCRNN_FULL_KIND, DCRNN_ACTOR_MLP_KIND, DCRNN_FULL_MLP_KIND}
+GRAPH_KINDS = {
+    DCRNN_ACTOR_KIND,
+    DCRNN_FULL_KIND,
+    DCRNN_ACTOR_MLP_KIND,
+    DCRNN_FULL_MLP_KIND,
+    DCRNN_SHARED_MLP_KIND,
+}
 KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS}
 ALL_KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS, *CUSTOM_ALIASES}
 
@@ -108,6 +116,37 @@ def _with_pre_encoder_defaults(
     return model_config
 
 
+def _with_shared_dcrnn_encoder_defaults(
+    model_config: Dict[str, Any],
+    *,
+    architecture_tag: str,
+) -> Dict[str, Any]:
+    model_config = dict(model_config)
+    model_config.setdefault("architecture_tag", architecture_tag)
+    model_config["encoder_layout"] = "shared"
+    shared_encoder = dict(model_config.get("shared_encoder") or {})
+    shared_encoder.setdefault("type", "dcrnn")
+    shared_encoder.setdefault("hidden_dim", 128)
+    shared_encoder.setdefault("max_diffusion_step", 2)
+    shared_encoder.setdefault("num_rnn_layers", 1)
+    shared_encoder.setdefault("filter_type", "dual_random_walk")
+    model_config["shared_encoder"] = shared_encoder
+    return model_config
+
+
+def _with_shared_pre_encoder_defaults(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = dict(model_config)
+    shared_encoder = dict(model_config.get("shared_encoder") or {})
+    hidden_dim = int(shared_encoder.get("hidden_dim", shared_encoder.get("hid_dim", 128)))
+    pre_encoder = dict(shared_encoder.get("pre_encoder") or {})
+    pre_encoder.setdefault("enabled", True)
+    pre_encoder.setdefault("hidden_dim", hidden_dim)
+    pre_encoder.setdefault("activation", "relu")
+    shared_encoder["pre_encoder"] = pre_encoder
+    model_config["shared_encoder"] = shared_encoder
+    return model_config
+
+
 def _dcrnn_actor_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config = _with_dcrnn_encoder_defaults(
@@ -149,11 +188,28 @@ def _dcrnn_full_mlp_model_config(params: Dict[str, Any], graph_model_config: Dic
     return model_config
 
 
-def build_graph_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def _dcrnn_shared_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+    model_config = dict(params.get("model_config") or {})
+    model_config = _with_shared_dcrnn_encoder_defaults(
+        model_config,
+        architecture_tag=DCRNN_SHARED_MLP_KIND,
+    )
+    model_config = _with_shared_pre_encoder_defaults(model_config)
+    model_config.update(graph_model_config)
+    return model_config
+
+
+def build_graph_eval_env(
+    cfg: Any,
+    run_dir: Path,
+    seed: Optional[int] = None,
+    *,
+    use_libsumo: Optional[bool] = None,
+):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
-    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=graph_params(params))
+    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=graph_params(params), use_libsumo=use_libsumo)
 
 
 def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
@@ -167,6 +223,8 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
             model_config_builder = _dcrnn_actor_mlp_model_config
         elif algorithm_kind == DCRNN_FULL_KIND:
             model_config_builder = _dcrnn_full_model_config
+        elif algorithm_kind == DCRNN_SHARED_MLP_KIND:
+            model_config_builder = _dcrnn_shared_mlp_model_config
         else:
             model_config_builder = _dcrnn_full_mlp_model_config
         context, policy_model_configs = build_graph_algorithm_context(
@@ -189,6 +247,8 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
             if algorithm_kind == DCRNN_ACTOR_MLP_KIND
             else _dcrnn_full_model_config(params, {})
             if algorithm_kind == DCRNN_FULL_KIND
+            else _dcrnn_shared_mlp_model_config(params, {})
+            if algorithm_kind == DCRNN_SHARED_MLP_KIND
             else _dcrnn_full_mlp_model_config(params, {})
         )
         if algorithm_kind in GRAPH_KINDS
@@ -284,12 +344,22 @@ def train(
     callbacks_class.reset_episode_summary_tracking()
     iteration = 0
     last_logged_step = 0
+    last_completed_episode = 0
+    observed_completed_episodes = 0
     last_validation_progress = 0
     while True:
         iteration += 1
         result = algo.train()
         metrics = extract_training_metrics(result, iteration, algorithm_kind=algorithm_kind)
+        progress_jump = training_episode_jump(metrics, cfg, last_completed_episode=last_completed_episode)
+        metrics["train/rllib/rollout_jump"] = float(progress_jump)
+        metrics["debug/rllib/rollout_jump"] = float(progress_jump)
         episode_summaries = callbacks_class.drain_pending_episode_summaries()
+        observed_completed_episodes += len(episode_summaries)
+        metrics["train/observed_completed_episodes_jump"] = float(len(episode_summaries))
+        metrics["train/observed_completed_episodes_total"] = float(observed_completed_episodes)
+        metrics["debug/env_completed_episodes_jump"] = float(len(episode_summaries))
+        metrics["debug/env_completed_episodes_total"] = float(observed_completed_episodes)
         is_final = training_should_stop(metrics, cfg)
         last_logged_step = emit_training_episode_rows(
             metrics,
@@ -307,6 +377,13 @@ def train(
             validate=validate,
         )
         completed_episodes = completed_training_episodes(metrics, cfg)
+        last_completed_episode = completed_episodes
+        if progress_jump > 1:
+            print(
+                f"[{algorithm_kind}] RLlib episode jump detected: +{progress_jump} "
+                f"(from {completed_episodes - progress_jump} to {completed_episodes}) "
+                f"at iteration={iteration}"
+            )
         print(
             f"[{algorithm_kind}] episode={min(completed_episodes, training_episode_target(cfg))}/"
             f"{training_episode_target(cfg)} iteration={iteration} "

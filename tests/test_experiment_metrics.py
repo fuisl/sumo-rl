@@ -83,10 +83,11 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
         tmp_path,
         """
         <tripinfos>
-            <tripinfo id="veh_1" duration="30" waitingTime="5" timeLoss="8" departDelay="2" />
-            <tripinfo id="veh_2" duration="50" waitingTime="7" timeLoss="10" departDelay="4" />
+            <tripinfo id="veh_1" depart="0" arrival="30" duration="30" waitingTime="5" timeLoss="8" departDelay="2" vaporized="" />
+            <tripinfo id="veh_2" depart="5" arrival="55" duration="50" waitingTime="7" timeLoss="10" departDelay="4" vaporized="" />
             <tripinfo id="ghost_1" duration="999" waitingTime="999" timeLoss="999" departDelay="999" />
-            <tripinfo id="veh_3" duration="20" waitingTime="3" timeLoss="4" departDelay="1" vaporized="true" />
+            <tripinfo id="veh_3" depart="10" arrival="-1" duration="20" waitingTime="3" timeLoss="4" departDelay="1" vaporized="" />
+            <tripinfo id="veh_4" depart="-1" arrival="-1" duration="0" waitingTime="0" timeLoss="0" departDelay="0" />
         </tripinfos>
         """,
     )
@@ -94,7 +95,10 @@ def test_resco_tripinfo_metrics_match_benchmark_formulas_and_delete_xml(tmp_path
     summary = env.finalize_episode_summary(parse_tripinfo=True)
 
     assert summary["tripinfo/finished_count"] == 2.0
-    assert summary["tripinfo/unfinished_count"] == 1.0
+    assert summary["tripinfo/running_unfinished_count"] == 1.0
+    assert summary["tripinfo/undeparted_count"] == 1.0
+    assert summary["tripinfo/unfinished_count"] == 2.0
+    assert summary["tripinfo/total_count"] == 4.0
     assert summary["tripinfo/avg_delay"] == 12.0
     assert summary["resco_avg_delay"] == 12.0
     assert summary["resco_delay_mean"] == 12.0
@@ -136,7 +140,7 @@ def test_pending_tripinfo_summary_is_replaced_after_sumo_close(tmp_path) -> None
         tmp_path,
         """
         <tripinfos>
-            <tripinfo id="veh_1" duration="30" waitingTime="5" timeLoss="8" departDelay="2" />
+            <tripinfo id="veh_1" depart="0" arrival="30" duration="30" waitingTime="5" timeLoss="8" departDelay="2" vaporized="" />
         </tripinfos>
         """,
     )
@@ -241,6 +245,45 @@ def test_resco_summary_row_includes_unchosen_phase_penalty_formula() -> None:
     )
 
 
+def test_resco_summary_row_includes_weighted_nash_average_speed_formula() -> None:
+    class DummyBaseEnv:
+        def __init__(self) -> None:
+            self.metrics = []
+            self.sumo = None
+            self.reward_fn = "weighted-nash-average-speed"
+            self.reward_weights = None
+            self.reward_penalty_lambda = None
+            self.reward_nash_epsilon = 0.05
+            self.last_episode_summary = {
+                "episode/index": 3.0,
+                "episode/steps": 3600.0,
+                "sim_step": 3600.0,
+                "resco_avg_delay": 12.0,
+                "resco_avg_delay_std": 1.25,
+                "resco_trip_time": 34.0,
+                "resco_wait": 7.0,
+                "resco_wait_std": 0.5,
+                "resco_queue": 2.5,
+                "resco_max_queue": 9.0,
+            }
+            self.last_episode_final_info = {}
+            self.last_lane_waiting_times = {"agent_a": []}
+            self.last_episode_lane_waiting_times = {"agent_a": [1.0, 3.0]}
+            self.traffic_signals = {"agent_a": object()}
+
+        def finalize_episode_summary(self):
+            return dict(self.last_episode_summary)
+
+    row = _build_episode_benchmark_summary_row(DummyBaseEnv(), extra={"algorithm/kind": "fixed_time"})
+
+    assert row["reward/formula"] == (
+        "exp(sum(phase_weight * log(phase_average_speed + 0.05))) across green phases, "
+        "where phase_weight = phase_max_waiting_time / sum(phase_max_waiting_time), "
+        "empty phases use average_speed = 1.0 and max_waiting_time = 0, "
+        "and zero total max waiting falls back to uniform phase weights"
+    )
+
+
 def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     class DummyBaseEnv:
         def __init__(self) -> None:
@@ -276,8 +319,10 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
                 "resco_queue": 2.5,
                 "resco_max_queue": 9.0,
                 "tripinfo/finished_count": 4.0,
-                "tripinfo/unfinished_count": 1.0,
-                "tripinfo/total_count": 5.0,
+                "tripinfo/running_unfinished_count": 1.0,
+                "tripinfo/undeparted_count": 2.0,
+                "tripinfo/unfinished_count": 3.0,
+                "tripinfo/total_count": 7.0,
                 "tripinfo/avg_duration": 34.0,
                 "tripinfo/avg_waiting_time": 7.0,
                 "tripinfo/avg_time_loss": 9.0,
@@ -319,6 +364,8 @@ def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     assert "eval/safety/total_collisions" not in row
     assert "final/fairness/jain_waiting_time" not in row
     assert row["tripinfo/finished_count"] == 4.0
+    assert row["tripinfo/running_unfinished_count"] == 1.0
+    assert row["tripinfo/undeparted_count"] == 2.0
     assert row["warnings/no_finished_trips"] is False
     assert row["warnings/no_final_summary_metrics"] is False
     assert row["debug/has_metrics"] is True

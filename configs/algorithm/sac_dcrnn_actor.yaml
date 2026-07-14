@@ -6,11 +6,14 @@ defaults:
 algorithm:
   kind: sac_dcrnn_actor
   params:
+    train_batch_size_per_learner: 32
     history_len: 5
     include_virtual_nodes: true
     add_self_loops: true
     model_config:
       architecture_tag: sac_dcrnn_actor
+      feature_layout: phase_min_green_density_queue
+      # Experimental ablation: actor is graph-encoded, critics stay on the MLP path.
       actor:
         encoder:
           type: dcrnn

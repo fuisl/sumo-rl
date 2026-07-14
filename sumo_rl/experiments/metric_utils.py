@@ -50,7 +50,12 @@ def map_system_metrics_to_namespaces(info: Any) -> Dict[str, float]:
     return namespaced
 
 
-def reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penalty_lambda: Any = None) -> str:
+def reward_formula_text(
+    reward_fn: Any,
+    reward_weights: Any = None,
+    reward_penalty_lambda: Any = None,
+    reward_nash_epsilon: Any = None,
+) -> str:
     if isinstance(reward_fn, list):
         if reward_weights is not None:
             return "weighted_sum(reward_fn_i) across the configured reward functions"
@@ -68,6 +73,20 @@ def reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penal
         )
     if reward_name == "average-speed":
         return "average vehicle speed for the signal"
+    if reward_name == "nash-average-speed":
+        epsilon = 0.1 if reward_nash_epsilon is None else float(reward_nash_epsilon)
+        return (
+            f"geometric_mean(phase_average_speed + {epsilon}) across green phases, "
+            "where empty phases use average_speed = 1.0"
+        )
+    if reward_name == "weighted-nash-average-speed":
+        epsilon = 0.1 if reward_nash_epsilon is None else float(reward_nash_epsilon)
+        return (
+            f"exp(sum(phase_weight * log(phase_average_speed + {epsilon}))) across green phases, "
+            "where phase_weight = phase_max_waiting_time / sum(phase_max_waiting_time), "
+            "empty phases use average_speed = 1.0 and max_waiting_time = 0, "
+            "and zero total max waiting falls back to uniform phase weights"
+        )
     if reward_name == "queue":
         return "- total queued vehicles for the signal"
     if reward_name == "normalized-queue":

@@ -1,7 +1,8 @@
 # RLlib SAC Discrete Proof
 
-This folder contains a small proof that the Ray RLlib SAC implementation in
-this workspace supports `Discrete` action spaces by default.
+This folder contains a small proof that the Ray RLlib SAC implementation used
+in this workspace can train on `Discrete` action spaces through RLlib's
+discrete SAC adaptation.
 
 The check is intentionally minimal:
 - the environment is a one-step bandit

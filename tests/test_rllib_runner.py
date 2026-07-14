@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 from pathlib import Path
@@ -110,6 +111,138 @@ def test_rllib_runtime_params_reads_hydra_resources_before_algorithm_params():
     assert params["num_env_runners"] == 1
 
 
+def test_build_eval_env_defaults_to_traci_when_training_uses_libsumo(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda cfg, run_dir, seed, pad_spaces, use_libsumo=None: calls.append(
+            {"seed": seed, "pad_spaces": pad_spaces, "use_libsumo": use_libsumo}
+        )
+        or object(),
+    )
+
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+    )
+
+    rllib_runner._build_eval_env(cfg, tmp_path, 11, algorithm_kind="dqn", policy_mode="independent")
+
+    assert calls == [{"seed": 11, "pad_spaces": False, "use_libsumo": False}]
+
+
+def test_training_uses_libsumo_reads_hydra_config():
+    cfg = SimpleNamespace(env=SimpleNamespace(kwargs={}))
+
+    assert rllib_runner._training_uses_libsumo(cfg) is False
+
+    cfg.env.kwargs["use_libsumo"] = True
+    assert rllib_runner._training_uses_libsumo(cfg) is True
+
+
+def test_validate_manual_evaluation_backend_config_allows_explicit_split_backends():
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+        algorithm=SimpleNamespace(params={}),
+    )
+
+    rllib_runner._validate_manual_evaluation_backend_config(cfg)
+
+
+def test_build_eval_env_can_explicitly_use_libsumo(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda cfg, run_dir, seed, pad_spaces, use_libsumo=None: calls.append(
+            {"seed": seed, "pad_spaces": pad_spaces, "use_libsumo": use_libsumo}
+        )
+        or object(),
+    )
+
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=True),
+    )
+
+    rllib_runner._build_eval_env(cfg, tmp_path, 13, algorithm_kind="dqn", policy_mode="shared")
+
+    assert calls == [{"seed": 13, "pad_spaces": True, "use_libsumo": True}]
+
+
+def test_validate_manual_evaluation_backend_config_rejects_rllib_native_eval_conflict():
+    cfg = SimpleNamespace(
+        env=SimpleNamespace(kwargs={"use_libsumo": True}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+        algorithm=SimpleNamespace(params={"evaluation_interval": 3}),
+    )
+
+    try:
+        rllib_runner._validate_manual_evaluation_backend_config(cfg)
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "evaluation_interval" in str(exc)
+
+
+def test_validation_image_loggers_respect_disabled_toggles(monkeypatch):
+    class DummyWandbRun:
+        def __init__(self):
+            self.calls = []
+
+        def log(self, payload):
+            self.calls.append(payload)
+
+    class DummyWandb:
+        @staticmethod
+        def Image(value, caption=None):
+            return {"value": value, "caption": caption}
+
+    monkeypatch.setitem(sys.modules, "wandb", DummyWandb)
+
+    wandb_run = DummyWandbRun()
+    logging_cfg = SimpleNamespace(
+        validation_log_action_shares=False,
+        validation_log_action_timelines=False,
+        validation_log_phase_queues=False,
+        validation_log_tripinfo_distributions=False,
+    )
+
+    rllib_runner._log_validation_action_plot_images(
+        wandb_run,
+        {"tls_0": [{"action_0": 1.0}]},
+        {"tls_0": [0, 1]},
+        {"tls_0": [{"phase_0": 2.0}]},
+        pass_index=1,
+        env_step=10,
+        episode_index=2,
+        decision_seconds=5,
+        logging_cfg=logging_cfg,
+    )
+    rllib_runner._log_validation_tripinfo_distribution_images(
+        wandb_run,
+        {
+            "waiting_time": [[1.0]],
+            "delay": [[2.0]],
+            "pooled_waiting_time": [1.0],
+            "pooled_delay": [2.0],
+            "total_seeds": 1,
+            "seeds_with_completed_trips": 1,
+            "total_completed_trips": 1,
+            "total_unfinished_trips": 0,
+        },
+        pass_index=1,
+        env_step=10,
+        episode_index=2,
+        logging_cfg=logging_cfg,
+    )
+
+    assert wandb_run.calls == []
+
+
 def test_train_rllib_existing_ray_address_does_not_pass_local_startup_resources(monkeypatch, tmp_path):
     ray_init_calls = []
 
@@ -188,6 +321,197 @@ def test_train_rllib_existing_ray_address_does_not_pass_local_startup_resources(
     assert "num_gpus" not in ray_init_kwargs
     assert "include_dashboard" not in ray_init_kwargs
     assert ray_init_kwargs["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
+
+
+def test_train_rllib_local_ray_address_forces_explicit_local_startup(monkeypatch, tmp_path):
+    ray_init_calls = []
+    address_file = tmp_path / "ray_current_cluster"
+
+    class DummyRay:
+        class _private:
+            class utils:
+                @staticmethod
+                def get_ray_address_file(_temp_dir=None):
+                    return str(address_file)
+
+        @staticmethod
+        def init(**kwargs):
+            ray_init_calls.append(kwargs)
+            return None
+
+        @staticmethod
+        def shutdown():
+            return None
+
+        @staticmethod
+        def cluster_resources():
+            return {"CPU": 8.0, "GPU": 1.0}
+
+        @staticmethod
+        def available_resources():
+            return {"CPU": 6.0, "GPU": 1.0}
+
+    class DummyAlgo:
+        def stop(self):
+            return None
+
+    class DummyConfig:
+        def build(self):
+            return DummyAlgo()
+
+    def fake_train_algorithm(algo_obj, cfg, algorithm_kind, emit_metrics, validate=None):
+        del algo_obj, cfg, algorithm_kind, validate
+        emit_metrics({"train/env_step": 1.0, "train/episode_index": 1.0}, 1)
+
+    def fake_evaluate_with_details(cfg, run_dir, algo_obj, algorithm_kind, logging_cfg, *, include_validation_metrics=False):
+        del cfg, run_dir, algo_obj, algorithm_kind, logging_cfg, include_validation_metrics
+        return {"algorithm/kind": "ppo", "validation/resco_delay_mean": 1.0}, [], {}, {}, {}, {
+            "waiting_time": [],
+            "delay": [],
+            "pooled_waiting_time": [],
+            "pooled_delay": [],
+            "total_seeds": 0,
+            "seeds_with_completed_trips": 0,
+            "seeds_without_completed_trips": 0,
+            "total_completed_trips": 0,
+            "total_unfinished_trips": 0,
+            "total_trips": 0,
+        }
+
+    monkeypatch.setitem(sys.modules, "ray", DummyRay)
+    monkeypatch.setenv("RAY_ADDRESS", "192.168.20.123:6379")
+    address_file.write_text("192.168.20.123:6379", encoding="utf-8")
+    monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
+    monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
+    monkeypatch.setattr(rllib_runner, "_train_algorithm", fake_train_algorithm)
+    monkeypatch.setattr(rllib_runner, "_evaluate_with_details", fake_evaluate_with_details)
+    monkeypatch.setattr(rllib_runner, "_log_outputs", lambda *args, **kwargs: None)
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=False,
+            save_best_validation_checkpoints=False,
+            save_final_model=False,
+        ),
+        experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),
+        resources=SimpleNamespace(ray_address=None, ray_num_cpus=7, cuda_visible_devices="1"),
+        algorithm=SimpleNamespace(
+            kind="ppo",
+            params={"ray_num_gpus": 1, "num_gpus_per_learner": 1},
+        ),
+    )
+
+    rllib_runner.train_rllib(cfg)
+
+    assert len(ray_init_calls) == 1
+    init_kwargs = ray_init_calls[0]
+    assert init_kwargs["address"] == "local"
+    assert init_kwargs["num_cpus"] == 7
+    assert init_kwargs["num_gpus"] == 1
+    assert init_kwargs["include_dashboard"] is False
+    assert init_kwargs["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
+    assert "RAY_ADDRESS" not in os.environ
+    assert not address_file.exists()
+
+
+def test_train_rllib_auto_ray_address_falls_back_to_explicit_local_startup(monkeypatch, tmp_path):
+    ray_init_calls = []
+    ray_shutdown_calls = []
+    address_file = tmp_path / "ray_current_cluster"
+
+    class DummyRay:
+        class _private:
+            class utils:
+                @staticmethod
+                def get_ray_address_file(_temp_dir=None):
+                    return str(address_file)
+
+        @staticmethod
+        def init(**kwargs):
+            ray_init_calls.append(kwargs)
+            if len(ray_init_calls) == 1:
+                raise ConnectionError("no running Ray cluster")
+            return None
+
+        @staticmethod
+        def shutdown():
+            ray_shutdown_calls.append(True)
+            return None
+
+        @staticmethod
+        def cluster_resources():
+            return {"CPU": 8.0, "GPU": 1.0}
+
+        @staticmethod
+        def available_resources():
+            return {"CPU": 6.0, "GPU": 1.0}
+
+    class DummyAlgo:
+        def stop(self):
+            return None
+
+    class DummyConfig:
+        def build(self):
+            return DummyAlgo()
+
+    def fake_train_algorithm(algo_obj, cfg, algorithm_kind, emit_metrics, validate=None):
+        del algo_obj, cfg, algorithm_kind, validate
+        emit_metrics({"train/env_step": 1.0, "train/episode_index": 1.0}, 1)
+
+    def fake_evaluate_with_details(cfg, run_dir, algo_obj, algorithm_kind, logging_cfg, *, include_validation_metrics=False):
+        del cfg, run_dir, algo_obj, algorithm_kind, logging_cfg, include_validation_metrics
+        return {"algorithm/kind": "ppo", "validation/resco_delay_mean": 1.0}, [], {}, {}, {}, {
+            "waiting_time": [],
+            "delay": [],
+            "pooled_waiting_time": [],
+            "pooled_delay": [],
+            "total_seeds": 0,
+            "seeds_with_completed_trips": 0,
+            "seeds_without_completed_trips": 0,
+            "total_completed_trips": 0,
+            "total_unfinished_trips": 0,
+            "total_trips": 0,
+        }
+
+    monkeypatch.setitem(sys.modules, "ray", DummyRay)
+    monkeypatch.setenv("RAY_ADDRESS", "192.168.20.123:6379")
+    address_file.write_text("192.168.20.123:6379", encoding="utf-8")
+    monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path)
+    monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
+    monkeypatch.setattr(rllib_runner, "_train_algorithm", fake_train_algorithm)
+    monkeypatch.setattr(rllib_runner, "_evaluate_with_details", fake_evaluate_with_details)
+    monkeypatch.setattr(rllib_runner, "_log_outputs", lambda *args, **kwargs: None)
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=False,
+            save_best_validation_checkpoints=False,
+            save_final_model=False,
+        ),
+        experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),
+        resources=SimpleNamespace(ray_address="auto", ray_num_cpus=7, cuda_visible_devices="1"),
+        algorithm=SimpleNamespace(
+            kind="ppo",
+            params={"ray_num_gpus": 1, "num_gpus_per_learner": 1},
+        ),
+    )
+
+    rllib_runner.train_rllib(cfg)
+
+    assert len(ray_init_calls) == 2
+    assert len(ray_shutdown_calls) == 1
+    assert ray_init_calls[0]["address"] == "auto"
+    assert "num_cpus" not in ray_init_calls[0]
+    assert "num_gpus" not in ray_init_calls[0]
+
+    fallback_kwargs = ray_init_calls[1]
+    assert fallback_kwargs["address"] == "local"
+    assert fallback_kwargs["num_cpus"] == 7
+    assert fallback_kwargs["num_gpus"] == 1
+    assert fallback_kwargs["include_dashboard"] is False
+    assert fallback_kwargs["runtime_env"]["env_vars"]["CUDA_VISIBLE_DEVICES"] == "1"
+    assert "RAY_ADDRESS" not in os.environ
+    assert not address_file.exists()
 
 
 def test_dqn_uses_multi_agent_episode_replay_buffer_by_default():
@@ -286,11 +610,12 @@ def test_build_eval_env_does_not_mutate_tripinfo_retention(monkeypatch, tmp_path
 
 def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp_path):
     graph_eval_env = object()
+    calls = []
 
     monkeypatch.setattr(
         rllib_runner,
         "_algorithm_module",
-        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: graph_eval_env),
+        lambda algorithm_kind: SimpleNamespace(build_graph_eval_env=lambda *args, **kwargs: calls.append(kwargs) or graph_eval_env),
     )
     monkeypatch.setattr(
         rllib_runner,
@@ -298,7 +623,10 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
     )
 
-    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    cfg = SimpleNamespace(
+        algorithm=SimpleNamespace(params={"policy_mode": "independent"}),
+        logging=SimpleNamespace(eval_use_libsumo=False),
+    )
     built_env = rllib_runner._build_eval_env(
         cfg,
         tmp_path,
@@ -308,6 +636,7 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_actor(monkeypatch, tmp
     )
 
     assert built_env is graph_eval_env
+    assert calls == [{"seed": 7, "use_libsumo": False}]
 
 
 def test_build_eval_env_uses_graph_eval_env_for_ppo_dcrnn_mlp(monkeypatch, tmp_path):
@@ -415,6 +744,7 @@ def test_build_eval_env_uses_graph_eval_env_for_sac_dcrnn_shared_mlp(monkeypatch
 
 
 def test_build_eval_env_uses_flat_env_for_sac_builtin(monkeypatch, tmp_path):
+    calls = []
     flat_eval_env = object()
 
     monkeypatch.setattr(
@@ -425,7 +755,7 @@ def test_build_eval_env_uses_flat_env_for_sac_builtin(monkeypatch, tmp_path):
     monkeypatch.setattr(
         rllib_runner,
         "build_rllib_parallel_env",
-        lambda *args, **kwargs: flat_eval_env,
+        lambda *args, **kwargs: calls.append(kwargs) or flat_eval_env,
     )
 
     cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
@@ -438,6 +768,37 @@ def test_build_eval_env_uses_flat_env_for_sac_builtin(monkeypatch, tmp_path):
     )
 
     assert built_env is flat_eval_env
+    assert calls == [{"seed": 7, "pad_spaces": False, "use_libsumo": False}]
+
+
+def test_build_eval_env_uses_traci_isolation_for_graph_sac_eval(monkeypatch, tmp_path):
+    graph_eval_env = object()
+    calls = []
+
+    monkeypatch.setattr(
+        rllib_runner,
+        "_algorithm_module",
+        lambda algorithm_kind: SimpleNamespace(
+            build_graph_eval_env=lambda *args, **kwargs: calls.append(kwargs) or graph_eval_env
+        ),
+    )
+    monkeypatch.setattr(
+        rllib_runner,
+        "build_rllib_parallel_env",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("flat eval env should not be used")),
+    )
+
+    cfg = SimpleNamespace(algorithm=SimpleNamespace(params={"policy_mode": "independent"}))
+    built_env = rllib_runner._build_eval_env(
+        cfg,
+        tmp_path,
+        seed=7,
+        algorithm_kind="sac_dcrnn_actor",
+        policy_mode="independent",
+    )
+
+    assert built_env is graph_eval_env
+    assert calls == [{"seed": 7}]
 
 
 def test_sync_env_runner_weights_for_evaluation_uses_learner_weights():
@@ -579,6 +940,164 @@ def test_compute_single_action_prefers_module_forward_over_algo_compute_single_a
 
     assert action == 2
     assert algo.calls == [{"get_module_policy_id": "tls_1"}]
+
+
+def test_compute_single_action_prefers_algo_compute_single_action_for_sac_dcrnn_full():
+    class DummyAlgo:
+        def __init__(self):
+            self.calls = []
+
+        def get_module(self, policy_id=None):
+            self.calls.append({"get_module_policy_id": policy_id})
+            raise AssertionError("sac_dcrnn_full should prefer compute_single_action before raw module inference")
+
+        def compute_single_action(self, obs, policy_id=None, explore=None):
+            self.calls.append(
+                {
+                    "obs": obs,
+                    "policy_id": policy_id,
+                    "explore": explore,
+                }
+            )
+            return 7
+
+    algo = DummyAlgo()
+
+    action = rllib_runner._compute_single_action(
+        algo,
+        {"graph": [1, 2, 3]},
+        policy_id="tls_1",
+        algorithm_kind="sac_dcrnn_full",
+    )
+
+    assert action == 7
+    assert algo.calls == [
+        {
+            "obs": {"graph": [1, 2, 3]},
+            "policy_id": "tls_1",
+            "explore": False,
+        }
+    ]
+
+
+def test_compute_single_action_sac_dcrnn_full_falls_back_to_module_forward_when_algo_compute_unavailable():
+    class DummyColumns:
+        ACTIONS = "actions"
+        OBS = "obs"
+
+    class DummyTensor:
+        def __init__(self, values):
+            self._values = values
+
+        def unsqueeze(self, dim):
+            del dim
+            return self
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return self._values
+
+    class DummyTorch:
+        float32 = "float32"
+
+        @staticmethod
+        def as_tensor(values, dtype=None, device=None):
+            del dtype, device
+            return DummyTensor(values)
+
+        @staticmethod
+        def device(name):
+            return name
+
+        @staticmethod
+        def no_grad():
+            class _NoGrad:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, exc_type, exc, tb):
+                    del exc_type, exc, tb
+                    return False
+
+            return _NoGrad()
+
+    class DummyRayColumnsModule:
+        Columns = DummyColumns
+
+    class DummyModule:
+        def __init__(self):
+            self.calls = []
+
+        def forward_inference(self, batch):
+            self.calls.append(batch)
+            return {DummyColumns.ACTIONS: DummyTensor([5])}
+
+    class DummyAlgo:
+        def __init__(self):
+            self.calls = []
+            self.module = DummyModule()
+
+        def compute_single_action(self, obs, policy_id=None, explore=None):
+            self.calls.append(
+                {
+                    "obs": obs,
+                    "policy_id": policy_id,
+                    "explore": explore,
+                }
+            )
+            raise AttributeError("'MultiAgentEnvRunner' object has no attribute 'get_policy'")
+
+        def get_module(self, policy_id=None):
+            self.calls.append({"get_module_policy_id": policy_id})
+            return self.module
+
+    algo = DummyAlgo()
+
+    original_torch = sys.modules.get("torch")
+    original_ray = sys.modules.get("ray")
+    original_ray_rllib = sys.modules.get("ray.rllib")
+    original_ray_rllib_core = sys.modules.get("ray.rllib.core")
+    original_ray_rllib_core_columns = sys.modules.get("ray.rllib.core.columns")
+    try:
+        sys.modules["torch"] = DummyTorch
+        sys.modules["ray"] = SimpleNamespace()
+        sys.modules["ray.rllib"] = SimpleNamespace()
+        sys.modules["ray.rllib.core"] = SimpleNamespace()
+        sys.modules["ray.rllib.core.columns"] = DummyRayColumnsModule
+
+        action = rllib_runner._compute_single_action(
+            algo,
+            {"graph": [1, 2, 3]},
+            policy_id="tls_1",
+            algorithm_kind="sac_dcrnn_full_mlp",
+        )
+    finally:
+        for name, original in (
+            ("torch", original_torch),
+            ("ray", original_ray),
+            ("ray.rllib", original_ray_rllib),
+            ("ray.rllib.core", original_ray_rllib_core),
+            ("ray.rllib.core.columns", original_ray_rllib_core_columns),
+        ):
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+    assert action == 5
+    assert algo.calls == [
+        {
+            "obs": {"graph": [1, 2, 3]},
+            "policy_id": "tls_1",
+            "explore": False,
+        },
+        {"get_module_policy_id": "tls_1"},
+    ]
 
 
 def test_compute_single_action_uses_module_forward_when_rllib_compute_single_action_hits_env_runner_gap():
@@ -885,6 +1404,7 @@ def test_run_multi_agent_episode_trace_upgrades_action_count_from_phase_queue_sn
         object(),
         DummyEnv(),
         seed=7,
+        algorithm_kind="ppo",
         policy_mode="independent",
     )
 
@@ -1184,8 +1704,9 @@ def test_extract_validation_seed_artifacts_parses_tripinfo_and_removes_temp_file
     tripinfo_path.write_text(
         """
 <routes>
-  <tripinfo id="veh_1" duration="20" waitingTime="4" timeLoss="3" departDelay="1" />
-  <tripinfo id="veh_2" unfinished="true" duration="0" waitingTime="0" timeLoss="0" departDelay="0" />
+  <tripinfo id="veh_1" depart="0" arrival="20" duration="20" waitingTime="4" timeLoss="3" departDelay="1" vaporized="" />
+  <tripinfo id="veh_2" depart="5" arrival="-1" duration="15" waitingTime="9" timeLoss="12" departDelay="0" vaporized="" />
+  <tripinfo id="veh_3" depart="-1" arrival="-1" duration="0" waitingTime="0" timeLoss="0" departDelay="0" />
 </routes>
 """.strip(),
         encoding="utf-8",
@@ -1204,8 +1725,8 @@ def test_extract_validation_seed_artifacts_parses_tripinfo_and_removes_temp_file
     assert artifact.tripinfo.wait_values == [4.0]
     assert artifact.tripinfo.delay_values == [4.0]
     assert artifact.tripinfo.finished_count == 1
-    assert artifact.tripinfo.unfinished_count == 1
-    assert artifact.tripinfo.total_count == 2
+    assert artifact.tripinfo.unfinished_count == 2
+    assert artifact.tripinfo.total_count == 3
     assert tripinfo_path.exists() is False
 
 
@@ -1214,7 +1735,7 @@ def test_extract_validation_seed_artifacts_keeps_tripinfo_when_requested(tmp_pat
     tripinfo_path.write_text(
         """
 <routes>
-  <tripinfo id="veh_1" duration="20" waitingTime="4" timeLoss="3" departDelay="1" />
+  <tripinfo id="veh_1" depart="0" arrival="20" duration="20" waitingTime="4" timeLoss="3" departDelay="1" vaporized="" />
 </routes>
 """.strip(),
         encoding="utf-8",
@@ -1781,6 +2302,7 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
         "train/episode_return_mean": 4.5,
         "train/episodes_total": 2.0,
         "train/iteration": 7,
+        "train/rllib/rollout_jump": 2.0,
     }
     emitted = []
 
@@ -1800,6 +2322,7 @@ def test_rllib_training_episode_emission_logs_every_summary_episode():
     assert [step for step, _ in emitted] == [1, 2]
     assert [row["train/rollout_index"] for _, row in emitted] == [1.0, 2.0]
     assert [row["train/episode_index"] for _, row in emitted] == [1.0, 2.0]
+    assert all(row["train/rllib/rollout_jump"] == 2.0 for _, row in emitted)
     assert emitted[0][1]["train/resco_wait_mean"] == 5.0
     assert emitted[1][1]["train/resco_wait_mean"] == 6.0
 

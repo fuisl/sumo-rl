@@ -657,8 +657,13 @@ def _rllib_validation_helpers():
     return rllib_runner
 
 
-def _reward_formula_text(reward_fn: Any, reward_weights: Any = None, reward_penalty_lambda: Any = None) -> str:
-    return _metric_reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda)
+def _reward_formula_text(
+    reward_fn: Any,
+    reward_weights: Any = None,
+    reward_penalty_lambda: Any = None,
+    reward_nash_epsilon: Any = None,
+) -> str:
+    return _metric_reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda, reward_nash_epsilon)
 
 
 def _reward_metadata_from_env(env) -> Dict[str, Any]:
@@ -666,6 +671,7 @@ def _reward_metadata_from_env(env) -> Dict[str, Any]:
     reward_fn = getattr(base_env, "reward_fn", "diff-waiting-time")
     reward_weights = getattr(base_env, "reward_weights", None)
     reward_penalty_lambda = getattr(base_env, "reward_penalty_lambda", None)
+    reward_nash_epsilon = getattr(base_env, "reward_nash_epsilon", None)
     reward_name = None
 
     if isinstance(reward_fn, list):
@@ -679,7 +685,12 @@ def _reward_metadata_from_env(env) -> Dict[str, Any]:
 
     return {
         "reward/name": reward_name,
-        "reward/formula": _reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda),
+        "reward/formula": _reward_formula_text(
+            reward_fn,
+            reward_weights,
+            reward_penalty_lambda,
+            reward_nash_epsilon,
+        ),
         "reward/source": "sumo_rl.environment.traffic_signal.TrafficSignal.compute_reward",
         "reward/scope": "per-agent environment reward",
     }
@@ -1066,6 +1077,8 @@ def _build_final_eval_summary_row(
             "final/resco/queue": float(summary.get("resco_queue", float("nan"))),
             "final/resco/trip_time": float(summary.get("resco_trip_time", float("nan"))),
             "tripinfo/finished_count": float(summary.get("tripinfo/finished_count", float("nan"))),
+            "tripinfo/running_unfinished_count": float(summary.get("tripinfo/running_unfinished_count", float("nan"))),
+            "tripinfo/undeparted_count": float(summary.get("tripinfo/undeparted_count", float("nan"))),
             "tripinfo/unfinished_count": float(summary.get("tripinfo/unfinished_count", float("nan"))),
             "tripinfo/total_count": float(summary.get("tripinfo/total_count", float("nan"))),
             "tripinfo/avg_duration": float(summary.get("tripinfo/avg_duration", float("nan"))),

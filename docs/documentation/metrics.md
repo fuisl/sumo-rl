@@ -65,6 +65,8 @@ The runner also logs reward metadata in the final episode summary:
 | `diff-waiting-time` | `last_ts_waiting_time - current_ts_waiting_time` | `current_ts_waiting_time = sum(get_accumulated_waiting_time_per_lane()) / 100` | Positive is better |
 | `diff-waiting-time-with-unchosen-phase-penalty` | `diff_waiting_time - reward_penalty_lambda * max(cumulative_waiting_time_per_unchosen_phase / queue_length_per_unchosen_phase)` | same waiting-time term as `diff-waiting-time`, plus per-phase lane waiting sums and queued-vehicle counts for all unchosen green phases; phases with zero queue contribute `0` | Positive is better |
 | `average-speed` | `TrafficSignal.get_average_speed()` | per-vehicle `speed / allowed_speed` on incoming lanes | Higher is better |
+| `nash-average-speed` | `exp(mean(log(phase_average_speed + reward_nash_epsilon)))` | per-phase mean normalized speed ratio over the incoming lanes served by each green phase; empty phases use `phase_average_speed = 1.0`; `reward_nash_epsilon` defaults to `0.1` and can be overridden in the environment config | Higher is better; the geometric mean penalizes slow phases |
+| `weighted-nash-average-speed` | `exp(sum(phase_weight * log(phase_average_speed + reward_nash_epsilon)))` | same phase-average-speed term as `nash-average-speed`, plus `phase_weight = phase_max_waiting_time / sum(phase_max_waiting_time)` with `phase_max_waiting_time = max(vehicle waiting time)` for that phase; empty phases use `phase_max_waiting_time = 0`, zero total max waiting falls back to uniform weights, and `reward_nash_epsilon` defaults to `0.1` | Higher is better; the weighted geometric mean emphasizes phases with the largest max waiting |
 | `queue` | `-TrafficSignal.get_total_queued()` | halting-vehicle count on incoming lanes | Higher is better because the queue is negated |
 | `normalized-queue` | `-mean(TrafficSignal.get_lanes_queue())` | normalized incoming-lane queue density | CoLight-friendly scale in `[-1, 0]` |
 | `pressure` | `TrafficSignal.get_pressure()` | outgoing vehicle count minus incoming vehicle count | Diagnostic reward with implementation-specific sign |
@@ -75,6 +77,11 @@ The runner also logs reward metadata in the final episode summary:
 
 Training trace logging is controlled by `logging.trace_mode`.
 The default is `training`.
+
+Manual RLlib validation uses its own backend switch:
+
+- `logging.eval_use_libsumo=false` keeps validation and final evaluation on TraCI even when training uses Libsumo
+- if training uses Libsumo and `algorithm.params.evaluation_interval` enables RLlib-native evaluation, the runner rejects that configuration because it conflicts with the project-side manual TraCI validation path
 
 | Mode | Always logged | Extra logged | Main intent |
 | --- | --- | --- | --- |
@@ -259,6 +266,13 @@ So with `delta_time=5`, the plotted share window spans `12` decisions.
 - one line per green phase, using the incoming lanes served by that phase
 - the background tint marks which phase was active over each interval
 
+The validation image payloads can be disabled independently to reduce overhead:
+
+- `logging.validation_log_action_shares`
+- `logging.validation_log_action_timelines`
+- `logging.validation_log_phase_queues`
+- `logging.validation_log_tripinfo_distributions`
+
 `validation/tripinfo_wait_distribution` and `validation/tripinfo_delay_distribution`
 are network-level fairness diagnostics built directly from the completed vehicles in
 each validation seed's tripinfo XML:
@@ -373,7 +387,7 @@ These are the main thesis comparison metrics.
 
 | Metric | Formula | Inputs | Logged when |
 | --- | --- | --- | --- |
-| `resco_avg_delay` | `mean(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary |
+| `resco_avg_delay` | `mean(timeLoss + departDelay)` over completed non-ghost vehicles (`arrival >= 0` and no unfinished/vaporized marker) | SUMO tripinfo XML | episode summary |
 | `resco_delay_mean` | same value as `resco_avg_delay` | SUMO tripinfo XML | episode summary and training trace |
 | `resco_delay_max` | `max(timeLoss + departDelay)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_delay_std` | std of `timeLoss + departDelay` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
@@ -384,6 +398,9 @@ These are the main thesis comparison metrics.
 | `resco_wait_max` | `max(waitingTime)` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_wait_std` | std of `waitingTime` over completed non-ghost vehicles | SUMO tripinfo XML | episode summary and training trace |
 | `resco_tripinfo_count` | count of completed non-ghost tripinfo rows | SUMO tripinfo XML | episode summary |
+| `tripinfo/running_unfinished_count` | count of departed non-ghost tripinfo rows with no arrival by episode end | SUMO tripinfo XML | episode summary and final eval |
+| `tripinfo/undeparted_count` | count of non-ghost tripinfo rows that never departed by episode end | SUMO tripinfo XML | episode summary and final eval |
+| `tripinfo/unfinished_count` | `tripinfo/running_unfinished_count + tripinfo/undeparted_count` | SUMO tripinfo XML | episode summary and final eval |
 | `resco_queue` | mean of recorded queue-per-signal values across the episode | `system_mean_queued`, else `system_total_queued / num_signals`, else `system_total_stopped / num_signals` | episode summary |
 | `resco_max_queue` | max recorded queue-per-signal value across the episode | `system_max_queue` from live step info | episode summary |
 | `resco_queue_mean` | same value as `resco_queue` | live queue metrics | episode summary and training trace |
@@ -405,6 +422,9 @@ For the training trace, the runner remaps the completed-episode summary into:
 
 These `train/*` fields are not recomputed from a separate source.
 They are copied from the cached completed-episode summary that the environment builds at episode end.
+
+When `--tripinfo-output.write-unfinished` and `--tripinfo-output.write-undeparted` are enabled, SUMO also writes rows for vehicles that did not finish before the episode ended.
+Those rows are excluded from `resco_*` delay, wait, and trip-time aggregates and are only counted under the `tripinfo/*unfinished*` fields.
 
 Only the episode-facing throughput totals stay in `train/*`.
 The end-of-episode live-state efficiency snapshot fields move to `debug/*`
