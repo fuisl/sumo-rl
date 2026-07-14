@@ -1,10 +1,10 @@
 <img src="docs/_static/logo.png" align="right" width="30%"/>
 
 [![DOI](https://zenodo.org/badge/161216111.svg)](https://zenodo.org/doi/10.5281/zenodo.10869789)
-[![tests](https://github.com/LucasAlegre/sumo-rl/actions/workflows/linux-test.yml/badge.svg)](https://github.com/LucasAlegre/sumo-rl/actions/workflows/linux-test.yml)
+[![tests](https://github.com/fuisl/sumo-rl/actions/workflows/core-fast-tests.yml/badge.svg)](https://github.com/fuisl/sumo-rl/actions/workflows/core-fast-tests.yml)
 [![PyPI version](https://badge.fury.io/py/sumo-rl.svg)](https://badge.fury.io/py/sumo-rl)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://pre-commit.com/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Ruff](https://img.shields.io/badge/lint%20%26%20format-ruff-261230?logo=ruff)](https://github.com/astral-sh/ruff)
 [![License](http://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat)](https://github.com/LucasAlegre/sumo-rl/blob/main/LICENSE)
 
 # SUMO-RL
@@ -67,6 +67,36 @@ pip install -e ".[experiments]"
 pip install -e ".[rllib]"
 pip install -e ".[rllib-custom]"
 ```
+
+### Development hooks
+
+Install the repo hooks once after cloning:
+
+```bash
+pre-commit install
+pre-commit install --hook-type pre-push
+```
+
+The hook split is intentionally lightweight:
+
+- `pre-commit` runs fast quality checks with Ruff, codespell, pyright, and file hygiene hooks.
+- `pre-push` runs local heavy validation for real SUMO-backed smoke tests on the developer machine.
+
+Manual commands:
+
+```bash
+pre-commit run --all-files
+pytest -m core_fast tests
+pre-commit run --hook-stage pre-push local-heavy-validation
+```
+
+Test taxonomy:
+
+- `core_fast`: required CI coverage for lightweight pure-Python and mocked wiring tests
+- `local_heavy`: developer-machine SUMO smoke checks run from `pre-push`
+- `research_heavy`: broader RLlib and model-variant coverage kept out of required CI
+
+Run the heavy local validation before opening a PR whenever you change SUMO environment code, runtime wiring, or RLlib integration paths. Use `--no-verify` only for exceptional cases where you knowingly need to bypass the local heavy hook.
 
 <!-- end install -->
 

@@ -1,10 +1,14 @@
 from pathlib import Path
 
+import pytest
 from hydra import compose, initialize_config_dir
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = ROOT / "configs"
+
+
+pytestmark = pytest.mark.core_fast
 
 
 def _compose(config_name: str, overrides: list[str] | None = None):

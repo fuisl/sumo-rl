@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sumo_rl.experiments.validation_metrics import (
     build_all_demand_metrics,
     build_completed_trip_metrics,
@@ -10,6 +12,9 @@ from sumo_rl.experiments.validation_metrics import (
     load_statistic_output,
 )
 from sumo_rl.util.statistics_output import parse_statistic_output
+
+
+pytestmark = pytest.mark.core_fast
 
 
 def test_parse_statistic_output_reads_vehicle_and_trip_sections(tmp_path: Path):

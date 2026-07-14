@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from sumo_rl.experiments.live_trip_visualization import (
@@ -12,6 +13,9 @@ from sumo_rl.experiments.live_trip_visualization import (
     select_best_checkpoint,
     run_best_checkpoint_trip_visualizations,
 )
+
+
+pytestmark = pytest.mark.core_fast
 
 
 def test_select_best_checkpoint_uses_ranked_metadata(tmp_path: Path):

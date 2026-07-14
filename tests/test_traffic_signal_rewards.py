@@ -13,6 +13,9 @@ if str(ROOT) not in sys.path:
 from sumo_rl.environment.traffic_signal import TrafficSignal
 
 
+pytestmark = pytest.mark.core_fast
+
+
 def test_diff_waiting_time_with_unchosen_phase_penalty_reward_applies_max_penalty() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
     signal.last_ts_waiting_time = 10.0
