@@ -6,6 +6,11 @@ firstpage:
 # Static Baselines
 
 This page covers the non-learning static baselines for the thesis RESCO scenarios.
+It is a reference note for static-baseline-specific behavior, outputs, and
+comparison semantics. Use [docs/thesis/experiments.md](experiments.md) for the
+canonical thesis runbook, including generic Hydra, W&B, validation, resume, and
+rollout-export workflows.
+
 It also matches the fixed-time benchmark style used in the thesis, which follows the same five-seed averaging pattern.
 The logged summary values follow the RESCO formulas:
 

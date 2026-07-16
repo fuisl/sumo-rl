@@ -30,6 +30,15 @@ configs/presets/<scenario>/
   static_max_pressure.yaml
 ```
 
+Support terminology in this file matches the thesis support matrix in
+`docs/thesis/experiments.md`:
+
+- `supported`: part of the supported thesis baseline
+- `experimental`: available for research or ablation work, but not part of the supported thesis baseline
+- `alias`: compatibility-only name for a canonical method
+- `preset-backed`: supported through a scenario-first preset file under `configs/presets/<scenario>/`
+- `shared-launcher`: supported through `experiments/rllib.py` plus `configs/algorithm/`, even when no scenario-first preset file exists
+
 FGS RLlib presets are available for the grid and Cologne8 benchmarks:
 
 ```text
@@ -51,6 +60,11 @@ configs/presets/resco_ingolstadt21/
   fgs_mlp_gatv2_ppo.yaml
   fgs_mlp_gatv2_sac.yaml
 ```
+
+These FGS and FGS PPO recipes are `supported` only where they are preset-backed
+today. Their additional ablation shapes still count as benchmark support only
+through the scenario folders listed above, not as a promise that every
+algorithm variant has full scenario parity.
 
 The full FGS v1 startup and training pipeline is documented in
 `docs/thesis/fgs_v1_pipeline.md`.
@@ -77,6 +91,12 @@ configs/algorithm/
   sac_dcrnn_shared_mlp.yaml
 ```
 
+For Phase 2 support status, read that list as follows:
+
+- `supported` via the shared launcher: `ppo`, `dqn`, `dqn_dcrnn`, `frap`, `colight`, `fgs`, `fgs_ppo`, `sac_builtin`, `sac_mlp`, `sac_dcrnn_full`
+- `experimental` via the shared launcher: `ppo_dcrnn_mlp`, `ppo_dcrnn_shared_mlp`, `dqn_dcrnn_mlp`, `fgsv2`, `sac_dcrnn_actor`, `sac_dcrnn_actor_mlp`, `sac_dcrnn_full_mlp`, `sac_dcrnn_shared_mlp`
+- `alias`: `dcrnn` for `dqn_dcrnn`, and `sac_custom` for `sac_mlp`
+
 The older `dcrnn.yaml` and `sac_custom.yaml` files are kept as compatibility
 aliases, but the canonical public names are `dqn_dcrnn` and `sac_mlp`.
 
@@ -94,6 +114,10 @@ as the Hydra config name, for example:
 python experiments/rllib.py --config-name presets/resco_cologne8/fgs_mlp_gat_sac
 python experiments/rllib.py --config-name presets/resco_cologne8/sac_builtin
 ```
+
+If a method is listed as `supported` in the thesis matrix but does not have a
+scenario-first preset file here, interpret that support as `shared-launcher`
+support rather than `preset-backed` benchmark support.
 
 RLlib training length is controlled by `experiment.episodes`. The episode horizon
 is configured in seconds with `experiment.episode_seconds`, and the decision-step

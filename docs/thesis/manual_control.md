@@ -5,7 +5,9 @@ firstpage:
 
 # Manual Traffic Control
 
-This guide explains how to run SUMO-RL in fixed-time mode with Hydra and inspect the results in Weights & Biases.
+This reference note explains the fixed-time control surface used in the thesis workflow.
+Use [docs/thesis/experiments.md](experiments.md) for the canonical Hydra, W&B,
+validation, resume, and export workflow.
 
 The fixed-time presets in this thesis use five seeds, one episode per seed, and the runner averages those validation passes into one RLlib-style baseline trace.
 The summary is computed with RESCO-style formulas:
@@ -23,7 +25,7 @@ Read in this order:
 
 1. [`README.md`](../../README.md) for the upstream SUMO-RL overview and original examples.
 2. [`docs/thesis/experiments.md`](experiments.md) for the thesis-specific Hydra and W&B setup.
-3. This page for fixed-time/manual control commands.
+3. This page for fixed-time-specific behavior, seed policy, outputs, and overrides.
 4. [`configs/`](../../configs) if you want to inspect or override the exact experiment presets.
 
 ## What "Manual" Means Here
@@ -80,25 +82,10 @@ Like the single-intersection version, the grid preset runs five seeds by default
 
 ## Inspect with W&B
 
-The default W&B mode is offline, so local runs work without a key.
-
-To inspect a run:
-
-- Look at the resolved config in the W&B run page
-- Check the episode-level metrics like waiting time, queue, speed, and reward
-- Compare runs by seed or preset name
-
-If you want online logging:
-
-1. Authenticate once with `wandb login`, or set `WANDB_API_KEY` in your shell.
-2. Run with `logging.mode=online`.
-3. Open the W&B project page and compare runs there.
-
-If you stayed offline, you can later sync runs with:
-
-```bash
-wandb sync <path-to-offline-run>
-```
+Use the W&B setup and download workflow from
+[docs/thesis/experiments.md](experiments.md). This page only adds the
+fixed-time-specific note that the averaged baseline trace is replayed on the
+validation axis for easier comparison against RLlib runs.
 
 For quick debugging, the same metrics are also written locally to:
 

@@ -6,6 +6,11 @@ firstpage:
 # Thesis Engineering Guide
 
 This guide is written for someone joining the repo and needing to become productive quickly.
+It is the contributor engineering note for the thesis workflow, not the
+canonical runtime runbook. For launch commands, support status, validation,
+resume, rollout export, and W&B workflow, use
+[docs/thesis/experiments.md](experiments.md).
+
 It focuses on the parts that matter most for thesis experiments:
 
 - how the runner works
