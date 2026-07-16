@@ -31,6 +31,9 @@ def test_rllib_direct_algorithm_uses_local_ray_defaults():
     assert cfg.scenario.name == "resco_cologne3"
     assert cfg.env.kwargs.use_libsumo is True
     assert cfg.logging.eval_use_libsumo is False
+    assert cfg.logging.resume_from_checkpoint is None
+    assert cfg.logging.checkpoint_every_episodes == 50
+    assert cfg.logging.save_periodic_checkpoints is True
     _assert_rllib_ray_defaults(cfg)
 
 

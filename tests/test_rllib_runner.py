@@ -2226,6 +2226,59 @@ def test_restore_checkpoint_loads_saved_weights_and_reproduces_metric(tmp_path):
     assert abs(restored_algo.metric_value - entry["metric_value"]) <= 1e-9
 
 
+def test_periodic_checkpoint_state_saves_crossed_milestones_without_duplicates(tmp_path):
+    class FakeAlgo:
+        def save_to_path(self, path):
+            checkpoint_dir = Path(path)
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            (checkpoint_dir / "checkpoint.json").write_text("ok", encoding="utf-8")
+            return str(checkpoint_dir)
+
+    logging_cfg = SimpleNamespace(
+        save_periodic_checkpoints=True,
+        checkpoint_every_episodes=50,
+    )
+    state = rllib_runner._init_periodic_checkpoint_state(tmp_path, "ppo", logging_cfg, resumed_run=False)
+    algo = FakeAlgo()
+
+    assert rllib_runner._maybe_save_periodic_checkpoint(state, algo, completed_episode=40, env_step=400) == []
+
+    saved = rllib_runner._maybe_save_periodic_checkpoint(state, algo, completed_episode=101, env_step=1010)
+
+    assert [entry["milestone_episode"] for entry in saved] == [50, 100]
+    assert (state["base_dir"] / "episode_00050__observed_00101__step_0001010").exists()
+    assert (state["base_dir"] / "episode_00100__observed_00101__step_0001010").exists()
+    assert rllib_runner._maybe_save_periodic_checkpoint(state, algo, completed_episode=120, env_step=1200) == []
+    metadata = json.loads(state["metadata_path"].read_text(encoding="utf-8"))
+    assert [entry["milestone_episode"] for entry in metadata["saved"]] == [50, 100]
+
+
+def test_periodic_checkpoint_state_bootstraps_resumed_run_before_next_save(tmp_path):
+    class FakeAlgo:
+        def save_to_path(self, path):
+            checkpoint_dir = Path(path)
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            (checkpoint_dir / "checkpoint.json").write_text("ok", encoding="utf-8")
+            return str(checkpoint_dir)
+
+    logging_cfg = SimpleNamespace(
+        save_periodic_checkpoints=True,
+        checkpoint_every_episodes=50,
+    )
+    state = rllib_runner._init_periodic_checkpoint_state(tmp_path, "ppo", logging_cfg, resumed_run=True)
+    algo = FakeAlgo()
+
+    assert rllib_runner._maybe_save_periodic_checkpoint(state, algo, completed_episode=120, env_step=1200) == []
+    assert state["last_saved_multiple"] == 2
+    assert rllib_runner._maybe_save_periodic_checkpoint(state, algo, completed_episode=149, env_step=1490) == []
+
+    saved = rllib_runner._maybe_save_periodic_checkpoint(state, algo, completed_episode=150, env_step=1500)
+
+    assert [entry["milestone_episode"] for entry in saved] == [150]
+    assert (state["base_dir"] / "episode_00150__observed_00150__step_0001500").exists()
+    assert rllib_runner._maybe_save_periodic_checkpoint(state, algo, completed_episode=151, env_step=1510) == []
+
+
 def test_training_episode_row_uses_episode_cadence_and_resco_metrics():
     cfg = SimpleNamespace(
         logging=SimpleNamespace(train_log_freq_episodes=2, train_log_freq_steps=1, log_freq=1000, trace_mode="training")
@@ -2871,6 +2924,128 @@ def test_train_rllib_validation_saves_best_checkpoints_and_final_model(monkeypat
     assert wandb_run.summary["best_validation/resco_delay_mean"] == 9.0
     assert wandb_run.summary["best_validation/pass_index"] == 2.0
     assert wandb_run.finished is True
+
+
+def test_train_rllib_restores_resume_checkpoint_before_training(monkeypatch, tmp_path):
+    ray_init_calls = []
+
+    class DummyRay:
+        @staticmethod
+        def init(**kwargs):
+            ray_init_calls.append(kwargs)
+            return None
+
+        @staticmethod
+        def shutdown():
+            return None
+
+    class DummyAlgo:
+        def __init__(self):
+            self.restored_path = None
+            self.stop_calls = 0
+
+        def restore_from_path(self, path):
+            self.restored_path = path
+
+        def stop(self):
+            self.stop_calls += 1
+
+    class DummyConfig:
+        def build(self):
+            return algo
+
+    class DummyWandbRun:
+        def __init__(self):
+            self.summary = {}
+            self.finished = False
+
+        def finish(self):
+            self.finished = True
+
+    algo = DummyAlgo()
+    wandb_run = DummyWandbRun()
+    resume_checkpoint = tmp_path / "resume-checkpoint"
+    resume_checkpoint.mkdir(parents=True, exist_ok=True)
+
+    def fake_train_algorithm(algo_obj, cfg, algorithm_kind, emit_metrics, validate=None):
+        del cfg, algorithm_kind, validate
+        assert algo_obj is algo
+        emit_metrics(
+            {
+                "algorithm/kind": "ppo",
+                "train/env_step": 10.0,
+                "train/episode_index": 1.0,
+                "train/rollout_index": 1.0,
+                "train/resco_delay_mean": 9.0,
+            },
+            10,
+        )
+
+    monkeypatch.setitem(sys.modules, "ray", DummyRay)
+    monkeypatch.setattr(rllib_runner, "_get_run_dir", lambda: tmp_path / "run")
+    monkeypatch.setattr(rllib_runner, "_build_algorithm_config", lambda cfg, run_dir, algorithm_kind: DummyConfig())
+    monkeypatch.setattr(rllib_runner, "_init_wandb", lambda *args, **kwargs: wandb_run)
+    monkeypatch.setattr(rllib_runner, "_train_algorithm", fake_train_algorithm)
+    monkeypatch.setattr(rllib_runner, "_log_outputs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rllib_runner, "_log_validation_action_plot_images", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rllib_runner, "_log_validation_tripinfo_distribution_images", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        rllib_runner,
+        "_evaluate_with_details",
+        lambda *args, **kwargs: (
+            {
+                "algorithm/kind": "ppo",
+                "validation/resco_delay_mean": 8.0,
+                "validation/eval/episode": 1.0,
+                "eval/episode": 1.0,
+            },
+            [{"eval/seed": 1.0, "validation/resco_delay_mean": 8.0}],
+            {},
+            {},
+            {},
+            {},
+        ),
+    )
+
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            enabled=False,
+            resume_from_checkpoint=str(resume_checkpoint),
+            save_periodic_checkpoints=True,
+            checkpoint_every_episodes=50,
+            save_best_validation_checkpoints=False,
+            best_validation_checkpoint_count=3,
+            best_validation_metric="validation/resco_delay_mean",
+            save_final_model=False,
+        ),
+        experiment=SimpleNamespace(name="demo", project="proj", group=None, tags=[], seed=1, eval_episodes=1),
+        resources=SimpleNamespace(cuda_visible_devices="1"),
+        algorithm=SimpleNamespace(kind="ppo", params={}),
+    )
+
+    result = rllib_runner.train_rllib(cfg)
+
+    assert algo.restored_path == str(resume_checkpoint.resolve())
+    assert result["validation/resco_delay_mean"] == 8.0
+    assert algo.stop_calls == 1
+    assert wandb_run.finished is True
+    assert ray_init_calls
+
+
+def test_train_rllib_rejects_missing_resume_checkpoint_path(tmp_path):
+    cfg = SimpleNamespace(
+        logging=SimpleNamespace(
+            resume_from_checkpoint=str(tmp_path / "missing-checkpoint"),
+        ),
+        experiment=SimpleNamespace(name="demo"),
+        algorithm=SimpleNamespace(kind="ppo", params={}),
+    )
+
+    try:
+        rllib_runner.train_rllib(cfg)
+        assert False, "Expected FileNotFoundError"
+    except FileNotFoundError as exc:
+        assert "Resume checkpoint path does not exist" in str(exc)
 
 
 def test_summary_episode_index_prefers_rollout_index():

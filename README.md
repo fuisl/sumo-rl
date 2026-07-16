@@ -267,6 +267,19 @@ evaluation helper from a notebook, open
 `experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
 `CHECKPOINT_PATH`.
 
+To continue RLlib training from a compatible checkpoint through the main Hydra
+launcher, pass:
+
+```bash
+python experiments/rllib.py algorithm=ppo scenario=resco_grid4x4 logging.resume_from_checkpoint=outputs/rllib/2026-06-21_12-00-00/checkpoints/ppo logging.checkpoint_every_episodes=50
+```
+
+Periodic RLlib checkpoints are enabled by default and are written under
+`outputs/<run>/checkpoints/<algorithm_kind>/periodic/`. The trip-based
+`resco_*` metrics in this thesis codebase now aggregate dispatched non-ghost
+vehicles: finished plus running-unfinished, while still excluding undeparted
+and ghost vehicles.
+
 For thesis-style validation across RLlib checkpoints and static baselines,
 use the unified validation CLI:
 
@@ -309,6 +322,12 @@ scheduler across multiple jobs, start a shared Ray head first, for example
 To inspect the DCRNN graph topology for a scenario, open
 `experiments/visualize_dcrnn_graph.ipynb`, set `SCENARIO_NAME`, and run the
 cells to render the SUMO-map overlay plus adjacency matrix.
+
+To generate thesis-style spatiotemporal-dependency evidence for Cologne8, open
+`experiments/cologne8_spatiotemporal_dependency.ipynb`, keep the default
+`SCENARIO_NAME=resco_cologne8`, and run the cells to produce the selected TLS
+map, temporal autocorrelation panel, lagged 1-hop cross-correlation panel, and
+the graph-distance boxplot from a real fixed-time or max-pressure rollout.
 
 To replay retained RLlib best-validation checkpoints as live vehicle GIFs,
 open `experiments/visualize_best_checkpoint_trip.ipynb`, set `RUN_DIRS`, and run

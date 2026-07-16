@@ -10,6 +10,9 @@ If you are onboarding to the codebase, read [docs/thesis/engineering_guide.md](e
 
 If you are looking for fixed-time/manual traffic control, read [docs/thesis/manual_control.md](manual_control.md) after this page.
 If you want the RESCO static baselines, read [docs/thesis/static_baselines.md](static_baselines.md) next.
+If you need the resource-usage smoke metrics or the parameter-counting
+definitions behind those tables, read
+[docs/thesis/resource_usage_smoke.md](resource_usage_smoke.md).
 
 The thesis launchers now expose the fixed-time and max-pressure RESCO presets plus a shared RLlib launcher for PPO, DQN, FRAP, SAC, and DCRNN.
 
@@ -27,15 +30,16 @@ Hydra is used as the experiment composition layer.
 - When training with `+env.kwargs.use_libsumo=true`, manual validation and final evaluation stay on TraCI by default via `logging.eval_use_libsumo=false`.
 - Do not combine Libsumo training with RLlib-native evaluation through `algorithm.params.evaluation_interval`; the runner rejects that configuration because it conflicts with the project-side manual validation path.
 - The runner now logs episode-end RESCO summaries plus namespaced efficiency and safety metrics, using:
-  - `resco_avg_delay` from completed SUMO tripinfo rows only: `timeLoss + departDelay`
-  - `resco_trip_time` from completed SUMO tripinfo rows only: `duration`
-  - `resco_wait` from completed SUMO tripinfo rows only: `waitingTime`
+  - `resco_avg_delay` from dispatched non-ghost SUMO tripinfo rows: finished plus running-unfinished, excluding undeparted
+  - `resco_trip_time` from the same dispatched row set: `duration`
+  - `resco_wait` from the same dispatched row set: `waitingTime`
   - `resco_queue` and `resco_max_queue` from the live queue metrics
-  - unfinished and undeparted vehicles at episode end are tracked separately under `tripinfo/*unfinished*` counts and are excluded from the RESCO aggregates
+  - unfinished and undeparted vehicles at episode end are still tracked separately under `tripinfo/*unfinished*` counts, but only undeparted vehicles stay excluded from the `resco_*` aggregates
   - `efficiency_*` for queue, speed, waiting-time, and throughput diagnostics in episode summaries and eval/final outputs
   - `safety_*` for emergency-brake and teleport/unsafe-event counts
   - the RLlib training trace keeps only the episode-facing throughput totals in `train/*`; the end-of-episode live snapshot diagnostics stay under `debug/*`
   - tripinfo XML is generated to compute metrics and deleted by default; set `logging.save_tripinfo_output=true` to keep the raw XML files under `outputs/<experiment-name>/<timestamp>/tripinfo/`
+  - RLlib can resume from `logging.resume_from_checkpoint=<checkpoint-dir>` and saves periodic checkpoints every 50 completed episodes by default under `checkpoints/<algorithm_kind>/periodic/`
   - validation image payloads can be disabled independently with `logging.validation_log_action_shares=false`, `logging.validation_log_action_timelines=false`, `logging.validation_log_phase_queues=false`, and `logging.validation_log_tripinfo_distributions=false`
 - The config layout is split into:
   - `configs/scenario/` for network and road-network setup

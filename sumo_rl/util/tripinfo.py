@@ -64,12 +64,12 @@ def collect_tripinfo_metrics(vehicles) -> TripinfoParseResult:
         status = classify_tripinfo_vehicle(vehicle.attrib)
         if status == "running_unfinished":
             result.running_unfinished_count += 1
-            continue
-        if status == "undeparted":
+        elif status == "undeparted":
             result.undeparted_count += 1
             continue
+        else:
+            result.finished_count += 1
 
-        result.finished_count += 1
         time_loss = _safe_float(vehicle.attrib.get("timeLoss"), default=0.0)
         depart_delay = _safe_float(vehicle.attrib.get("departDelay"), default=0.0)
         result.delay_values.append(time_loss + depart_delay)

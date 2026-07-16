@@ -12,6 +12,9 @@ trace_mode: training
 train_log_freq_steps: 1
 train_log_freq_episodes: 1
 checkpoint_freq: 5000
+resume_from_checkpoint: null
+checkpoint_every_episodes: 50
+save_periodic_checkpoints: true
 log_every_seconds: 200
 save_checkpoints: true
 save_best_validation_checkpoints: true
