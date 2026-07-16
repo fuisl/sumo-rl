@@ -131,8 +131,8 @@ testpaths = ["tests"]
 norecursedirs = [".git", ".venv", ".pytest_cache", ".pytest_tmp", "ray_results", "outputs", "multirun", "*.egg-info"]
 filterwarnings = ['ignore:.*The environment .* is out of date.*']
 markers = [
-    "core_fast: lightweight pure-Python or mocked wiring checks required in CI",
-    "local_heavy: developer-machine integration checks that rely on local SUMO setup",
-    "research_heavy: broader RLlib or model-variant coverage kept out of required CI",
+    "core_fast: lightweight pure-Python or mocked wiring checks required in CI for supported workflows",
+    "local_heavy: developer-machine SUMO-backed smoke checks for supported workflows",
+    "research_heavy: broader RLlib, model-variant, and experimental coverage kept out of the required supported baseline",
 ]
 # filterwarnings = ['ignore:.*step API.*:DeprecationWarning']
