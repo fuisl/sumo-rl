@@ -43,6 +43,11 @@ This project will be organized in phases so the thesis work stays incremental an
 - The default reward remains SUMO-RL's existing `diff-waiting-time`.
 - Cologne8 FGS presets include PyG `GATv2Conv` communication ablations for both FRAP and MLP local encoders.
 
+## Post-Merge Cleanup Track
+- Status: started after merging `rllib-minhton` into `main`.
+- The immediate follow-up work is documented in `docs/thesis/rllib_minhton_cleanup_audit.md`.
+- Cleanup should land in small review slices: artifacts first, then supported algorithm matrix, then docs consolidation, then RLlib runner simplification, then test alignment.
+
 ## Assumptions
 - `SUMO_HOME` remains required for all simulation runs.
 - W&B should support disabled or offline mode for local development.
