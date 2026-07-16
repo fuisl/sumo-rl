@@ -1,5 +1,7 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
@@ -21,31 +23,13 @@ repos:
       - id: codespell
         args:
           - --ignore-words-list=ges,additionals
-  - repo: https://github.com/PyCQA/flake8
-    rev: 6.1.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.4
     hooks:
-      - id: flake8
+      - id: ruff-check
         args:
-          - '--per-file-ignores=*/__init__.py:F401'
-          - --ignore=E203,W503,E741
-          - --max-complexity=30
-          - --max-line-length=456
-          - --show-source
-          - --statistics
-          - --exclude=experiments/*,nets/*,tests/*
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v3.3.1
-    hooks:
-      - id: pyupgrade
-        args: ["--py37-plus"]
-  - repo: https://github.com/PyCQA/isort
-    rev: 5.12.0
-    hooks:
-      - id: isort
-  - repo: https://github.com/python/black
-    rev: 24.10.0
-    hooks:
-      - id: black
+          - --fix
+      - id: ruff-format
   - repo: https://github.com/pycqa/pydocstyle
     rev: 6.3.0
     hooks:
@@ -67,3 +51,9 @@ repos:
         additional_dependencies: ["pyright"]
         args:
           - --project=pyproject.toml
+      - id: local-heavy-validation
+        name: local-heavy-validation
+        entry: powershell -ExecutionPolicy Bypass -File scripts/test_local_heavy.ps1
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

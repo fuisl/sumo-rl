@@ -1,6 +1,10 @@
 from pettingzoo.test import api_test, parallel_api_test
+import pytest
 
 import sumo_rl
+
+
+pytestmark = pytest.mark.local_heavy
 
 
 def test_api():

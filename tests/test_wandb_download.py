@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 
 def _load_wandb_download_module():
     module_path = Path(__file__).resolve().parents[1] / "sumo_rl" / "wandb_download.py"
@@ -17,6 +19,8 @@ def _load_wandb_download_module():
 
 
 wandb_download = _load_wandb_download_module()
+
+pytestmark = pytest.mark.core_fast
 
 
 def test_load_wandb_credentials_reads_repo_env(monkeypatch, tmp_path):

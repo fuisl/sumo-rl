@@ -2,12 +2,17 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sumo_rl.environment.env import SumoEnvironment
+
+
+pytestmark = pytest.mark.core_fast
 
 
 def _stub_env(**overrides):
@@ -25,6 +30,7 @@ def _stub_env(**overrides):
         "sumo_warnings": True,
         "additional_sumo_cmd": None,
         "tripinfo_output_name": None,
+        "statistic_output_name": None,
         "label": "0",
         "episode": 1,
     }

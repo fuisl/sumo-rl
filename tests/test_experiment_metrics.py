@@ -1,10 +1,11 @@
 import importlib.util
 import sys
-from pathlib import Path
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -31,6 +32,9 @@ _get_validation_run_seeds = _RUNNER_MODULE._get_validation_run_seeds
 _emit_baseline_reference_validation_rows = _RUNNER_MODULE._emit_baseline_reference_validation_rows
 _static_validation_summary_row = _RUNNER_MODULE._static_validation_summary_row
 _run_static_validation_episode_trace = _RUNNER_MODULE._run_static_validation_episode_trace
+
+
+pytestmark = pytest.mark.core_fast
 
 
 def _summary_env(tmp_path, tripinfo_xml: str):

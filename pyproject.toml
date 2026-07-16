@@ -78,19 +78,17 @@ nets = [
 
 # Linters and Test tools #######################################################
 
-[tool.black]
+[tool.ruff]
 line-length = 127
-target-version = ['py39', 'py310', 'py311', 'py312']
-include = '\.pyi?$'
+target-version = "py310"
+extend-exclude = ["experiments", "nets", "outputs", "multirun", "ray_results"]
 
-[tool.isort]
-atomic = true
-profile = "black"
-src_paths = ["sumo_rl", "tests", "docs/scripts"]
-extra_standard_library = ["typing_extensions"]
-indent = 4
-lines_after_imports = 2
-multi_line_output = 3
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E203", "E741"]
+
+[tool.ruff.lint.per-file-ignores]
+"*/__init__.py" = ["F401"]
 
 [tool.pyright]
 include = ["sumo_rl/**", "tests/**"]
@@ -132,4 +130,9 @@ addopts = "--basetemp=.pytest_tmp"
 testpaths = ["tests"]
 norecursedirs = [".git", ".venv", ".pytest_cache", ".pytest_tmp", "ray_results", "outputs", "multirun", "*.egg-info"]
 filterwarnings = ['ignore:.*The environment .* is out of date.*']
+markers = [
+    "core_fast: lightweight pure-Python or mocked wiring checks required in CI",
+    "local_heavy: developer-machine integration checks that rely on local SUMO setup",
+    "research_heavy: broader RLlib or model-variant coverage kept out of required CI",
+]
 # filterwarnings = ['ignore:.*step API.*:DeprecationWarning']
