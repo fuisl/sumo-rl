@@ -44,7 +44,7 @@ Write-Host "Using sumo binary $($sumoBinary.Source)"
 
 Push-Location $repoRoot
 try {
-    & $python -m pytest -m local_heavy tests/gym_test.py tests/pz_test.py
+    & $python -m pytest -m local_heavy tests/integration_local/test_gym_api.py tests/integration_local/test_pz_api.py
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
