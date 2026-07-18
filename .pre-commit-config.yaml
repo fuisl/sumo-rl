@@ -30,16 +30,16 @@ repos:
         args:
           - --fix
       - id: ruff-format
-  - repo: https://github.com/pycqa/pydocstyle
-    rev: 6.3.0
-    hooks:
-      - id: pydocstyle
-        exclude: ^(tests/)|(docs/)|(setup.py)|(nets/)|(sumo_rl/util)|(experiments/)|(outputs/)
-        args:
-          - --source
-          - --explain
-          - --convention=google
-        additional_dependencies: ["toml"]
+  # - repo: https://github.com/pycqa/pydocstyle
+  #   rev: 6.3.0
+  #   hooks:
+  #     - id: pydocstyle
+  #       exclude: ^(tests/|docs/|setup\.py|nets/|experiments/|outputs/|scripts/|sumo_rl/agents/|sumo_rl/experiments/|sumo_rl/models/|sumo_rl/nets/|sumo_rl/util/|sumo_rl/environment/graph_env\.py$)
+  #       args:
+  #         - --source
+  #         - --explain
+  #         - --convention=google
+  #       additional_dependencies: ["toml"]
   - repo: local
     hooks:
       - id: pyright

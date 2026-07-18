@@ -90,6 +90,10 @@ ignore = ["E203", "E741"]
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
 
+[tool.pydocstyle]
+convention = "google"
+add-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D202"]
+
 [tool.pyright]
 include = ["sumo_rl/**", "tests/**"]
 exclude = ["**/node_modules", "**/__pycache__"]

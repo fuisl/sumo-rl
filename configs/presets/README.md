@@ -86,15 +86,12 @@ configs/algorithm/
   fgs_ppo.yaml
   sac_builtin.yaml
   sac_mlp.yaml
-  sac_dcrnn_actor.yaml
-  sac_dcrnn_full.yaml
-  sac_dcrnn_shared_mlp.yaml
 ```
 
 For Phase 2 support status, read that list as follows:
 
-- `supported` via the shared launcher: `ppo`, `dqn`, `dqn_dcrnn`, `frap`, `colight`, `fgs`, `fgs_ppo`, `sac_builtin`, `sac_mlp`, `sac_dcrnn_full`
-- `experimental` via the shared launcher: `ppo_dcrnn_mlp`, `ppo_dcrnn_shared_mlp`, `dqn_dcrnn_mlp`, `fgsv2`, `sac_dcrnn_actor`, `sac_dcrnn_actor_mlp`, `sac_dcrnn_full_mlp`, `sac_dcrnn_shared_mlp`
+- `supported` via the shared launcher: `ppo`, `dqn`, `dqn_dcrnn`, `frap`, `colight`, `fgs`, `fgs_ppo`, `sac_builtin`, `sac_mlp`
+- `experimental` via the shared launcher: `ppo_dcrnn_mlp`, `ppo_dcrnn_shared_mlp`, `dqn_dcrnn_mlp`, `fgsv2`
 - `alias`: `dcrnn` for `dqn_dcrnn`, and `sac_custom` for `sac_mlp`
 
 The older `dcrnn.yaml` and `sac_custom.yaml` files are kept as compatibility

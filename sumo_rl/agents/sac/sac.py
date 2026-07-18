@@ -6,10 +6,10 @@ There is no joint continuous action adapter in the current implementation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
-from sumo_rl.agents.dcrnn.dcrnn import build_graph_algorithm_context, graph_params
 from sumo_rl.agents.rllib_common import (
     apply_env_runner_settings,
     apply_multi_agent_settings,
@@ -20,9 +20,9 @@ from sumo_rl.agents.rllib_common import (
     emit_training_episode_rows,
     emit_validation_if_due,
     extract_entropy_mean,
+    extract_rllib_result_metrics,
     flatten_numeric_metrics,
     plain_dict,
-    extract_rllib_result_metrics,
     training_episode_jump,
     training_episode_summary_callbacks_class,
     training_episode_target,
@@ -34,24 +34,11 @@ from sumo_rl.agents.sac.custom_sac import (
     normalize_custom_sac_model_config,
 )
 
-
 BUILTIN_KIND = "sac_builtin"
 CUSTOM_KIND = "sac_mlp"
-DCRNN_ACTOR_KIND = "sac_dcrnn_actor"
-DCRNN_FULL_KIND = "sac_dcrnn_full"
-DCRNN_ACTOR_MLP_KIND = "sac_dcrnn_actor_mlp"
-DCRNN_FULL_MLP_KIND = "sac_dcrnn_full_mlp"
-DCRNN_SHARED_MLP_KIND = "sac_dcrnn_shared_mlp"
 CUSTOM_ALIASES = {"sac_custom"}
-GRAPH_KINDS = {
-    DCRNN_ACTOR_KIND,
-    DCRNN_FULL_KIND,
-    DCRNN_ACTOR_MLP_KIND,
-    DCRNN_FULL_MLP_KIND,
-    DCRNN_SHARED_MLP_KIND,
-}
-KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS}
-ALL_KINDS = {BUILTIN_KIND, CUSTOM_KIND, *GRAPH_KINDS, *CUSTOM_ALIASES}
+KINDS = {BUILTIN_KIND, CUSTOM_KIND}
+ALL_KINDS = {BUILTIN_KIND, CUSTOM_KIND, *CUSTOM_ALIASES}
 
 
 def normalize_kind(algorithm_kind: str) -> str:
@@ -61,13 +48,13 @@ def normalize_kind(algorithm_kind: str) -> str:
     return kind
 
 
-def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
+def build_replay_buffer_config(params: dict[str, Any]) -> dict[str, Any]:
     explicit = params.get("replay_buffer_config")
     if isinstance(explicit, dict) and explicit:
         return dict(explicit)
 
     buffer_type = str(params.get("replay_buffer_type", "MultiAgentPrioritizedEpisodeReplayBuffer"))
-    config: Dict[str, Any] = {
+    config: dict[str, Any] = {
         "type": buffer_type,
         "capacity": int(params.get("replay_buffer_capacity", int(1e6))),
     }
@@ -77,184 +64,16 @@ def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
-def _with_dcrnn_encoder_defaults(
-    model_config: Dict[str, Any],
-    *,
-    branch: str,
-    architecture_tag: str,
-) -> Dict[str, Any]:
-    model_config = dict(model_config)
-    model_config.setdefault("architecture_tag", architecture_tag)
-    branch_config = dict(model_config.get(branch) or {})
-    encoder_config = dict(branch_config.get("encoder") or {})
-    encoder_config.setdefault("type", "dcrnn")
-    encoder_config.setdefault("hidden_dim", 128)
-    encoder_config.setdefault("max_diffusion_step", 2)
-    encoder_config.setdefault("num_rnn_layers", 1)
-    encoder_config.setdefault("filter_type", "dual_random_walk")
-    branch_config["encoder"] = encoder_config
-    model_config[branch] = branch_config
-    return model_config
-
-
-def _with_pre_encoder_defaults(
-    model_config: Dict[str, Any],
-    *,
-    branch: str,
-) -> Dict[str, Any]:
-    model_config = dict(model_config)
-    branch_config = dict(model_config.get(branch) or {})
-    encoder_config = dict(branch_config.get("encoder") or {})
-    hidden_dim = int(encoder_config.get("hidden_dim", encoder_config.get("hid_dim", 128)))
-    pre_encoder = dict(encoder_config.get("pre_encoder") or {})
-    pre_encoder.setdefault("enabled", True)
-    pre_encoder.setdefault("hidden_dim", hidden_dim)
-    pre_encoder.setdefault("activation", "relu")
-    encoder_config["pre_encoder"] = pre_encoder
-    branch_config["encoder"] = encoder_config
-    model_config[branch] = branch_config
-    return model_config
-
-
-def _with_shared_dcrnn_encoder_defaults(
-    model_config: Dict[str, Any],
-    *,
-    architecture_tag: str,
-) -> Dict[str, Any]:
-    model_config = dict(model_config)
-    model_config.setdefault("architecture_tag", architecture_tag)
-    model_config["encoder_layout"] = "shared"
-    shared_encoder = dict(model_config.get("shared_encoder") or {})
-    shared_encoder.setdefault("type", "dcrnn")
-    shared_encoder.setdefault("hidden_dim", 128)
-    shared_encoder.setdefault("max_diffusion_step", 2)
-    shared_encoder.setdefault("num_rnn_layers", 1)
-    shared_encoder.setdefault("filter_type", "dual_random_walk")
-    model_config["shared_encoder"] = shared_encoder
-    return model_config
-
-
-def _with_shared_pre_encoder_defaults(model_config: Dict[str, Any]) -> Dict[str, Any]:
-    model_config = dict(model_config)
-    shared_encoder = dict(model_config.get("shared_encoder") or {})
-    hidden_dim = int(shared_encoder.get("hidden_dim", shared_encoder.get("hid_dim", 128)))
-    pre_encoder = dict(shared_encoder.get("pre_encoder") or {})
-    pre_encoder.setdefault("enabled", True)
-    pre_encoder.setdefault("hidden_dim", hidden_dim)
-    pre_encoder.setdefault("activation", "relu")
-    shared_encoder["pre_encoder"] = pre_encoder
-    model_config["shared_encoder"] = shared_encoder
-    return model_config
-
-
-def _dcrnn_actor_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
-    model_config = dict(params.get("model_config") or {})
-    model_config = _with_dcrnn_encoder_defaults(
-        model_config,
-        branch="actor",
-        architecture_tag=DCRNN_ACTOR_KIND,
-    )
-    model_config.update(graph_model_config)
-    return model_config
-
-
-def _dcrnn_full_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
-    model_config = dict(params.get("model_config") or {})
-    model_config = _with_dcrnn_encoder_defaults(
-        model_config,
-        branch="actor",
-        architecture_tag=DCRNN_FULL_KIND,
-    )
-    model_config = _with_dcrnn_encoder_defaults(
-        model_config,
-        branch="critic",
-        architecture_tag=DCRNN_FULL_KIND,
-    )
-    model_config.update(graph_model_config)
-    return model_config
-
-
-def _dcrnn_actor_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
-    model_config = _dcrnn_actor_model_config(params, graph_model_config)
-    model_config["architecture_tag"] = DCRNN_ACTOR_MLP_KIND
-    return _with_pre_encoder_defaults(model_config, branch="actor")
-
-
-def _dcrnn_full_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
-    model_config = _dcrnn_full_model_config(params, graph_model_config)
-    model_config["architecture_tag"] = DCRNN_FULL_MLP_KIND
-    model_config = _with_pre_encoder_defaults(model_config, branch="actor")
-    model_config = _with_pre_encoder_defaults(model_config, branch="critic")
-    return model_config
-
-
-def _dcrnn_shared_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
-    model_config = dict(params.get("model_config") or {})
-    model_config = _with_shared_dcrnn_encoder_defaults(
-        model_config,
-        architecture_tag=DCRNN_SHARED_MLP_KIND,
-    )
-    model_config = _with_shared_pre_encoder_defaults(model_config)
-    model_config.update(graph_model_config)
-    return model_config
-
-
-def build_graph_eval_env(
-    cfg: Any,
-    run_dir: Path,
-    seed: Optional[int] = None,
-    *,
-    use_libsumo: Optional[bool] = None,
-):
-    from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
-
-    params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
-    return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=graph_params(params), use_libsumo=use_libsumo)
-
-
 def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     from ray.rllib.algorithms.sac import SACConfig
 
     algorithm_kind = normalize_kind(algorithm_kind)
-    if algorithm_kind in GRAPH_KINDS:
-        if algorithm_kind == DCRNN_ACTOR_KIND:
-            model_config_builder = _dcrnn_actor_model_config
-        elif algorithm_kind == DCRNN_ACTOR_MLP_KIND:
-            model_config_builder = _dcrnn_actor_mlp_model_config
-        elif algorithm_kind == DCRNN_FULL_KIND:
-            model_config_builder = _dcrnn_full_model_config
-        elif algorithm_kind == DCRNN_SHARED_MLP_KIND:
-            model_config_builder = _dcrnn_shared_mlp_model_config
-        else:
-            model_config_builder = _dcrnn_full_mlp_model_config
-        context, policy_model_configs = build_graph_algorithm_context(
-            cfg,
-            run_dir,
-            algorithm_kind=algorithm_kind,
-            model_config_builder=model_config_builder,
-        )
-    else:
-        context = build_algorithm_context(cfg, run_dir, algorithm_kind)
-        policy_model_configs = None
+    context = build_algorithm_context(cfg, run_dir, algorithm_kind)
     callbacks_class = training_episode_summary_callbacks_class()
     params = dict(context.params)
     params["replay_buffer_config"] = build_replay_buffer_config(params)
-    custom_model_config = (
-        (
-            _dcrnn_actor_model_config(params, {})
-            if algorithm_kind == DCRNN_ACTOR_KIND
-            else _dcrnn_actor_mlp_model_config(params, {})
-            if algorithm_kind == DCRNN_ACTOR_MLP_KIND
-            else _dcrnn_full_model_config(params, {})
-            if algorithm_kind == DCRNN_FULL_KIND
-            else _dcrnn_shared_mlp_model_config(params, {})
-            if algorithm_kind == DCRNN_SHARED_MLP_KIND
-            else _dcrnn_full_mlp_model_config(params, {})
-        )
-        if algorithm_kind in GRAPH_KINDS
-        else params.get("model_config")
-    )
-    if algorithm_kind in {CUSTOM_KIND, *GRAPH_KINDS}:
+    custom_model_config = params.get("model_config")
+    if algorithm_kind == CUSTOM_KIND:
         normalized_custom_model_config = normalize_custom_sac_model_config(custom_model_config)
         custom_model_config = normalized_custom_model_config
         params.setdefault("twin_q", bool(normalized_custom_model_config.get("twin_q", True)))
@@ -291,16 +110,12 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     config = apply_multi_agent_settings(config, context)
     config = apply_standard_evaluation_settings(config, params)
 
-    if algorithm_kind in {CUSTOM_KIND, *GRAPH_KINDS}:
+    if algorithm_kind == CUSTOM_KIND:
         rl_module_specs = {
             policy_id: build_custom_sac_module_spec(
                 policy_spec.observation_space,
                 policy_spec.action_space,
-                model_config=(
-                    policy_model_configs[policy_id]
-                    if policy_model_configs is not None
-                    else custom_model_config
-                ),
+                model_config=custom_model_config,
             )
             for policy_id, policy_spec in context.active_policies.items()
         }
@@ -314,7 +129,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int, *, algorithm_kind: str) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int, *, algorithm_kind: str) -> dict[str, Any]:
     algorithm_kind = normalize_kind(algorithm_kind)
     metrics = extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
@@ -334,8 +149,8 @@ def train(
     cfg: Any,
     *,
     algorithm_kind: str,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     algorithm_kind = normalize_kind(algorithm_kind)
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}

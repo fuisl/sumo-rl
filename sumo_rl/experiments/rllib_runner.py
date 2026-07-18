@@ -78,11 +78,6 @@ SUPPORTED_RLLIB_ALGORITHMS = {
     "sac_builtin",
     fgsv2_agent.KIND,
     "sac_mlp",
-    "sac_dcrnn_actor",
-    "sac_dcrnn_actor_mlp",
-    "sac_dcrnn_full",
-    "sac_dcrnn_full_mlp",
-    "sac_dcrnn_shared_mlp",
     "sac_custom",
 }
 
@@ -197,15 +192,7 @@ def _algorithm_module(algorithm_kind: str):
         return importlib.import_module("sumo_rl.agents.fgs.fgs")
     if algorithm_kind == fgsv2_agent.KIND:
         return fgsv2_agent
-    if algorithm_kind in {
-        "sac_builtin",
-        "sac_mlp",
-        "sac_dcrnn_actor",
-        "sac_dcrnn_actor_mlp",
-        "sac_dcrnn_full",
-        "sac_dcrnn_full_mlp",
-        "sac_dcrnn_shared_mlp",
-    }:
+    if algorithm_kind in {"sac_builtin", "sac_mlp"}:
         return importlib.import_module("sumo_rl.agents.sac.sac")
     raise ValueError(f"Unsupported RLlib algorithm kind: {algorithm_kind}")
 
@@ -220,11 +207,6 @@ def _build_algorithm_config(cfg: DictConfig, run_dir: Path, algorithm_kind: str)
         "fgs_ppo",
         "sac_builtin",
         "sac_mlp",
-        "sac_dcrnn_actor",
-        "sac_dcrnn_actor_mlp",
-        "sac_dcrnn_full",
-        "sac_dcrnn_full_mlp",
-        "sac_dcrnn_shared_mlp",
     }:
         return module.build_config(cfg, run_dir, algorithm_kind=algorithm_kind)
     return module.build_config(cfg, run_dir)
@@ -240,11 +222,6 @@ def _train_algorithm(algo, cfg: DictConfig, algorithm_kind: str, emit_metrics, v
         "fgs_ppo",
         "sac_builtin",
         "sac_mlp",
-        "sac_dcrnn_actor",
-        "sac_dcrnn_actor_mlp",
-        "sac_dcrnn_full",
-        "sac_dcrnn_full_mlp",
-        "sac_dcrnn_shared_mlp",
     }:
         module.train(algo, cfg, algorithm_kind=algorithm_kind, emit_metrics=emit_metrics, validate=validate)
     else:
@@ -259,7 +236,7 @@ def _compute_single_action(
     algorithm_kind: Optional[str] = None,
 ):
     normalized_algorithm_kind = normalize_algorithm_kind(str(algorithm_kind or "").strip())
-    prefer_rllib_inference_api = normalized_algorithm_kind in {"sac_dcrnn_full", "sac_dcrnn_full_mlp"}
+    prefer_rllib_inference_api = False
 
     if prefer_rllib_inference_api:
         compute_single_action = getattr(algo, "compute_single_action", None)
@@ -356,11 +333,6 @@ def _build_eval_env(cfg: DictConfig, run_dir: Path, seed: int, *, algorithm_kind
         "dqn_dcrnn_mlp",
         "ppo_dcrnn_mlp",
         "ppo_dcrnn_shared_mlp",
-        "sac_dcrnn_actor",
-        "sac_dcrnn_actor_mlp",
-        "sac_dcrnn_full",
-        "sac_dcrnn_full_mlp",
-        "sac_dcrnn_shared_mlp",
     }:
         return module.build_graph_eval_env(cfg, run_dir, seed=seed, use_libsumo=use_libsumo)
     build_eval_env = getattr(module, "build_eval_env", None)
@@ -1622,9 +1594,9 @@ def _sync_env_runner_weights_for_evaluation(algo) -> bool:
     if not callable(get_weights) or not callable(set_weights):
         return False
 
-    # RLlib's inference-only state sync can leave custom SAC+DCRNN env-runner
-    # weights stale relative to the learner. Refresh the local env-runner from
-    # learner weights right before manual/validation rollouts.
+    # RLlib's inference-only state sync can leave env-runner weights stale
+    # relative to the learner. Refresh the local env-runner from learner
+    # weights right before manual/validation rollouts.
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)

@@ -216,7 +216,7 @@ In the folder [nets/RESCO](https://github.com/LucasAlegre/sumo-rl/tree/main/sumo
 
 ### Experiments
 
-Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent. In the thesis configs, the 4x4 grid presets use the RESCO `grid4x4` assets rather than the older Lucas `4x4-Lucas` network. Thesis-specific Hydra and W&B notes are documented separately in [docs/thesis/experiments.md](docs/thesis/experiments.md).
+Check [experiments](https://github.com/LucasAlegre/sumo-rl/tree/main/experiments) for examples on how to instantiate an environment and train your RL agent. In the thesis configs, the 4x4 grid presets use the RESCO `grid4x4` assets rather than the older Lucas `4x4-Lucas` network. Thesis-specific Hydra and W&B notes are documented separately in [docs/thesis/experiments.md](docs/thesis/experiments.md). For the thesis workflow, top-level `experiments/` is the supported launcher surface, while archived notebooks and reference tooling live under `experiments/archive/`.
 
 ### Thesis workflow
 
@@ -235,8 +235,8 @@ Doc map:
 Supported-surface note:
 
 - The canonical thesis support matrix lives in [docs/thesis/experiments.md](docs/thesis/experiments.md).
-- Treat `fixed_time`, `static_max_pressure`, `ppo`, `dqn`, `dqn_dcrnn`, `frap`, `colight`, `fgs`, `fgs_ppo`, `sac_builtin`, `sac_mlp`, and `sac_dcrnn_full` as the supported thesis-facing methods.
-- Treat DCRNN/FGS/SAC ablation variants such as `ppo_dcrnn_mlp`, `dqn_dcrnn_mlp`, `fgsv2`, `sac_dcrnn_actor`, and `sac_dcrnn_shared_mlp` as experimental unless that matrix explicitly promotes them later.
+- Treat `fixed_time`, `static_max_pressure`, `ppo`, `dqn`, `dqn_dcrnn`, `frap`, `colight`, `fgs`, `fgs_ppo`, `sac_builtin`, and `sac_mlp` as the supported thesis-facing methods.
+- Treat DCRNN/FGS ablation variants such as `ppo_dcrnn_mlp`, `dqn_dcrnn_mlp`, and `fgsv2` as experimental unless that matrix explicitly promotes them later.
 - Treat `dcrnn` as an alias for `dqn_dcrnn` and `sac_custom` as an alias for `sac_mlp`.
 
 ## Citing
