@@ -7,7 +7,11 @@ from typing import Protocol
 
 
 class StaticPolicy(Protocol):
+    """Protocol for deterministic or heuristic traffic-signal policies."""
+
     def select_action(self, traffic_signal) -> int:
+        """Return the selected action index for the provided traffic signal."""
+
         raise NotImplementedError
 
 
@@ -23,7 +27,7 @@ class _PhaseScorer:
             if phase_state[link_index].lower() not in {"g", "s"}:
                 continue
             for signal_link in link or ():
-                if not isinstance(signal_link, (tuple, list)) or len(signal_link) < 2:
+                if not isinstance(signal_link, tuple | list) or len(signal_link) < 2:
                     continue
                 incoming_lane = signal_link[0]
                 outgoing_lane = signal_link[1]
@@ -41,10 +45,16 @@ class _PhaseScorer:
 
 
 class MaxPressurePolicy:
+    """Choose the green phase with the highest pressure score."""
+
     def __init__(self):
+        """Initialize the reusable pressure scorer."""
+
         self._scorer = _PhaseScorer()
 
     def select_action(self, traffic_signal) -> int:
+        """Return the phase index with the greatest incoming-outgoing queue gap."""
+
         best_action = 0
         best_score = float("-inf")
         for phase_index, phase in enumerate(getattr(traffic_signal, "green_phases", [])):

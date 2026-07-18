@@ -1,2 +1,1 @@
 """CoLight RLlib agent integration."""
-

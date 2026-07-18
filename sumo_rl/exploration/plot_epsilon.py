@@ -4,7 +4,6 @@ import argparse
 
 import matplotlib.pyplot as plt
 
-
 if __name__ == "__main__":
     prs = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     prs.add_argument("-e", dest="epsilon", type=float, required=True, help="Epsilon\n")

@@ -1,12 +1,13 @@
 # DCRNN Resource-Usage Smoke
 
-Use `experiments/dcrnn_resource_smoke.py` for short resource-usage checks on the
-DCRNN RLlib variants before launching longer Experiment Group C jobs.
+Use `experiments/archive/dcrnn_resource_smoke.py` for short resource-usage
+checks on the DCRNN RLlib variants before launching longer Experiment Group C
+jobs. This is a retained reference utility, not a supported top-level launcher.
 
 Example:
 
 ```bash
-python experiments/dcrnn_resource_smoke.py ^
+python experiments/archive/dcrnn_resource_smoke.py ^
   --variants ppo_dcrnn_mlp ppo_dcrnn_shared_mlp ^
   --scenario resco_grid4x4 ^
   --episodes 2 ^
@@ -51,7 +52,7 @@ Recommended comparison fields:
 
 ## Parameter counting
 
-`experiments/dcrnn_resource_smoke.py` counts trainable parameters only and
+`experiments/archive/dcrnn_resource_smoke.py` counts trainable parameters only and
 deduplicates shared tensors by `(data_ptr, numel)` before summing them. This
 matters for shared-backbone variants, because the same module can be reachable
 through more than one child policy/module reference.

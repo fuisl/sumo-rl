@@ -357,4 +357,3 @@ If FGS does not start, check these in order:
 8. Action masks are valid for heterogeneous action spaces.
 9. For GPU runs, `resources.cuda_visible_devices` exposes the intended physical
    GPU and `algorithm.params.local_gpu_idx` usually remains `0`.
-

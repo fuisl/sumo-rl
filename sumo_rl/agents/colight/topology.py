@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
-
+from typing import Any
 
 Point = tuple[float, float]
 
@@ -57,7 +57,7 @@ def _lane_shape_points(net: Any, lane_ids: Iterable[str]) -> list[Point]:
     return points
 
 
-def _mean_point(points: list[Point]) -> Optional[Point]:
+def _mean_point(points: list[Point]) -> Point | None:
     if not points:
         return None
     return (
@@ -152,8 +152,7 @@ def _svg_document(
     projected_positions = {agent_id: project(point) for agent_id, point in positions.items()}
     topology_set = set(topology_edges)
     lines = [
-        '<svg xmlns="http://www.w3.org/2000/svg" '
-        f'viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
         "<defs>",
         '<marker id="topology-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" '
         'orient="auto" markerUnits="strokeWidth">',
@@ -236,8 +235,7 @@ def render_colight_topology(
         "num_nodes": len(agent_ids),
         "num_directed_edges": len(topology_edges),
         "nodes": [
-            {"id": agent_id, "index": index, "position": positions.get(agent_id)}
-            for index, agent_id in enumerate(agent_ids)
+            {"id": agent_id, "index": index, "position": positions.get(agent_id)} for index, agent_id in enumerate(agent_ids)
         ],
         "directed_edges": [{"source": source, "target": target} for source, target in topology_edges],
     }

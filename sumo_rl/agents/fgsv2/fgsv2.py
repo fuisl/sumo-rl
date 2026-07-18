@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from ray.rllib.policy.policy import PolicySpec
 
@@ -30,11 +31,10 @@ from sumo_rl.agents.rllib_common import (
 from sumo_rl.agents.sac import sac as sac_agent
 from sumo_rl.experiments.runner import _prepare_env_kwargs
 
-
 KIND = "fgsv2"
 
 
-def _fgsv2_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
+def _fgsv2_model_config(params: dict[str, Any]) -> dict[str, Any]:
     model_config = normalize_fgsv2_model_config(params.get("model_config") or {})
     for key in ("twin_q",):
         if key in params and params[key] is not None:
@@ -45,10 +45,10 @@ def _fgsv2_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
 def build_fgsv2_parallel_env(
     cfg: Any,
     run_dir: Path,
-    model_config: Dict[str, Any],
-    seed: Optional[int] = None,
+    model_config: dict[str, Any],
+    seed: int | None = None,
     *,
-    use_libsumo: Optional[bool] = None,
+    use_libsumo: bool | None = None,
 ):
     import sumo_rl
 
@@ -83,7 +83,7 @@ def build_fgsv2_parallel_env(
     )
 
 
-def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def build_eval_env(cfg: Any, run_dir: Path, seed: int | None = None):
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
@@ -92,7 +92,7 @@ def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     )
 
 
-def _build_fgsv2_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> RllibAlgorithmContext:
+def _build_fgsv2_context(cfg: Any, run_dir: Path, params: dict[str, Any]) -> RllibAlgorithmContext:
     mode = str(params.get("policy_mode", "shared") or "shared").strip().lower()
     if mode != "shared":
         raise ValueError("FGSv2 must use algorithm.params.policy_mode=shared for decentralized actor parameter sharing.")
@@ -120,8 +120,8 @@ def _build_fgsv2_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> Rll
     finally:
         sample_env.close()
 
-    from ray.tune.registry import register_env
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
+    from ray.tune.registry import register_env
 
     env_name = f"sumo_rl_{scenario_factory_name(cfg)}_{KIND}"
 
@@ -215,7 +215,7 @@ def build_config(cfg: Any, run_dir: Path):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int) -> dict[str, Any]:
     return sac_agent.extract_training_metrics(result, iteration, algorithm_kind=KIND)
 
 
@@ -223,7 +223,7 @@ def train(
     algo,
     cfg: Any,
     *,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     return sac_agent.train(algo, cfg, algorithm_kind=KIND, emit_metrics=emit_metrics, validate=validate)

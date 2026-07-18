@@ -52,15 +52,10 @@ Use the following status labels consistently:
 | `fgs_ppo` | `supported` | preset-backed and shared RLlib launcher | Supported where thesis presets exist today |
 | `sac_builtin` | `supported` | preset-backed and shared RLlib launcher | Reference RLlib SAC baseline |
 | `sac_mlp` | `supported` | shared RLlib launcher | Canonical public SAC customization surface |
-| `sac_dcrnn_full` | `supported` | shared RLlib launcher | Canonical thesis DCRNN SAC path |
 | `ppo_dcrnn_mlp` | `experimental` | shared RLlib launcher | PPO graph-observation ablation |
 | `ppo_dcrnn_shared_mlp` | `experimental` | shared RLlib launcher | PPO parameter-sharing ablation |
 | `dqn_dcrnn_mlp` | `experimental` | shared RLlib launcher | DCRNN pre-encoder ablation |
 | `fgsv2` | `experimental` | shared RLlib launcher | Broader research variant |
-| `sac_dcrnn_actor` | `experimental` | shared RLlib launcher | Actor-only DCRNN ablation |
-| `sac_dcrnn_actor_mlp` | `experimental` | shared RLlib launcher | Actor-only DCRNN plus MLP ablation |
-| `sac_dcrnn_full_mlp` | `experimental` | shared RLlib launcher | Full DCRNN plus MLP ablation |
-| `sac_dcrnn_shared_mlp` | `experimental` | shared RLlib launcher | Parameter-sharing DCRNN SAC ablation |
 | `dcrnn` | `alias` | shared RLlib launcher | Compatibility alias for `dqn_dcrnn` |
 | `sac_custom` | `alias` | shared RLlib launcher | Compatibility alias for `sac_mlp` |
 
@@ -77,6 +72,13 @@ Use the following status labels consistently:
 - Static baselines are supported through the scenario-first benchmark presets under the six RESCO benchmark scenarios.
 - FGS and FGS PPO benchmark support is limited to the scenarios where preset-backed recipes already exist today.
 - RLlib methods without scenario-first preset files can still be supported when they are listed above as canonical methods, but that support is through the shared RLlib launcher rather than preset-backed benchmark recipes.
+
+## Experiment directory policy
+
+- Top-level `experiments/` is reserved for supported launchers and utilities.
+- Archive/reference notebooks and analysis helpers live under `experiments/archive/`.
+- Archive workflows may write ignored local outputs under `experiments/artifacts/`, but that tree is not part of the supported run artifact contract.
+- Use `python scripts/cleanup_local_artifacts.py --dry-run` to preview local artifact cleanup and `python scripts/cleanup_local_artifacts.py --yes` to remove the known ignored run directories safely.
 
 ## Hydra
 Hydra is the experiment composition layer for the thesis workflow.
@@ -128,7 +130,6 @@ python experiments/rllib.py algorithm=colight scenario=resco_grid4x4
 python experiments/rllib.py algorithm=fgs scenario=resco_grid4x4
 python experiments/rllib.py algorithm=sac_builtin scenario=resco_ingolstadt1
 python experiments/rllib.py algorithm=sac_mlp scenario=resco_ingolstadt7
-python experiments/rllib.py algorithm=sac_dcrnn_full scenario=resco_grid4x4 experiment.episodes=1
 ```
 
 Experimental variants remain available through the shared RLlib launcher, but
@@ -208,7 +209,6 @@ PPO and DQN default to independent policies. To switch to a shared policy, use
 - `colight`: shared-policy graph-attention DQN-family method. It also writes topology overlays under the run directory.
 - `sac_builtin`: reference RLlib discrete SAC baseline.
 - `sac_mlp`: project-owned SAC RLModule surface for actor and critic MLP customization. `sac_custom` remains the compatibility alias.
-- `sac_dcrnn_full`: canonical thesis DCRNN SAC path. Actor and critics each use full graph-history observations with separate DCRNN encoders.
 - `fgs`: thesis graph-attention SAC reference. It combines a local FRAP or MLP encoder with explicit GAT or GATv2 message passing over the traffic-signal graph. See [docs/thesis/fgs_v1_pipeline.md](fgs_v1_pipeline.md) for the full pipeline.
 - `fgs_ppo`: FGS observation and encoder stack with PPO heads instead of SAC heads.
 
@@ -216,19 +216,15 @@ PPO and DQN default to independent policies. To switch to a shared policy, use
 
 - PPO ablations: `ppo_dcrnn_mlp`, `ppo_dcrnn_shared_mlp`
 - DQN ablations: `dqn_dcrnn_mlp`
-- SAC ablations: `sac_dcrnn_actor`, `sac_dcrnn_actor_mlp`, `sac_dcrnn_full_mlp`, `sac_dcrnn_shared_mlp`
 - Research variants: `fgsv2`
 
 These variants stay available for research and reproduction, but they are not
-part of the supported thesis baseline. The four SAC DCRNN ablations are
-documented removal candidates for later runtime cleanup rather than supported
-public surfaces.
+part of the supported thesis baseline.
 
 ### Method-specific notes
 
 - DCRNN-based methods use graph-history observations shaped as `[history_len, num_nodes, phase_one_hot_min_green_density_queue_features]`.
 - Current DQN+DCRNN defaults trim replay pressure on larger RESCO networks with smaller history and learner-batch settings.
-- Current SAC+DCRNN defaults use `train_batch_size_per_learner=32` to keep graph batches smaller on the learner side.
 - FGS is the repo's main reference for explicit graph-attention communication in SAC-style training. If you need the deeper architecture explanation, use [docs/thesis/fgs_v1_pipeline.md](fgs_v1_pipeline.md).
 
 ```mermaid
@@ -271,7 +267,7 @@ flowchart LR
 For the intended smoke path, use the `marl` conda environment:
 
 ```bash
-conda run -n marl python -m pytest tests/test_fgs.py tests/test_sac_discrete.py tests/test_frap.py tests/test_colight.py
+conda run -n marl python -m pytest tests/models/test_fgs.py tests/models/test_sac_build_config.py tests/models/test_sac_model_config.py tests/models/test_frap.py tests/models/test_colight.py
 conda run -n marl python experiments/rllib.py algorithm=fgs scenario=single_intersection experiment.episodes=1 experiment.episode_seconds=60 logging=disabled
 ```
 

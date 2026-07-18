@@ -12,10 +12,9 @@ import json
 import math
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional
-
 
 Edge = tuple[str, str]
 Point = tuple[float, float]
@@ -69,7 +68,7 @@ class TLSTopology:
             "workers": list(self.workers),
             "directed_edges": [list(edge) for edge in self.directed_edges],
             "edges": [list(edge) for edge in self.edges],
-            "edge_weights": {"%s--%s" % edge: weight for edge, weight in sorted(self.edge_weights.items())},
+            "edge_weights": {"{}--{}".format(*edge): weight for edge, weight in sorted(self.edge_weights.items())},
             "super_edges": [edge.to_dict() for edge in self.super_edges],
             "positions": {worker: [x, y] for worker, (x, y) in sorted(self.positions.items())},
         }
@@ -165,7 +164,7 @@ def _infer_tls_junction(
     tls_id: str,
     positions: dict[str, Point],
     edge_catalog: dict[str, RoadEdge],
-) -> Optional[str]:
+) -> str | None:
     counts: dict[str, int] = defaultdict(int)
     for connection in root.findall("connection"):
         if connection.get("tl") != tls_id:
@@ -265,10 +264,10 @@ def _find_nearest_tls(
     tls_node_set: set[str],
     source_node: str,
     start_edge: str,
-) -> Optional[tuple[str, list[str]]]:
+) -> tuple[str, list[str]] | None:
     queue: list[tuple[float, str]] = []
     best_cost = {start_edge: float(edge_catalog[start_edge].travel_time)}
-    predecessor: dict[str, Optional[str]] = {start_edge: None}
+    predecessor: dict[str, str | None] = {start_edge: None}
     heapq.heappush(queue, (best_cost[start_edge], start_edge))
 
     while queue:
@@ -278,7 +277,7 @@ def _find_nearest_tls(
         target_node = edge_catalog[current_edge].target_node
         if target_node in tls_node_set and target_node != source_node:
             path_edge_ids = []
-            cursor: Optional[str] = current_edge
+            cursor: str | None = current_edge
             while cursor is not None:
                 path_edge_ids.append(cursor)
                 cursor = predecessor[cursor]
@@ -362,7 +361,7 @@ def _extract_road_polylines(root: ET.Element, positions: dict[str, Point]) -> li
     return polylines
 
 
-def _parse_shape(raw: Optional[str]) -> list[Point]:
+def _parse_shape(raw: str | None) -> list[Point]:
     if not raw:
         return []
     points = []
@@ -377,13 +376,13 @@ def _parse_shape(raw: Optional[str]) -> list[Point]:
     return points
 
 
-def _shape_from_nodes(source: Optional[str], target: Optional[str], positions: dict[str, Point]) -> list[Point]:
+def _shape_from_nodes(source: str | None, target: str | None, positions: dict[str, Point]) -> list[Point]:
     if source in positions and target in positions:
         return [positions[source], positions[target]]
     return []
 
 
-def _distance(source: Optional[str], target: Optional[str], positions: dict[str, Point]) -> float:
+def _distance(source: str | None, target: str | None, positions: dict[str, Point]) -> float:
     if source in positions and target in positions:
         sx, sy = positions[source]
         tx, ty = positions[target]
@@ -391,7 +390,7 @@ def _distance(source: Optional[str], target: Optional[str], positions: dict[str,
     return 0.0
 
 
-def _safe_float(raw: Optional[str]) -> Optional[float]:
+def _safe_float(raw: str | None) -> float | None:
     if raw in (None, ""):
         return None
     try:
@@ -426,7 +425,7 @@ def _svg_document(topology: TLSTopology, *, width: int) -> str:
 
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
-        "<defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\">",
+        '<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">',
         '<path d="M0,0 L8,4 L0,8 Z" fill="#2563eb" /></marker></defs>',
         '<rect width="100%" height="100%" fill="#ffffff" />',
         '<g fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-opacity="0.55">',
@@ -450,4 +449,3 @@ def _svg_document(topology: TLSTopology, *, width: int) -> str:
         lines.append(f'<text x="{x + 7:.2f}" y="{y - 7:.2f}" fill="#0f172a">{worker}</text>')
     lines.append("</g></svg>")
     return "\n".join(lines) + "\n"
-

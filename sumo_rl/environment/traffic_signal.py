@@ -2,8 +2,7 @@
 
 import os
 import sys
-from typing import Callable, List, Union
-
+from collections.abc import Callable
 
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")
@@ -33,15 +32,19 @@ class TrafficSignal:
     - ```phase_one_hot``` is a one-hot encoded vector indicating the current active green phase
     - ```min_green``` is a binary variable indicating whether min_green seconds have already passed in the current phase
     - ```lane_i_density``` is the number of vehicles in incoming lane i dividided by the total capacity of the lane
-    - ```lane_i_queue``` is the number of queued (speed below 0.1 m/s) vehicles in incoming lane i divided by the total capacity of the lane
+    - ```lane_i_queue``` is the number of queued (speed below 0.1 m/s) vehicles in
+      incoming lane i divided by the total capacity of the lane
 
-    You can change the observation space by implementing a custom observation class. See :py:class:`sumo_rl.environment.observations.ObservationFunction`.
+    You can change the observation space by implementing a custom observation class.
+    See :py:class:`sumo_rl.environment.observations.ObservationFunction`.
 
     # Action Space
     Action space is discrete, corresponding to which green phase is going to be open for the next delta_time seconds.
 
     # Reward Function
-    The default reward function is 'diff-waiting-time'. You can change the reward function by implementing a custom reward function and passing to the constructor of :py:class:`sumo_rl.environment.env.SumoEnvironment`.
+    The default reward function is 'diff-waiting-time'. You can change the reward
+    function by implementing a custom reward function and passing it to the
+    constructor of :py:class:`sumo_rl.environment.env.SumoEnvironment`.
     """
 
     # Default min gap of SUMO (see https://sumo.dlr.de/docs/Simulation/Safety.html). Should this be parameterized?
@@ -58,8 +61,8 @@ class TrafficSignal:
         max_green: int,
         enforce_max_green: bool,
         begin_time: int,
-        reward_fn: Union[str, Callable, List],
-        reward_weights: List[float],
+        reward_fn: str | Callable | list,
+        reward_weights: list[float],
         reward_penalty_lambda: float,
         reward_nash_epsilon: float,
         sumo,
@@ -75,7 +78,8 @@ class TrafficSignal:
             max_green (int): The maximum time in seconds of the green phase.
             enforce_max_green (bool): If True, the traffic signal will always change phase after max green seconds.
             begin_time (int): The time in seconds when the traffic signal starts operating.
-            reward_fn (Union[str, Callable]): The reward function. Can be a string with the name of the reward function or a callable function.
+            reward_fn (Union[str, Callable]): The reward function. Can be a string
+                with the name of the reward function or a callable function.
             reward_weights (List[float]): The weights of the reward function.
             reward_penalty_lambda (float): Coefficient for penalty-based reward functions.
             reward_nash_epsilon (float): Positive smoothing term added to Nash-style phase utilities.
@@ -176,7 +180,7 @@ class TrafficSignal:
         self.sumo.trafficlight.setProgramLogic(self.id, logic)
         self.sumo.trafficlight.setRedYellowGreenState(self.id, self.all_phases[0].state)
 
-    def _build_phase_lanes(self) -> List[List[str]]:
+    def _build_phase_lanes(self) -> list[list[str]]:
         phase_lanes = []
         controlled_links = self.sumo.trafficlight.getControlledLinks(self.id)
         for phase in getattr(self, "green_phases", []):
@@ -212,6 +216,8 @@ class TrafficSignal:
             self.is_yellow = False
 
     def sync_fixed_time_state(self):
+        """Synchronize cached fixed-time phase state with the active SUMO program."""
+
         if not self.env.fixed_ts:
             return
 
@@ -269,7 +275,7 @@ class TrafficSignal:
         """Computes the observation of the traffic signal."""
         return self.observation_fn()
 
-    def compute_reward(self) -> Union[float, np.ndarray]:
+    def compute_reward(self) -> float | np.ndarray:
         """Computes the reward of the traffic signal. If it is a list of rewards, it returns a numpy array."""
         if self.reward_dim == 1:
             self.last_reward = self.reward_list[0](self)
@@ -348,7 +354,7 @@ class TrafficSignal:
         self.last_ts_waiting_time = ts_wait
         return reward - (self.reward_penalty_lambda * penalty)
 
-    def _get_max_unchosen_phase_wait_penalty(self, lane_waiting_times: List[float]) -> float:
+    def _get_max_unchosen_phase_wait_penalty(self, lane_waiting_times: list[float]) -> float:
         if not self.phase_lanes:
             return 0.0
 
@@ -377,7 +383,7 @@ class TrafficSignal:
         observation = np.array(phase_id + min_green + density + queue, dtype=np.float32)
         return observation
 
-    def get_accumulated_waiting_time_per_lane(self) -> List[float]:
+    def get_accumulated_waiting_time_per_lane(self) -> list[float]:
         """Returns the accumulated waiting time per lane.
 
         Returns:
@@ -423,7 +429,7 @@ class TrafficSignal:
             for lane in self.lanes
         )
 
-    def get_out_lanes_density(self) -> List[float]:
+    def get_out_lanes_density(self) -> list[float]:
         """Returns the density of the vehicles in the outgoing lanes of the intersection."""
         lanes_density = [
             len([veh for veh in self.sumo.lane.getLastStepVehicleIDs(lane) if not _is_ghost_vehicle(veh)])
@@ -432,7 +438,7 @@ class TrafficSignal:
         ]
         return [min(1, density) for density in lanes_density]
 
-    def get_lanes_density(self) -> List[float]:
+    def get_lanes_density(self) -> list[float]:
         """Returns the density [0,1] of the vehicles in the incoming lanes of the intersection.
 
         Obs: The density is computed as the number of vehicles divided by the number of vehicles that could fit in the lane.
@@ -444,10 +450,11 @@ class TrafficSignal:
         ]
         return [min(1, density) for density in lanes_density]
 
-    def get_lanes_queue(self) -> List[float]:
+    def get_lanes_queue(self) -> list[float]:
         """Returns the queue [0,1] of the vehicles in the incoming lanes of the intersection.
 
-        Obs: The queue is computed as the number of vehicles halting divided by the number of vehicles that could fit in the lane.
+        Obs: The queue is computed as the number of vehicles halting divided by the
+        number of vehicles that could fit in the lane.
         """
         lanes_queue = [
             sum(
@@ -469,7 +476,7 @@ class TrafficSignal:
             if not _is_ghost_vehicle(veh) and self.sumo.vehicle.getSpeed(veh) < 0.1
         )
 
-    def get_phase_queued_counts(self) -> List[int]:
+    def get_phase_queued_counts(self) -> list[int]:
         """Returns queued-vehicle counts for the lane groups served by each green phase."""
         return [
             sum(
@@ -481,11 +488,11 @@ class TrafficSignal:
             for phase_lanes in self.phase_lanes
         ]
 
-    def get_phase_average_speeds(self) -> List[float]:
+    def get_phase_average_speeds(self) -> list[float]:
         """Returns mean normalized speed ratios for the vehicles served by each green phase."""
         return [stats["average_speed"] for stats in self._get_phase_speed_wait_stats()]
 
-    def get_phase_max_waiting_times(self) -> List[float]:
+    def get_phase_max_waiting_times(self) -> list[float]:
         """Returns the max current waiting time among the vehicles served by each green phase."""
         return [stats["max_waiting_time"] for stats in self._get_phase_speed_wait_stats()]
 
@@ -493,7 +500,7 @@ class TrafficSignal:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""
         return sum(self.sumo.vehicle.getCO2Emission(veh) for veh in self._get_veh_list())
 
-    def _get_unique_phase_vehicle_ids(self, phase_lanes: List[str]) -> List[str]:
+    def _get_unique_phase_vehicle_ids(self, phase_lanes: list[str]) -> list[str]:
         seen = set()
         phase_vehicles = []
         for lane in phase_lanes:
@@ -504,7 +511,7 @@ class TrafficSignal:
                 phase_vehicles.append(veh)
         return phase_vehicles
 
-    def _get_phase_speed_wait_stats(self) -> List[dict]:
+    def _get_phase_speed_wait_stats(self) -> list[dict]:
         cache_step = self._get_phase_stats_cache_step()
         cached_stats = getattr(self, "_phase_stats_cache", None)
         cached_step = getattr(self, "_phase_stats_cache_step", None)

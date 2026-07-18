@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Dict, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 from sumo_rl.agents.frap.model import normalize_phase_pairs
 from sumo_rl.agents.graph_attention import CoLightGATLayer, CoLightGATv2Layer
@@ -42,11 +43,11 @@ class FRAPActionTokenEncoder(nn.Module):
         *,
         observation_dim: int,
         num_actions: int,
-        phase_pairs: Optional[Iterable[Iterable[int]]] = None,
+        phase_pairs: Iterable[Iterable[int]] | None = None,
         demand_shape: int = 2,
         observation_has_phase: bool = True,
         observation_has_min_green: bool = True,
-        demand_start: Optional[int] = None,
+        demand_start: int | None = None,
         demand_layout: str = "split",
         d_out: int = 4,
         p_out: int = 4,
@@ -112,7 +113,7 @@ class FRAPActionTokenEncoder(nn.Module):
     def _default_phase_pair_mask(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         return self.default_phase_pair_mask.to(device=device, dtype=dtype).unsqueeze(0).expand(batch_size, -1, -1)
 
-    def _canonical_phase_pair_mask(self, phase_pair_mask: Optional[torch.Tensor], obs: torch.Tensor) -> torch.Tensor:
+    def _canonical_phase_pair_mask(self, phase_pair_mask: torch.Tensor | None, obs: torch.Tensor) -> torch.Tensor:
         batch_size = int(obs.shape[0])
         if phase_pair_mask is None:
             return self._default_phase_pair_mask(batch_size, obs.device, obs.dtype)
@@ -134,7 +135,9 @@ class FRAPActionTokenEncoder(nn.Module):
         weights = torch.where(counts > 0.0, phase_pair_mask * scale / counts.clamp_min(1.0), phase_pair_mask)
         return torch.bmm(weights, movement_embeds)
 
-    def _ordered_competition_mask(self, action_mask: Optional[torch.Tensor], *, batch_size: int, device: torch.device) -> torch.Tensor:
+    def _ordered_competition_mask(
+        self, action_mask: torch.Tensor | None, *, batch_size: int, device: torch.device
+    ) -> torch.Tensor:
         if action_mask is None:
             valid = torch.ones((batch_size, self.num_actions), dtype=torch.float32, device=device)
         else:
@@ -155,10 +158,10 @@ class FRAPActionTokenEncoder(nn.Module):
         self,
         obs: torch.Tensor,
         *,
-        phase_pair_mask: Optional[torch.Tensor] = None,
-        competition_mask: Optional[torch.Tensor] = None,
-        action_mask: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
+        phase_pair_mask: torch.Tensor | None = None,
+        competition_mask: torch.Tensor | None = None,
+        action_mask: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         obs = obs.float()
         batch_size = int(obs.shape[0])
         pair_mask = self._canonical_phase_pair_mask(phase_pair_mask, obs)
@@ -180,9 +183,13 @@ class FRAPActionTokenEncoder(nn.Module):
         phase_features = F.relu(self.lane_conv(competitions))
 
         if competition_mask is None:
-            relation_mask = torch.zeros((batch_size, self.num_actions, self.num_actions - 1), dtype=torch.long, device=obs.device)
+            relation_mask = torch.zeros(
+                (batch_size, self.num_actions, self.num_actions - 1), dtype=torch.long, device=obs.device
+            )
         else:
-            relation_mask = competition_mask.to(device=obs.device, dtype=torch.long)[:, : self.num_actions, : self.num_actions - 1]
+            relation_mask = competition_mask.to(device=obs.device, dtype=torch.long)[
+                :, : self.num_actions, : self.num_actions - 1
+            ]
             if int(relation_mask.shape[-1]) < self.num_actions - 1:
                 relation_mask = F.pad(relation_mask, (0, self.num_actions - 1 - int(relation_mask.shape[-1])))
         relation_features = F.relu(self.relation_embedding(relation_mask.long())).permute(0, 3, 1, 2)
@@ -212,7 +219,7 @@ class FGSv2GraphEncoder(nn.Module):
         node_feature_dim: int,
         num_nodes: int,
         num_actions: int,
-        model_config: Dict[str, Any],
+        model_config: dict[str, Any],
     ) -> None:
         super().__init__()
         self.node_feature_dim = int(node_feature_dim)
@@ -259,7 +266,7 @@ class FGSv2GraphEncoder(nn.Module):
         self.residual_gate = nn.Parameter(torch.tensor(float(communication.get("residual_gate_init", 0.0))))
         self.output_dim = self.adapter_dim
 
-    def _flatten_edges(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _flatten_edges(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
         node_features = obs["node_features"]
         batch_size, num_nodes = int(node_features.shape[0]), int(node_features.shape[1])
         edge_index = obs["edge_index"].long()
@@ -273,7 +280,7 @@ class FGSv2GraphEncoder(nn.Module):
             return torch.empty((2, 0), dtype=torch.long, device=node_features.device)
         return torch.cat(edges, dim=1)
 
-    def forward(self, obs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self, obs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         node_features = obs["node_features"].float()
         batch_size, num_nodes, feature_dim = node_features.shape
         if int(num_nodes) != self.num_nodes or int(feature_dim) != self.node_feature_dim:
@@ -326,7 +333,9 @@ class FGSv2GraphEncoder(nn.Module):
 class ActionConditionedActor(nn.Module):
     """Produce one SAC logit per action from FRAP action tokens and GNN context."""
 
-    def __init__(self, *, token_dim: int, num_actions: int, hidden_dims: Iterable[int] = (128,), activation: str = "relu") -> None:
+    def __init__(
+        self, *, token_dim: int, num_actions: int, hidden_dims: Iterable[int] = (128,), activation: str = "relu"
+    ) -> None:
         super().__init__()
         self.num_actions = int(num_actions)
         self.net = _mlp(int(token_dim) * 2 + self.num_actions, hidden_dims, 1, activation=activation)
@@ -337,7 +346,9 @@ class ActionConditionedActor(nn.Module):
         action_eye = action_eye.unsqueeze(0).expand(batch_size, -1, -1)
         context = graph_context.unsqueeze(1).expand(-1, num_actions, -1)
         features = torch.cat((action_tokens, context, action_eye), dim=-1)
-        return self.net(features.reshape(batch_size * num_actions, 2 * token_dim + num_actions)).reshape(batch_size, num_actions)
+        return self.net(features.reshape(batch_size * num_actions, 2 * token_dim + num_actions)).reshape(
+            batch_size, num_actions
+        )
 
 
 class CentralGraphActionTokenCritic(nn.Module):

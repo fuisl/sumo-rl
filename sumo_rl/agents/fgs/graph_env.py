@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 from gymnasium import spaces
 
-from sumo_rl.agents.frap.model import infer_default_phase_pairs
 from sumo_rl.agents.fgs.topology import (
     TLSTopology,
     bidirectional_message_edges,
     extract_tls_topology,
     render_fgs_topology,
 )
+from sumo_rl.agents.frap.model import infer_default_phase_pairs
 
 
 def _base_sumo_env(env: Any) -> Any:
@@ -43,9 +43,9 @@ class FGSGraphParallelEnv:
         self,
         env: Any,
         *,
-        net_file: Optional[str] = None,
+        net_file: str | None = None,
         topology_source: str = "tls_super_edges",
-        render_topology_dir: Optional[Path] = None,
+        render_topology_dir: Path | None = None,
     ) -> None:
         self.env = env
         self.net_file = str(net_file or "")
@@ -53,9 +53,9 @@ class FGSGraphParallelEnv:
         self.possible_agents = [str(agent_id) for agent_id in getattr(env, "possible_agents", getattr(env, "agents", []))]
         self.agents = list(getattr(env, "agents", self.possible_agents))
         self._agent_to_index = {agent_id: index for index, agent_id in enumerate(self.possible_agents)}
-        self._latest_local_obs: Dict[str, np.ndarray] = {}
+        self._latest_local_obs: dict[str, np.ndarray] = {}
         self._prev_joint_action = np.zeros((max(1, len(self.possible_agents)), 1), dtype=np.float32)
-        self._topology: Optional[TLSTopology] = None
+        self._topology: TLSTopology | None = None
         if self.topology_source == "tls_super_edges" and self.net_file:
             self._topology = extract_tls_topology(self.net_file)
             if render_topology_dir is not None:
@@ -65,21 +65,16 @@ class FGSGraphParallelEnv:
     def _refresh_spaces(self) -> None:
         self._num_nodes = max(1, len(self.possible_agents))
         self._raw_obs_dims = {
-            agent_id: int(self.env.observation_space(agent_id).shape[0])
-            for agent_id in self.possible_agents
+            agent_id: int(self.env.observation_space(agent_id).shape[0]) for agent_id in self.possible_agents
         }
-        self._action_sizes = {
-            agent_id: int(self.env.action_space(agent_id).n)
-            for agent_id in self.possible_agents
-        }
+        self._action_sizes = {agent_id: int(self.env.action_space(agent_id).n) for agent_id in self.possible_agents}
         self._num_actions = max(self._action_sizes.values() or [1])
         self._demand_widths = {}
         for agent_id in self.possible_agents:
             demand_width = self._raw_obs_dims[agent_id] - self._action_sizes[agent_id] - 1
             if demand_width <= 0:
                 raise ValueError(
-                    "FGS expects default SUMO-RL observations shaped as "
-                    "[phase_one_hot, min_green, density, queue]."
+                    "FGS expects default SUMO-RL observations shaped as [phase_one_hot, min_green, density, queue]."
                 )
             self._demand_widths[agent_id] = demand_width
         self._max_demand_width = max(self._demand_widths.values() or [1])
@@ -200,7 +195,7 @@ class FGSGraphParallelEnv:
             resized[:rows, :cols] = context[:rows, :cols]
         return resized
 
-    def _joint_action_one_hot(self, actions: Dict[str, int]) -> np.ndarray:
+    def _joint_action_one_hot(self, actions: dict[str, int]) -> np.ndarray:
         context = np.zeros((self._num_nodes, self._num_actions), dtype=np.float32)
         for agent_id, node_index in self._agent_to_index.items():
             action = int(actions.get(agent_id, 0))
@@ -255,7 +250,7 @@ class FGSGraphParallelEnv:
         indexed = sorted(edges)
         return indexed, [1.0] * len(indexed)
 
-    def _graph_obs(self, agent_id: str) -> Dict[str, np.ndarray]:
+    def _graph_obs(self, agent_id: str) -> dict[str, np.ndarray]:
         node_features = np.zeros((self._num_nodes, self._node_feature_dim), dtype=np.float32)
         for node_id, node_index in self._agent_to_index.items():
             if node_id in self._latest_local_obs:
@@ -287,7 +282,7 @@ class FGSGraphParallelEnv:
             "prev_joint_action": self._prev_joint_action.copy(),
         }
 
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+    def reset(self, seed: int | None = None, options: dict | None = None):
         reset_result = self.env.reset(seed=seed, options=options)
         if isinstance(reset_result, tuple) and len(reset_result) == 2:
             local_obs, infos = reset_result

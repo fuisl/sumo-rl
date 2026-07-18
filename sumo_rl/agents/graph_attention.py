@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 try:
     from torch_geometric.nn import GATv2Conv, MessagePassing

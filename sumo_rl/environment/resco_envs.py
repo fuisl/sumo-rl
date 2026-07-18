@@ -1,10 +1,13 @@
-"""Environments from RESCO: https://github.com/jault/RESCO, paper https://people.engr.tamu.edu/guni/Papers/NeurIPS-signals.pdf ."""
+"""Environments from RESCO.
+
+Repository: https://github.com/jault/RESCO
+Paper: https://people.engr.tamu.edu/guni/Papers/NeurIPS-signals.pdf
+"""
 
 import os
 
 import sumo_rl
 from sumo_rl import env, parallel_env
-
 
 PATH = os.path.dirname(sumo_rl.__file__)
 

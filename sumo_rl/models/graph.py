@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Deque, Iterable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from gymnasium import spaces
@@ -22,8 +23,7 @@ def _normalize_feature_layout(feature_layout: str | None) -> str:
     }
     if layout not in aliases:
         raise ValueError(
-            "Unsupported graph feature_layout. Expected one of: "
-            "phase_min_green_density_queue, full_tls_state, density_queue."
+            "Unsupported graph feature_layout. Expected one of: phase_min_green_density_queue, full_tls_state, density_queue."
         )
     return aliases[layout]
 
@@ -117,7 +117,8 @@ def _min_green_feature(ts: Any) -> float:
         return 0.0
     return float(
         0
-        if float(getattr(ts, "time_since_last_phase_change")) < float(getattr(ts, "min_green")) + float(getattr(ts, "yellow_time"))
+        if float(getattr(ts, "time_since_last_phase_change"))
+        < float(getattr(ts, "min_green")) + float(getattr(ts, "yellow_time"))
         else 1
     )
 
@@ -303,7 +304,7 @@ class GraphObservationHistory:
         self.history_len = max(1, int(history_len))
         self.graph = graph
         self.dtype = np.dtype(dtype)
-        self._frames: Deque[np.ndarray] = deque(maxlen=self.history_len)
+        self._frames: deque[np.ndarray] = deque(maxlen=self.history_len)
 
     @property
     def observation_space(self) -> spaces.Box:

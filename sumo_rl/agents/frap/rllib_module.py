@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 
 from sumo_rl.agents.frap.model import FRAPQNetwork
 
@@ -41,13 +41,13 @@ def build_frap_dqn_module_class():
         def get_target_network_pairs(self):
             return [(self.q_net, self._target_q_net)]
 
-        def forward_target(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        def forward_target(self, batch: dict[str, Any]) -> dict[str, Any]:
             return {QF_PREDS: self._target_q_net(batch[Columns.OBS])}
 
-        def compute_q_values(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        def compute_q_values(self, batch: dict[str, Any]) -> dict[str, Any]:
             return {QF_PREDS: self.q_net(batch[Columns.OBS])}
 
-        def compute_advantage_distribution(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        def compute_advantage_distribution(self, batch: dict[str, Any]) -> dict[str, Any]:
             del batch
             raise NotImplementedError("FRAP DQN does not implement distributional advantage outputs.")
 
@@ -59,7 +59,7 @@ def build_frap_dqn_module_spec(
     observation_space,
     action_space,
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 

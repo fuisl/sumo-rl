@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
 import torch
@@ -240,7 +241,9 @@ class DCRNNBackbone(nn.Module):
         self.agent_index = int(agent_index) if agent_index is not None else None
         self.pre_encoder_enabled = bool(pre_encoder_enabled)
         self.pre_encoder_input_dim = self.input_dim
-        self.pre_encoder_output_dim = int(pre_encoder_hidden_dim or self.hidden_dim) if self.pre_encoder_enabled else self.input_dim
+        self.pre_encoder_output_dim = (
+            int(pre_encoder_hidden_dim or self.hidden_dim) if self.pre_encoder_enabled else self.input_dim
+        )
         self.pre_encoder_activation = str(pre_encoder_activation or "relu")
         self.pre_encoder = None
         if self.pre_encoder_enabled:
@@ -312,7 +315,7 @@ class DCRNNBackbone(nn.Module):
         }
 
     @classmethod
-    def from_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+    def from_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> DCRNNBackbone:
         history_len, num_nodes, input_dim = observation_space.shape
         del history_len
         adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
@@ -334,7 +337,7 @@ class DCRNNBackbone(nn.Module):
         cls,
         observation_space: Any,
         model_config: dict[str, Any],
-    ) -> "DCRNNBackbone":
+    ) -> DCRNNBackbone:
         history_len, num_nodes, input_dim = observation_space.shape
         del history_len
         adjacency = np.asarray(model_config["adjacency"], dtype=np.float32)
@@ -358,7 +361,7 @@ class DCRNNBackbone(nn.Module):
         model_config: dict[str, Any],
         *,
         branch: str,
-    ) -> "DCRNNBackbone":
+    ) -> DCRNNBackbone:
         custom_sac = dict(model_config.get("custom_sac", {}) or {}) if isinstance(model_config.get("custom_sac"), dict) else {}
         branch_config = dict(custom_sac.get(branch, {}) or {})
         encoder_config = dict(branch_config.get("encoder", {}) or {})
@@ -383,15 +386,15 @@ class DCRNNBackbone(nn.Module):
         )
 
     @classmethod
-    def from_actor_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+    def from_actor_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> DCRNNBackbone:
         return cls._from_custom_sac_encoder_config(observation_space, model_config, branch="actor")
 
     @classmethod
-    def from_critic_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+    def from_critic_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> DCRNNBackbone:
         return cls._from_custom_sac_encoder_config(observation_space, model_config, branch="critic")
 
     @classmethod
-    def from_shared_sac_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> "DCRNNBackbone":
+    def from_shared_sac_model_config(cls, observation_space: Any, model_config: dict[str, Any]) -> DCRNNBackbone:
         custom_sac = dict(model_config.get("custom_sac", {}) or {}) if isinstance(model_config.get("custom_sac"), dict) else {}
         encoder_config = dict(custom_sac.get("shared_encoder", {}) or {})
         history_len, num_nodes, input_dim = observation_space.shape
@@ -461,7 +464,7 @@ class DCRNNQNetwork(nn.Module):
         )
 
     @classmethod
-    def from_model_config(cls, observation_space: Any, action_space: Any, model_config: dict[str, Any]) -> "DCRNNQNetwork":
+    def from_model_config(cls, observation_space: Any, action_space: Any, model_config: dict[str, Any]) -> DCRNNQNetwork:
         backbone = DCRNNBackbone.from_model_config(observation_space, model_config)
         return cls(
             input_dim=backbone.input_dim,

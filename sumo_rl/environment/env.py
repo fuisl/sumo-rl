@@ -4,9 +4,8 @@ import os
 import sys
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Union
-
 
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")
@@ -17,10 +16,12 @@ import gymnasium as gym
 import numpy as np
 import pandas as pd
 import sumolib
+
 # Backend selection is controlled by explicit use_libsumo flags from Hydra,
 # not by SUMO's process-global LIBSUMO_AS_TRACI import override.
 os.environ.pop("LIBSUMO_AS_TRACI", None)
 import traci
+
 try:
     import libsumo
 except ImportError:
@@ -28,7 +29,6 @@ except ImportError:
 from gymnasium.utils import EzPickle, seeding
 from pettingzoo import AECEnv
 from pettingzoo.utils import wrappers
-
 
 try:
     # pettingzoo 1.25+
@@ -39,13 +39,15 @@ except ImportError:
 
 from pettingzoo.utils.conversions import parallel_wrapper_fn
 
+from ..util.tripinfo import collect_tripinfo_metrics
+from ..util.tripinfo import is_ghost_vehicle as _is_ghost_vehicle
 from .observations import DefaultObservationFunction, ObservationFunction
 from .traffic_signal import TrafficSignal
-from ..util.tripinfo import collect_tripinfo_metrics, is_ghost_vehicle as _is_ghost_vehicle
-
 
 TRACI_START_RETRIES = 3
 TRACI_START_RETRY_DELAY_SECONDS = 0.5
+NUMERIC_TYPES = int | float | np.integer | np.floating
+
 
 def _backend_module(use_libsumo: bool):
     if use_libsumo:
@@ -57,7 +59,7 @@ def _backend_module(use_libsumo: bool):
     return traci
 
 
-def _start_traci_with_retries(backend, cmd, *, label: Optional[str] = None):
+def _start_traci_with_retries(backend, cmd, *, label: str | None = None):
     last_error = None
     for attempt in range(TRACI_START_RETRIES):
         try:
@@ -110,28 +112,50 @@ class SumoEnvironment(gym.Env):
         use_gui (bool): Whether to run SUMO simulation with the SUMO GUI
         virtual_display (Optional[Tuple[int,int]]): Resolution of the virtual display for rendering
         begin_time (int): The time step (in seconds) the simulation starts. Default: 0
-        num_seconds (int): Number of simulated seconds on SUMO. The duration in seconds of the simulation. Default: 20000
-        max_depart_delay (int): Vehicles are discarded if they could not be inserted after max_depart_delay seconds. Default: -1 (no delay)
-        waiting_time_memory (int): Number of seconds to remember the waiting time of a vehicle (see https://sumo.dlr.de/pydoc/traci._vehicle.html#VehicleDomain-getAccumulatedWaitingTime). Default: 1000
-        time_to_teleport (int): Time in seconds to teleport a vehicle to the end of the edge if it is stuck. Default: -1 (no teleport)
+        num_seconds (int): Number of simulated seconds on SUMO.
+            The duration in seconds of the simulation. Default: 20000
+        max_depart_delay (int): Vehicles are discarded if they could not be inserted
+            after max_depart_delay seconds. Default: -1 (no delay)
+        waiting_time_memory (int): Number of seconds to remember the waiting time of
+            a vehicle. See
+            https://sumo.dlr.de/pydoc/traci._vehicle.html#VehicleDomain-getAccumulatedWaitingTime .
+            Default: 1000
+        time_to_teleport (int): Time in seconds to teleport a vehicle to the end of
+            the edge if it is stuck. Default: -1 (no teleport)
         delta_time (int): Simulation seconds between actions. Default: 5 seconds
         yellow_time (int): Duration of the yellow phase. Default: 2 seconds
         min_green (int): Minimum green time in a phase. Default: 5 seconds
-        max_green (int): Max green time in a phase. Default: 60 seconds. Warning: This parameter is currently ignored!
-        enforce_max_green (bool): If true, it enforces the max green time and selects the next green phase when the max green time is reached. Default: False
-        single_agent (bool): If true, it behaves like a regular gym.Env. Else, it behaves like a MultiagentEnv (returns dict of observations, rewards, dones, infos).
-        reward_fn (str/function/dict/List): String with the name of the reward function used by the agents, a reward function, dictionary with reward functions assigned to individual traffic lights by their keys, or a List of reward functions.
-        reward_weights (List[float]/np.ndarray): Weights for linearly combining the reward functions, in case reward_fn is a list. If it is None, the reward returned will be a np.ndarray. Default: None
-        reward_penalty_lambda (float): Coefficient for penalty-based reward functions that subtract an extra queue-aware waiting-time penalty. Default: 0.1
-        reward_nash_epsilon (float): Positive smoothing term added to phase utilities for Nash-style average-speed rewards. Default: 0.1
-        observation_class (ObservationFunction): Inherited class which has both the observation function and observation space.
-        add_system_info (bool): If true, it computes system metrics (total queue, total waiting time, average speed) in the info dictionary.
-        add_per_agent_info (bool): If true, it computes per-agent (per-traffic signal) metrics (average accumulated waiting time, average queue) in the info dictionary.
+        max_green (int): Max green time in a phase. Default: 60 seconds.
+            Warning: This parameter is currently ignored!
+        enforce_max_green (bool): If true, it enforces the max green time and selects
+            the next green phase when the max green time is reached. Default: False
+        single_agent (bool): If true, it behaves like a regular gym.Env. Else, it
+            behaves like a MultiagentEnv and returns dicts of observations, rewards,
+            dones, and infos.
+        reward_fn (str/function/dict/List): String with the name of the reward
+            function used by the agents, a reward function, a dictionary with reward
+            functions assigned to individual traffic lights by their keys, or a list
+            of reward functions.
+        reward_weights (List[float]/np.ndarray): Weights for linearly combining the
+            reward functions when reward_fn is a list. If it is None, the reward
+            returned will be a np.ndarray. Default: None
+        reward_penalty_lambda (float): Coefficient for penalty-based reward functions
+            that subtract an extra queue-aware waiting-time penalty. Default: 0.1
+        reward_nash_epsilon (float): Positive smoothing term added to phase utilities
+            for Nash-style average-speed rewards. Default: 0.1
+        observation_class (ObservationFunction): Inherited class which has both the
+            observation function and observation space.
+        add_system_info (bool): If true, it computes system metrics like total queue,
+            total waiting time, and average speed in the info dictionary.
+        add_per_agent_info (bool): If true, it computes per-agent metrics like average
+            accumulated waiting time and average queue in the info dictionary.
         tripinfo_output_name (Optional[str]): Prefix used for per-episode tripinfo XML output files.
         keep_tripinfo_output (bool): If true, keep tripinfo XML files after parsing metrics.
         sumo_seed (int/string): Random seed for sumo. If 'random' it uses a randomly chosen seed.
-        ts_ids (Optional[List[str]]): List of traffic light IDs to be controlled by SUMO-RL. If None, all traffic lights in the simulation are controlled.
-        fixed_ts (bool): If true, it will follow the phase configuration in the route_file and ignore the actions given in the :meth:`step` method.
+        ts_ids (Optional[List[str]]): List of traffic light IDs to be controlled by
+            SUMO-RL. If None, all traffic lights in the simulation are controlled.
+        fixed_ts (bool): If true, it will follow the phase configuration in the
+            route_file and ignore the actions given in the :meth:`step` method.
         sumo_warnings (bool): If true, it will print SUMO warnings.
         additional_sumo_cmd (str): Additional SUMO command line arguments.
         render_mode (str): Mode of rendering. Can be 'human' or 'rgb_array'. Default: None
@@ -147,9 +171,9 @@ class SumoEnvironment(gym.Env):
         self,
         net_file: str,
         route_file: str,
-        out_csv_name: Optional[str] = None,
+        out_csv_name: str | None = None,
         use_gui: bool = False,
-        virtual_display: Tuple[int, int] = (3200, 1800),
+        virtual_display: tuple[int, int] = (3200, 1800),
         begin_time: int = 0,
         num_seconds: int = 20000,
         max_depart_delay: int = -1,
@@ -161,24 +185,24 @@ class SumoEnvironment(gym.Env):
         max_green: int = 50,
         enforce_max_green: bool = False,
         single_agent: bool = False,
-        reward_fn: Union[str, Callable, dict, List] = "diff-waiting-time",
-        reward_weights: Optional[List[float]] = None,
+        reward_fn: str | Callable | dict | list = "diff-waiting-time",
+        reward_weights: list[float] | None = None,
         reward_penalty_lambda: float = 0.1,
         reward_nash_epsilon: float = 0.1,
         observation_class: type[ObservationFunction] = DefaultObservationFunction,
         add_system_info: bool = True,
         add_per_agent_info: bool = False,
-        tripinfo_output_name: Optional[str] = None,
+        tripinfo_output_name: str | None = None,
         keep_tripinfo_output: bool = False,
-        statistic_output_name: Optional[str] = None,
+        statistic_output_name: str | None = None,
         keep_statistic_output: bool = False,
-        use_libsumo: Optional[bool] = None,
-        sumo_seed: Union[str, int] = "random",
-        ts_ids: Optional[List[str]] = None,
+        use_libsumo: bool | None = None,
+        sumo_seed: str | int = "random",
+        ts_ids: list[str] | None = None,
         fixed_ts: bool = False,
         sumo_warnings: bool = True,
-        additional_sumo_cmd: Optional[str] = None,
-        render_mode: Optional[str] = None,
+        additional_sumo_cmd: str | None = None,
+        render_mode: str | None = None,
     ) -> None:
         """Initialize the environment."""
         assert render_mode is None or render_mode in self.metadata["render_modes"], "Invalid render mode."
@@ -291,10 +315,10 @@ class SumoEnvironment(gym.Env):
         }
 
     @staticmethod
-    def _sumo_cmd_has_option(sumo_cmd: List[str], *options: str) -> bool:
+    def _sumo_cmd_has_option(sumo_cmd: list[str], *options: str) -> bool:
         return any(option in sumo_cmd for option in options)
 
-    def _build_sumo_cmd(self) -> List[str]:
+    def _build_sumo_cmd(self) -> list[str]:
         sumo_cmd = [
             self._sumo_binary,
             "-n",
@@ -363,7 +387,7 @@ class SumoEnvironment(gym.Env):
                 traci.gui.DEFAULT_VIEW = "View #0"
             self.sumo.gui.setSchema(traci.gui.DEFAULT_VIEW, "real world")
 
-    def reset(self, seed: Optional[int] = None, **kwargs):
+    def reset(self, seed: int | None = None, **kwargs):
         """Reset the environment."""
         super().reset(seed=seed, **kwargs)
 
@@ -398,12 +422,13 @@ class SumoEnvironment(gym.Env):
         """Return current simulation second on SUMO."""
         return self.sumo.simulation.getTime()
 
-    def step(self, action: Union[dict, int]):
+    def step(self, action: dict | int):
         """Apply the action(s) and then step the simulation for delta_time seconds.
 
         Args:
             action (Union[dict, int]): action(s) to be applied to the environment.
-            If single_agent is True, action is an int, otherwise it expects a dict with keys corresponding to traffic signal ids.
+            If single_agent is True, action is an int. Otherwise, it expects a dict
+            with keys corresponding to traffic signal ids.
         """
         # No action, follow fixed TL defined in self.phases
         if self.fixed_ts or action is None or action == {}:
@@ -602,10 +627,7 @@ class SumoEnvironment(gym.Env):
             ts: [float(value) for value in self.traffic_signals[ts].get_accumulated_waiting_time_per_lane()]
             for ts in self.ts_ids
         }
-        lane_queue_levels = {
-            ts: [float(value) for value in self.traffic_signals[ts].get_lanes_queue()]
-            for ts in self.ts_ids
-        }
+        lane_queue_levels = {ts: [float(value) for value in self.traffic_signals[ts].get_lanes_queue()] for ts in self.ts_ids}
         self.last_lane_waiting_times = lane_waiting_times
         self.last_lane_queue_levels = lane_queue_levels
         accumulated_waiting_time = [sum(lane_waiting_times[ts]) for ts in self.ts_ids]
@@ -646,19 +668,19 @@ class SumoEnvironment(gym.Env):
 
         self.sumo = None
 
-    def _build_tripinfo_output_path(self) -> Optional[Path]:
+    def _build_tripinfo_output_path(self) -> Path | None:
         if not self.tripinfo_output_name:
             return None
         return Path(f"{self.tripinfo_output_name}_conn{self.label}_ep{self.episode}.xml")
 
-    def _build_statistic_output_path(self) -> Optional[Path]:
+    def _build_statistic_output_path(self) -> Path | None:
         if not self.statistic_output_name:
             return None
         return Path(f"{self.statistic_output_name}_conn{self.label}_ep{self.episode}.xml")
 
     @staticmethod
-    def _reward_to_scalar(value) -> Optional[float]:
-        if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+    def _reward_to_scalar(value) -> float | None:
+        if isinstance(value, NUMERIC_TYPES) and not isinstance(value, bool):
             numeric_value = float(value)
             if np.isfinite(numeric_value):
                 return numeric_value
@@ -802,7 +824,7 @@ class SumoEnvironment(gym.Env):
         numeric_rewards = {
             str(agent_id): float(value)
             for agent_id, value in (self.episode_agent_reward_totals or {}).items()
-            if isinstance(value, (int, float, np.integer, np.floating)) and np.isfinite(float(value))
+            if isinstance(value, NUMERIC_TYPES) and np.isfinite(float(value))
         }
         if not numeric_rewards:
             return {}
@@ -878,8 +900,7 @@ class SumoEnvironment(gym.Env):
         self._cache_episode_summary(summary)
         self.last_episode_final_info = last_info
         self.last_episode_lane_waiting_times = {
-            ts: [float(value) for value in values]
-            for ts, values in (self.last_lane_waiting_times or {}).items()
+            ts: [float(value) for value in values] for ts, values in (self.last_lane_waiting_times or {}).items()
         }
         self.last_episode_lane_queue_levels = {
             ts: [float(value) for value in values]
@@ -974,7 +995,7 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
         """Set the seed for the environment."""
         self.randomizer, seed = seeding.np_random(seed)
 
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+    def reset(self, seed: int | None = None, options: dict | None = None):
         """Reset the environment."""
         self.env.reset(seed=seed, options=options)
         self._refresh_agents_and_spaces()
@@ -1028,8 +1049,7 @@ class SumoEnvironmentPZ(AECEnv, EzPickle):
         agent = self.agent_selection
         if not self.action_spaces[agent].contains(action):
             raise Exception(
-                "Action for agent {} must be in Discrete({})."
-                "It is currently {}".format(agent, self.action_spaces[agent].n, action)
+                f"Action for agent {agent} must be in Discrete({self.action_spaces[agent].n}).It is currently {action}"
             )
 
         if not self.env.fixed_ts:

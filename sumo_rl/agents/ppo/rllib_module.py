@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from sumo_rl.models.dcrnn import DCRNNBackbone
-
 
 _SHARED_BACKBONE_STATE_KEY = "__shared_backbone__"
 
@@ -46,12 +45,12 @@ def build_ppo_dcrnn_module_class():
                 action_dim=action_dim,
             )
 
-        def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             latent = self.backbone(batch[Columns.OBS])
             return {Columns.ACTION_DIST_INPUTS: self.policy_head(latent)}
 
-        def _forward_exploration(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_exploration(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             latent = self.backbone(batch[Columns.OBS])
             return {
@@ -59,7 +58,7 @@ def build_ppo_dcrnn_module_class():
                 Columns.VF_PREDS: self.value_head(latent).squeeze(-1),
             }
 
-        def _forward_train(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_train(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             latent = self.backbone(batch[Columns.OBS])
             return {
@@ -68,7 +67,7 @@ def build_ppo_dcrnn_module_class():
                 Columns.VF_PREDS: self.value_head(latent).squeeze(-1),
             }
 
-        def compute_values(self, batch: Dict[str, Any], embeddings=None):
+        def compute_values(self, batch: dict[str, Any], embeddings=None):
             latent = embeddings if embeddings is not None else self.backbone(batch[Columns.OBS])
             return self.value_head(latent).squeeze(-1)
 
@@ -122,16 +121,16 @@ def build_ppo_dcrnn_shared_module_class():
                 raise RuntimeError("Shared PPO DCRNN backbone has not been attached to the module.")
             return backbone
 
-        def _encode(self, batch: Dict[str, Any]):
+        def _encode(self, batch: dict[str, Any]):
             obs = batch[Columns.OBS]
             return self._require_shared_backbone().forward_for_agent(obs, agent_index=self.agent_index)
 
-        def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             latent = self._encode(batch)
             return {Columns.ACTION_DIST_INPUTS: self.policy_head(latent)}
 
-        def _forward_exploration(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_exploration(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             latent = self._encode(batch)
             return {
@@ -139,7 +138,7 @@ def build_ppo_dcrnn_shared_module_class():
                 Columns.VF_PREDS: self.value_head(latent).squeeze(-1),
             }
 
-        def _forward_train(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_train(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             latent = self._encode(batch)
             return {
@@ -148,7 +147,7 @@ def build_ppo_dcrnn_shared_module_class():
                 Columns.VF_PREDS: self.value_head(latent).squeeze(-1),
             }
 
-        def compute_values(self, batch: Dict[str, Any], embeddings=None):
+        def compute_values(self, batch: dict[str, Any], embeddings=None):
             latent = embeddings if embeddings is not None else self._encode(batch)
             return self.value_head(latent).squeeze(-1)
 
@@ -163,8 +162,8 @@ def build_ppo_dcrnn_shared_module_class():
 
 
 def build_ppo_dcrnn_shared_multi_module_class():
-    from ray.rllib.core.rl_module.multi_rl_module import MultiRLModule
     from ray.rllib.core.columns import Columns
+    from ray.rllib.core.rl_module.multi_rl_module import MultiRLModule
     from ray.rllib.utils.numpy import convert_to_numpy
     from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 
@@ -208,10 +207,10 @@ def build_ppo_dcrnn_shared_multi_module_class():
             for key in self._shared_forward_stats:
                 self._shared_forward_stats[key] = 0
 
-        def shared_forward_stats(self) -> Dict[str, int]:
+        def shared_forward_stats(self) -> dict[str, int]:
             return dict(self._shared_forward_stats)
 
-        def _shared_obs_batch(self, batch: Dict[str, Any]):
+        def _shared_obs_batch(self, batch: dict[str, Any]):
             shared_items = [(mid, batch[mid]) for mid in batch.keys() if mid in self]
             if not shared_items:
                 self._shared_forward_stats["fallback_no_shared_items"] += 1
@@ -236,7 +235,7 @@ def build_ppo_dcrnn_shared_multi_module_class():
                     return None, None
             return [mid for mid, _ in shared_items], first_obs
 
-        def _forward_shared(self, batch: Dict[str, Any], *, include_values: bool, include_embeddings: bool):
+        def _forward_shared(self, batch: dict[str, Any], *, include_values: bool, include_embeddings: bool):
             self._shared_forward_stats["calls"] += 1
             module_ids, shared_obs = self._shared_obs_batch(batch)
             if not module_ids or shared_obs is None:
@@ -261,19 +260,19 @@ def build_ppo_dcrnn_shared_multi_module_class():
                 outputs[module_id] = module_out
             return outputs
 
-        def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             shared_outputs = self._forward_shared(batch, include_values=False, include_embeddings=False)
             if shared_outputs is not None:
                 return shared_outputs
             return super()._forward(batch, **kwargs)
 
-        def _forward_exploration(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_exploration(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             shared_outputs = self._forward_shared(batch, include_values=True, include_embeddings=False)
             if shared_outputs is not None:
                 return shared_outputs
             return super()._forward_exploration(batch, **kwargs)
 
-        def _forward_train(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_train(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             shared_outputs = self._forward_shared(batch, include_values=True, include_embeddings=True)
             if shared_outputs is not None:
                 return shared_outputs
@@ -286,7 +285,7 @@ def build_ppo_dcrnn_shared_multi_module_class():
             not_components=None,
             inference_only: bool = False,
             **kwargs,
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             state = super().get_state(
                 components=components,
                 not_components=not_components,
@@ -296,7 +295,7 @@ def build_ppo_dcrnn_shared_multi_module_class():
             state[_SHARED_BACKBONE_STATE_KEY] = convert_to_numpy(self.shared_backbone.state_dict())
             return state
 
-        def set_state(self, state: Dict[str, Any]) -> None:
+        def set_state(self, state: dict[str, Any]) -> None:
             state = dict(state or {})
             shared_backbone_state = state.pop(_SHARED_BACKBONE_STATE_KEY, None)
             if shared_backbone_state is not None:
@@ -318,7 +317,7 @@ def build_ppo_dcrnn_module_spec(
     observation_space,
     action_space,
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 
@@ -334,7 +333,7 @@ def build_ppo_dcrnn_shared_module_spec(
     observation_space,
     action_space,
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 
@@ -347,9 +346,9 @@ def build_ppo_dcrnn_shared_module_spec(
 
 
 def build_ppo_dcrnn_shared_multi_module_spec(
-    rl_module_specs: Dict[str, Any],
+    rl_module_specs: dict[str, Any],
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
 

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
 from sumo_rl.agents.rllib_common import (
@@ -24,11 +25,10 @@ from sumo_rl.agents.rllib_common import (
     training_should_stop,
 )
 
-
 KIND = "frap"
 
 
-def _frap_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
+def _frap_model_config(params: dict[str, Any]) -> dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config.setdefault("architecture_tag", "frap_phase_competition")
     model_config.setdefault("demand_shape", 2)
@@ -44,6 +44,7 @@ def _frap_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
 def build_config(cfg: Any, run_dir: Path):
     from ray.rllib.algorithms.dqn import DQNConfig
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+
     from sumo_rl.agents.frap.rllib_module import build_frap_dqn_module_spec
 
     context = build_algorithm_context(cfg, run_dir, KIND)
@@ -100,7 +101,7 @@ def build_config(cfg: Any, run_dir: Path):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int) -> dict[str, Any]:
     metrics = extract_rllib_result_metrics(result, algorithm_kind=KIND, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
@@ -115,8 +116,8 @@ def train(
     algo,
     cfg: Any,
     *,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params

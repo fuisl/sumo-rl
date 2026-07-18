@@ -10,7 +10,6 @@ from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 from sumo_rl.agents.rllib_common import build_sumo_parallel_env
 from sumo_rl.models.graph import (
     GraphObservationHistory,
-    TrafficSignalGraph,
     build_traffic_signal_graph,
     pack_graph_features,
     traffic_signals_from_base_env,
@@ -64,10 +63,7 @@ class GraphParallelEnv:
         )
         self.history = GraphObservationHistory(history_len, self.graph)
         self.observation_spaces = {agent_id: self.history.observation_space for agent_id in self.possible_agents}
-        self.action_spaces = {
-            agent_id: self._base_action_space(agent_id)
-            for agent_id in self.possible_agents
-        }
+        self.action_spaces = {agent_id: self._base_action_space(agent_id) for agent_id in self.possible_agents}
 
     def _base_action_space(self, agent_id: str):
         action_space = getattr(self.env, "action_space", None)
@@ -152,7 +148,4 @@ def build_rllib_graph_parallel_env(
     params: dict[str, Any] | None = None,
     use_libsumo: bool | None = None,
 ):
-    return ParallelPettingZooEnv(
-        build_graph_parallel_env(cfg, run_dir, seed=seed, params=params, use_libsumo=use_libsumo)
-    )
-
+    return ParallelPettingZooEnv(build_graph_parallel_env(cfg, run_dir, seed=seed, params=params, use_libsumo=use_libsumo))

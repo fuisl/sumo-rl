@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 
 from sumo_rl.agents.colight.model import CoLightQNetwork
 
@@ -42,13 +42,13 @@ def build_colight_dqn_module_class():
         def get_target_network_pairs(self):
             return [(self.q_net, self._target_q_net)]
 
-        def forward_target(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        def forward_target(self, batch: dict[str, Any]) -> dict[str, Any]:
             return {QF_PREDS: self._target_q_net(batch[Columns.OBS])}
 
-        def compute_q_values(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        def compute_q_values(self, batch: dict[str, Any]) -> dict[str, Any]:
             return {QF_PREDS: self.q_net(batch[Columns.OBS])}
 
-        def _forward_exploration(self, batch: Dict[str, Any], t: int) -> Dict[str, Any]:
+        def _forward_exploration(self, batch: dict[str, Any], t: int) -> dict[str, Any]:
             qf_outs = self.compute_q_values(batch)
             action_dist_cls = self.get_exploration_action_dist_cls()
             action_dist = action_dist_cls.from_logits(qf_outs[QF_PREDS])
@@ -78,7 +78,7 @@ def build_colight_dqn_module_class():
             )
             return {Columns.ACTIONS: actions}
 
-        def compute_advantage_distribution(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        def compute_advantage_distribution(self, batch: dict[str, Any]) -> dict[str, Any]:
             del batch
             raise NotImplementedError("CoLight DQN does not implement distributional advantage outputs.")
 
@@ -90,7 +90,7 @@ def build_colight_dqn_module_spec(
     observation_space,
     action_space,
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 
@@ -101,4 +101,3 @@ def build_colight_dqn_module_spec(
         action_space=action_space,
         model_config=model_config or {"architecture_tag": "colight_graph_attention"},
     )
-

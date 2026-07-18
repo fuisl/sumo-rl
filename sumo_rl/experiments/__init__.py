@@ -10,4 +10,3 @@ __all__ = [
     "run_best_checkpoint_trip_visualization",
     "run_best_checkpoint_trip_visualizations",
 ]
-

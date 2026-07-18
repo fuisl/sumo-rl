@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from ray.rllib.policy.policy import PolicySpec
 
@@ -20,25 +21,23 @@ from sumo_rl.agents.rllib_common import (
     completed_training_episodes,
     emit_training_episode_rows,
     emit_validation_if_due,
+    episode_seconds,
+    episode_steps,
     flatten_numeric_metrics,
     plain_dict,
-    register_multi_agent_env,
     rllib_counter_metrics,
     scenario_factory_name,
     training_episode_jump,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
-    episode_seconds,
-    episode_steps,
 )
 from sumo_rl.experiments.runner import _prepare_env_kwargs
-
 
 KIND = "colight"
 
 
-def _colight_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
+def _colight_model_config(params: dict[str, Any]) -> dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config.setdefault("architecture_tag", "colight_graph_attention")
     model_config.setdefault("include_phase", True)
@@ -60,10 +59,10 @@ def _colight_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
 def _with_colight_observation(
     cfg: Any,
     run_dir: Path,
-    model_config: Dict[str, Any],
-    seed: Optional[int] = None,
+    model_config: dict[str, Any],
+    seed: int | None = None,
     *,
-    use_libsumo: Optional[bool] = None,
+    use_libsumo: bool | None = None,
 ):
     import sumo_rl
 
@@ -97,17 +96,15 @@ def _with_colight_observation(
 def build_colight_parallel_env(
     cfg: Any,
     run_dir: Path,
-    model_config: Dict[str, Any],
-    seed: Optional[int] = None,
+    model_config: dict[str, Any],
+    seed: int | None = None,
     *,
-    use_libsumo: Optional[bool] = None,
+    use_libsumo: bool | None = None,
 ):
-    return CoLightGraphParallelEnv(
-        _with_colight_observation(cfg, run_dir, model_config, seed=seed, use_libsumo=use_libsumo)
-    )
+    return CoLightGraphParallelEnv(_with_colight_observation(cfg, run_dir, model_config, seed=seed, use_libsumo=use_libsumo))
 
 
-def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def build_eval_env(cfg: Any, run_dir: Path, seed: int | None = None):
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
@@ -115,7 +112,7 @@ def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
     return ParallelPettingZooEnv(build_colight_parallel_env(cfg, run_dir, model_config, seed=seed, use_libsumo=False))
 
 
-def _build_colight_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> RllibAlgorithmContext:
+def _build_colight_context(cfg: Any, run_dir: Path, params: dict[str, Any]) -> RllibAlgorithmContext:
     mode = str(params.get("policy_mode", "shared") or "shared").strip().lower()
     if mode != "shared":
         raise ValueError("CoLight must use algorithm.params.policy_mode=shared to preserve graph-level cooperation.")
@@ -149,8 +146,8 @@ def _build_colight_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> R
     finally:
         sample_env.close()
 
-    from ray.tune.registry import register_env
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
+    from ray.tune.registry import register_env
 
     env_name = f"sumo_rl_{scenario_factory_name(cfg)}_{KIND}"
 
@@ -180,6 +177,7 @@ def _build_colight_context(cfg: Any, run_dir: Path, params: Dict[str, Any]) -> R
 def build_config(cfg: Any, run_dir: Path):
     from ray.rllib.algorithms.dqn import DQNConfig
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+
     from sumo_rl.agents.colight.rllib_module import build_colight_dqn_module_spec
 
     callbacks_class = training_episode_summary_callbacks_class()
@@ -239,7 +237,7 @@ def build_config(cfg: Any, run_dir: Path):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int) -> dict[str, Any]:
     metrics = rllib_counter_metrics(result, algorithm_kind=KIND, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
@@ -254,8 +252,8 @@ def train(
     algo,
     cfg: Any,
     *,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     callbacks_class = training_episode_summary_callbacks_class()
     callbacks_class.reset_episode_summary_tracking()

@@ -253,13 +253,6 @@ The RLlib SAC paths are implemented under `sumo_rl/agents/sac/sac.py`.
 The current runner hands SAC the same multi-agent RLlib wrapper used by PPO and
 DQN, and the SAC module owns SAC-specific config and training metrics.
 
-For the DCRNN SAC variants, that "same wrapper" means the graph-history wrapper
-from `sumo_rl/environment/graph_env.py`: each policy receives a tensor shaped as
-`[history_len, num_nodes, phase_one_hot_min_green_density_queue_features]`
-built from one static traffic-signal graph plus rolling full-TLS state frames.
-The graph communication in these variants happens inside the DCRNN diffusion
-operator, not through a separate attention layer.
-
 ### Custom SAC module
 
 `sac_builtin` is the reference RLlib SAC baseline. `sac_mlp` keeps the same
@@ -290,7 +283,7 @@ neighbor message passing, use FGS under `sumo_rl/agents/fgs/`.
 
 The thesis repo currently has two distinct graph-observation patterns:
 
-- DQN+DCRNN, PPO+DCRNN, and SAC+DCRNN use `sumo_rl/environment/graph_env.py`.
+- DQN+DCRNN and PPO+DCRNN use `sumo_rl/environment/graph_env.py`.
   The wrapper converts the current multi-agent SUMO state into one graph-history
   tensor shared across agents. Node features contain the canonicalized local TLS
   state `[phase_one_hot, min_green, density, queue]`, padded to the maximum

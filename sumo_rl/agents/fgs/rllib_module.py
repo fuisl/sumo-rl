@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 
 import gymnasium as gym
 
 from sumo_rl.agents.fgs.model import CentralGraphJointActionCritic, CentralGraphPolicyCritic, FGSGraphEncoder
 
-
 FGS_ACTOR_QF_PREDS = "fgs_actor_qf_preds"
 FGS_ACTOR_QF_TWIN_PREDS = "fgs_actor_qf_twin_preds"
 
 
-DEFAULT_FGS_MODEL_CONFIG: Dict[str, Any] = {
+DEFAULT_FGS_MODEL_CONFIG: dict[str, Any] = {
     "architecture_tag": "fgs_frap_gnn_sac",
     "twin_q": True,
     "local_encoder": {
@@ -47,7 +46,7 @@ DEFAULT_FGS_MODEL_CONFIG: Dict[str, Any] = {
 }
 
 
-def _deep_update(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_update(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
     merged = copy.deepcopy(base)
     for key, value in dict(updates or {}).items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -57,7 +56,7 @@ def _deep_update(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any
     return merged
 
 
-def normalize_fgs_model_config(model_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def normalize_fgs_model_config(model_config: dict[str, Any] | None = None) -> dict[str, Any]:
     config = _deep_update(DEFAULT_FGS_MODEL_CONFIG, dict(model_config or {}))
     local_type = str(config["local_encoder"].get("type", "frap") or "frap").lower()
     if local_type not in {"frap", "mlp"}:
@@ -140,7 +139,9 @@ def build_fgs_sac_module_class():
                 model_config=self.model_config,
             )
             critic_config = dict(self.model_config.get("critic", {}) or {})
-            critic_cls = CentralGraphJointActionCritic if self.critic_type == "central_graph_joint_action" else CentralGraphPolicyCritic
+            critic_cls = (
+                CentralGraphJointActionCritic if self.critic_type == "central_graph_joint_action" else CentralGraphPolicyCritic
+            )
             self.qf = critic_cls(
                 graph_dim=self.qf_encoder.output_dim,
                 num_nodes=self.num_nodes,
@@ -168,7 +169,7 @@ def build_fgs_sac_module_class():
                 return logits
             return logits.masked_fill((mask > 0).logical_not(), self.invalid_action_value)
 
-        def _actor_outputs(self, obs: Dict[str, torch.Tensor]):
+        def _actor_outputs(self, obs: dict[str, torch.Tensor]):
             encoded = self.pi_encoder(obs)
             graph_h = encoded["graph"]
             all_logits = self.pi(graph_h)
@@ -182,15 +183,15 @@ def build_fgs_sac_module_class():
             ego_probs = torch.nn.functional.softmax(ego_logits, dim=-1)
             return ego_logits, ego_probs, torch.log(ego_probs.clamp_min(1e-12)), all_probs
 
-        def _critic_outputs(self, obs: Dict[str, torch.Tensor], action_context, *, encoder, critic):
+        def _critic_outputs(self, obs: dict[str, torch.Tensor], action_context, *, encoder, critic):
             encoded = encoder(obs)
             return self._critic_outputs_from_encoded(obs, action_context, encoded=encoded, critic=critic)
 
-        def _critic_outputs_from_encoded(self, obs: Dict[str, torch.Tensor], action_context, *, encoded, critic):
+        def _critic_outputs_from_encoded(self, obs: dict[str, torch.Tensor], action_context, *, encoded, critic):
             q_values = critic(encoded["graph"], action_context.detach(), obs["ego_index"])
             return self._masked_logits(q_values, obs.get("action_mask"))
 
-        def _replay_joint_action_context(self, obs: Dict[str, torch.Tensor], next_obs: Dict[str, torch.Tensor], fallback):
+        def _replay_joint_action_context(self, obs: dict[str, torch.Tensor], next_obs: dict[str, torch.Tensor], fallback):
             if self.critic_type != "central_graph_joint_action":
                 return fallback
             context = next_obs.get("prev_joint_action")
@@ -251,7 +252,7 @@ def build_fgs_sac_module_class():
                 )
             return output
 
-        def forward_target(self, batch: Dict[str, Any], *, squeeze: bool = False, all_action_probs=None):
+        def forward_target(self, batch: dict[str, Any], *, squeeze: bool = False, all_action_probs=None):
             del squeeze
             obs = batch[Columns.OBS]
             if all_action_probs is None:
@@ -304,7 +305,7 @@ def build_fgs_sac_module_spec(
     observation_space,
     action_space,
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 
@@ -317,9 +318,9 @@ def build_fgs_sac_module_spec(
 
 
 def build_fgs_sac_multi_module_spec(
-    rl_module_specs: Dict[str, Any],
+    rl_module_specs: dict[str, Any],
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
 
@@ -374,7 +375,7 @@ def build_fgs_ppo_module_class():
                 return logits
             return logits.masked_fill((mask > 0).logical_not(), self.invalid_action_value)
 
-        def _forward_outputs(self, obs: Dict[str, torch.Tensor], *, include_values: bool) -> Dict[str, torch.Tensor]:
+        def _forward_outputs(self, obs: dict[str, torch.Tensor], *, include_values: bool) -> dict[str, torch.Tensor]:
             encoded = self.encoder(obs)
             logits = self._masked_logits(self.policy_head(encoded["ego"]), obs.get("action_mask"))
             output = {Columns.ACTION_DIST_INPUTS: logits}
@@ -382,23 +383,23 @@ def build_fgs_ppo_module_class():
                 output[Columns.VF_PREDS] = self.value_head(encoded["ego"]).squeeze(-1)
             return output
 
-        def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             return self._forward_outputs(batch[Columns.OBS], include_values=False)
 
-        def _forward_inference(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_inference(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             return self._forward_outputs(batch[Columns.OBS], include_values=False)
 
-        def _forward_exploration(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_exploration(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             return self._forward_outputs(batch[Columns.OBS], include_values=True)
 
-        def _forward_train(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        def _forward_train(self, batch: dict[str, Any], **kwargs) -> dict[str, Any]:
             del kwargs
             return self._forward_outputs(batch[Columns.OBS], include_values=True)
 
-        def compute_values(self, batch: Dict[str, Any], embeddings=None):
+        def compute_values(self, batch: dict[str, Any], embeddings=None):
             del embeddings
             encoded = self.encoder(batch[Columns.OBS])
             return self.value_head(encoded["ego"]).squeeze(-1)
@@ -417,7 +418,7 @@ def build_fgs_ppo_module_spec(
     observation_space,
     action_space,
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 
@@ -430,9 +431,9 @@ def build_fgs_ppo_module_spec(
 
 
 def build_fgs_ppo_multi_module_spec(
-    rl_module_specs: Dict[str, Any],
+    rl_module_specs: dict[str, Any],
     *,
-    model_config: Optional[Dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ):
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
 

@@ -1,3 +1,5 @@
+"""Utilities for exporting W&B runs into reproducible local artifacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -5,16 +7,24 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
+
+JSON_SEQUENCE_TYPES = list | tuple
+JSON_SCALAR_TYPES = str | int | float | bool
 
 
 def repo_root() -> Path:
+    """Return the repository root directory."""
+
     return Path(__file__).resolve().parent.parent
 
 
-def resolve_env_file(explicit_path: str = "") -> Optional[Path]:
+def resolve_env_file(explicit_path: str = "") -> Path | None:
+    """Resolve the `.env` file path used to load W&B credentials."""
+
     candidates: list[Path] = []
     if explicit_path:
         path = Path(explicit_path).expanduser()
@@ -29,7 +39,9 @@ def resolve_env_file(explicit_path: str = "") -> Optional[Path]:
     return None
 
 
-def load_env_file(env_path: Optional[Path]) -> None:
+def load_env_file(env_path: Path | None) -> None:
+    """Load environment variables from an env file when one is available."""
+
     if env_path is None:
         return
     try:
@@ -51,7 +63,9 @@ def load_env_file(env_path: Optional[Path]) -> None:
     load_dotenv(env_path, override=False)
 
 
-def load_wandb_credentials(*, explicit_env_file: str = "") -> dict[str, Optional[str]]:
+def load_wandb_credentials(*, explicit_env_file: str = "") -> dict[str, str | None]:
+    """Load W&B credentials and related defaults from the environment."""
+
     env_path = resolve_env_file(explicit_env_file)
     load_env_file(env_path)
     return {
@@ -63,11 +77,15 @@ def load_wandb_credentials(*, explicit_env_file: str = "") -> dict[str, Optional
 
 
 def require_all_tags(run_tags: Iterable[str], required_tags: Iterable[str]) -> bool:
+    """Return whether a run includes every requested tag."""
+
     run_tag_set = {str(tag) for tag in run_tags}
     return all(str(tag) in run_tag_set for tag in required_tags)
 
 
 def require_run_name(run_name: Any, required_names: Iterable[str]) -> bool:
+    """Return whether a run name matches the requested allowlist."""
+
     required_name_set = {str(name) for name in required_names}
     if not required_name_set:
         return True
@@ -75,6 +93,8 @@ def require_run_name(run_name: Any, required_names: Iterable[str]) -> bool:
 
 
 def safe_slug(value: Any, *, fallback: str) -> str:
+    """Convert an arbitrary value into a filesystem-safe slug."""
+
     text = str(value or "").strip()
     text = re.sub(r"[^A-Za-z0-9._-]+", "-", text)
     text = text.strip("._-")
@@ -82,9 +102,11 @@ def safe_slug(value: Any, *, fallback: str) -> str:
 
 
 def json_ready(value: Any) -> Any:
+    """Convert nested values into JSON-serializable data."""
+
     if isinstance(value, dict):
         return {str(key): json_ready(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, JSON_SEQUENCE_TYPES):
         return [json_ready(item) for item in value]
     if isinstance(value, Path):
         return str(value)
@@ -92,7 +114,7 @@ def json_ready(value: Any) -> Any:
         if value.tzinfo is None:
             return value.isoformat() + "Z"
         return value.isoformat()
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, JSON_SCALAR_TYPES) or value is None:
         return value
     try:
         item_method = getattr(value, "item")
@@ -116,6 +138,8 @@ def json_ready(value: Any) -> Any:
 
 
 def extract_run_metadata(run: Any) -> dict[str, Any]:
+    """Extract stable, serializable metadata from a W&B run object."""
+
     run_state = getattr(run, "state", None)
     run_tags = list(getattr(run, "tags", []) or [])
     created_at = getattr(run, "created_at", None)
@@ -145,6 +169,8 @@ def extract_run_metadata(run: Any) -> dict[str, Any]:
 
 
 def run_export_dir(output_dir: Path, entity: str, project: str, run: Any) -> Path:
+    """Return the export directory for a specific run."""
+
     run_id = safe_slug(getattr(run, "id", None), fallback="run")
     run_name = safe_slug(getattr(run, "name", None), fallback="unnamed")
     return output_dir / safe_slug(entity, fallback="entity") / safe_slug(project, fallback="project") / f"{run_id}__{run_name}"
@@ -155,8 +181,10 @@ def iter_matching_runs(
     entity: str,
     project: str,
     required_tags: list[str],
-    required_names: Optional[list[str]] = None,
+    required_names: list[str] | None = None,
 ) -> list[Any]:
+    """Return runs whose tags and names satisfy the requested filters."""
+
     runs = api.runs(f"{entity}/{project}")
     required_names = list(required_names or [])
     return [
@@ -168,6 +196,8 @@ def iter_matching_runs(
 
 
 def export_run(run: Any, export_dir: Path, *, overwrite: bool = False) -> dict[str, Any]:
+    """Export one W&B run's metadata, config, summary, and history."""
+
     if export_dir.exists():
         if not overwrite:
             return {"status": "skipped", "path": str(export_dir)}
@@ -198,12 +228,14 @@ def download_runs(
     entity: str,
     project: str,
     required_tags: list[str],
-    required_names: Optional[list[str]],
+    required_names: list[str] | None,
     output_dir: Path,
-    limit: Optional[int] = None,
+    limit: int | None = None,
     dry_run: bool = False,
     overwrite: bool = False,
 ) -> dict[str, Any]:
+    """Download matching runs and write a manifest for the export batch."""
+
     matching_runs = iter_matching_runs(api, entity, project, required_tags, required_names)
     if limit is not None:
         matching_runs = matching_runs[:limit]
@@ -258,6 +290,8 @@ def download_runs(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for the W&B download utility."""
+
     parser = argparse.ArgumentParser(description="Download W&B runs into local JSONL/JSON files for inspection.")
     parser.add_argument("--entity", default=None, help="W&B entity name. Defaults to WANDB_ENTITY from .env or env vars.")
     parser.add_argument("--project", default=None, help="W&B project name. Defaults to WANDB_PROJECT from .env or env vars.")
@@ -291,7 +325,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the CLI entrypoint for W&B run export."""
+
     args = build_parser().parse_args(argv)
     credentials = load_wandb_credentials(explicit_env_file=args.env_file)
     api_key = credentials["api_key"]

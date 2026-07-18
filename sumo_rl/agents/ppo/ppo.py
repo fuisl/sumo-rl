@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from sumo_rl.agents.dcrnn.dcrnn import build_graph_algorithm_context, graph_params
 from sumo_rl.agents.rllib_common import (
@@ -16,15 +17,14 @@ from sumo_rl.agents.rllib_common import (
     emit_training_episode_rows,
     emit_validation_if_due,
     extract_entropy_mean,
+    extract_rllib_result_metrics,
     flatten_numeric_metrics,
     plain_dict,
-    extract_rllib_result_metrics,
     training_episode_jump,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
 )
-
 
 KIND = "ppo"
 MLP_DCRNN_KIND = "ppo_dcrnn_mlp"
@@ -32,7 +32,7 @@ SHARED_MLP_DCRNN_KIND = "ppo_dcrnn_shared_mlp"
 
 
 def _format_gib(num_bytes: float) -> str:
-    return f"{num_bytes / float(1024 ** 3):.2f} GiB"
+    return f"{num_bytes / float(1024**3):.2f} GiB"
 
 
 def _warn_if_ppo_graph_memory_is_large(context) -> None:
@@ -51,7 +51,9 @@ def _warn_if_ppo_graph_memory_is_large(context) -> None:
     per_sample_obs_bytes = history_len * num_nodes * feature_dim * 4
     rollout_obs_bytes = per_sample_obs_bytes * max(1, int(context.episode_steps)) * num_policies
     train_batch_size = max(1, int(context.params.get("train_batch_size_per_learner", context.episode_steps)))
-    minibatch_size = max(1, int(context.params.get("minibatch_size", context.params.get("sgd_minibatch_size", train_batch_size))))
+    minibatch_size = max(
+        1, int(context.params.get("minibatch_size", context.params.get("sgd_minibatch_size", train_batch_size)))
+    )
     effective_train_batch_size = min(train_batch_size, max(1, int(context.episode_steps)))
     minibatch_obs_bytes = per_sample_obs_bytes * minibatch_size
 
@@ -70,7 +72,7 @@ def _warn_if_ppo_graph_memory_is_large(context) -> None:
     )
 
 
-def _ppo_dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+def _ppo_dcrnn_model_config(params: dict[str, Any], graph_model_config: dict[str, Any]) -> dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config.setdefault("architecture_tag", MLP_DCRNN_KIND)
     model_config.setdefault("hid_dim", 128)
@@ -86,7 +88,7 @@ def _ppo_dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str
     return model_config
 
 
-def _ppo_dcrnn_shared_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+def _ppo_dcrnn_shared_model_config(params: dict[str, Any], graph_model_config: dict[str, Any]) -> dict[str, Any]:
     model_config = _ppo_dcrnn_model_config(params, graph_model_config)
     model_config["architecture_tag"] = SHARED_MLP_DCRNN_KIND
     return model_config
@@ -95,9 +97,9 @@ def _ppo_dcrnn_shared_model_config(params: Dict[str, Any], graph_model_config: D
 def build_graph_eval_env(
     cfg: Any,
     run_dir: Path,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     *,
-    use_libsumo: Optional[bool] = None,
+    use_libsumo: bool | None = None,
 ):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
@@ -111,6 +113,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     algorithm_kind = str(algorithm_kind or KIND).strip()
     if algorithm_kind in {MLP_DCRNN_KIND, SHARED_MLP_DCRNN_KIND}:
         from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+
         from sumo_rl.agents.ppo.rllib_module import (
             build_ppo_dcrnn_module_spec,
             build_ppo_dcrnn_shared_module_spec,
@@ -122,9 +125,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
             run_dir,
             algorithm_kind=algorithm_kind,
             model_config_builder=(
-                _ppo_dcrnn_shared_model_config
-                if algorithm_kind == SHARED_MLP_DCRNN_KIND
-                else _ppo_dcrnn_model_config
+                _ppo_dcrnn_shared_model_config if algorithm_kind == SHARED_MLP_DCRNN_KIND else _ppo_dcrnn_model_config
             ),
         )
         _warn_if_ppo_graph_memory_is_large(context)
@@ -158,9 +159,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     config = apply_standard_evaluation_settings(config, context.params)
     if algorithm_kind in {MLP_DCRNN_KIND, SHARED_MLP_DCRNN_KIND}:
         rl_module_spec_builder = (
-            build_ppo_dcrnn_shared_module_spec
-            if algorithm_kind == SHARED_MLP_DCRNN_KIND
-            else build_ppo_dcrnn_module_spec
+            build_ppo_dcrnn_shared_module_spec if algorithm_kind == SHARED_MLP_DCRNN_KIND else build_ppo_dcrnn_module_spec
         )
         rl_module_specs = {
             policy_id: rl_module_spec_builder(
@@ -189,7 +188,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int, *, algorithm_kind: str = KIND) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int, *, algorithm_kind: str = KIND) -> dict[str, Any]:
     metrics = extract_rllib_result_metrics(result, algorithm_kind=algorithm_kind, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
@@ -205,8 +204,8 @@ def train(
     cfg: Any,
     *,
     algorithm_kind: str = KIND,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     algorithm_kind = str(algorithm_kind or KIND).strip()
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}

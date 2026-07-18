@@ -8,7 +8,6 @@
 
 import sumo_rl
 
-
 project = "SUMO-RL"
 copyright = "2019, Lucas N. Alegre"
 author = "Lucas N. Alegre"

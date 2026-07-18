@@ -1,8 +1,10 @@
 """DCRNN-specific RLlib config, training loop, and training metrics."""
 
 from __future__ import annotations
+
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from sumo_rl.agents.dqn.dqn import build_replay_buffer_config
 from sumo_rl.agents.rllib_common import (
@@ -12,10 +14,10 @@ from sumo_rl.agents.rllib_common import (
     apply_standard_evaluation_settings,
     apply_training_settings,
     completed_training_episodes,
-    episode_seconds,
-    episode_steps,
     emit_training_episode_rows,
     emit_validation_if_due,
+    episode_seconds,
+    episode_steps,
     extract_rllib_result_metrics,
     flatten_numeric_metrics,
     plain_dict,
@@ -27,7 +29,6 @@ from sumo_rl.agents.rllib_common import (
     training_should_stop,
 )
 
-
 DQN_KIND = "dqn_dcrnn"
 MLP_KIND = "dqn_dcrnn_mlp"
 KIND = DQN_KIND
@@ -35,7 +36,7 @@ ALIASES = {"dcrnn"}
 ALL_KINDS = {DQN_KIND, MLP_KIND, *ALIASES}
 
 
-def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
+def _graph_params(params: dict[str, Any]) -> dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     return {
         "history_len": int(params.get("history_len", model_config.get("history_len", 5))),
@@ -50,11 +51,11 @@ def _graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def graph_params(params: Dict[str, Any]) -> Dict[str, Any]:
+def graph_params(params: dict[str, Any]) -> dict[str, Any]:
     return _graph_params(params)
 
 
-def _dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+def _dcrnn_model_config(params: dict[str, Any], graph_model_config: dict[str, Any]) -> dict[str, Any]:
     model_config = dict(params.get("model_config") or {})
     model_config.setdefault("architecture_tag", "dqn_dcrnn")
     model_config.setdefault("hid_dim", 128)
@@ -68,7 +69,7 @@ def _dcrnn_model_config(params: Dict[str, Any], graph_model_config: Dict[str, An
     return model_config
 
 
-def _dcrnn_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str, Any]) -> Dict[str, Any]:
+def _dcrnn_mlp_model_config(params: dict[str, Any], graph_model_config: dict[str, Any]) -> dict[str, Any]:
     model_config = _dcrnn_model_config(params, graph_model_config)
     model_config["architecture_tag"] = MLP_KIND
     pre_encoder = dict(model_config.get("pre_encoder", {}) or {})
@@ -82,9 +83,9 @@ def _dcrnn_mlp_model_config(params: Dict[str, Any], graph_model_config: Dict[str
 def build_graph_eval_env(
     cfg: Any,
     run_dir: Path,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     *,
-    use_libsumo: Optional[bool] = None,
+    use_libsumo: bool | None = None,
 ):
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
@@ -92,8 +93,9 @@ def build_graph_eval_env(
     return build_rllib_graph_parallel_env(cfg, run_dir, seed=seed, params=_graph_params(params), use_libsumo=use_libsumo)
 
 
-def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algorithm_kind: str) -> str:
+def _register_graph_env(cfg: Any, run_dir: Path, params: dict[str, Any], *, algorithm_kind: str) -> str:
     from ray.tune.registry import register_env
+
     from sumo_rl.environment.graph_env import build_rllib_graph_parallel_env
 
     env_name = f"sumo_rl_graph_{scenario_factory_name(cfg)}_{algorithm_kind}"
@@ -111,15 +113,16 @@ def _register_graph_env(cfg: Any, run_dir: Path, params: Dict[str, Any], *, algo
     register_env(env_name, _creator)
     return env_name
 
+
 def _format_gib(num_bytes: float) -> str:
-    return f"{num_bytes / float(1024 ** 3):.2f} GiB"
+    return f"{num_bytes / float(1024**3):.2f} GiB"
 
 
 def _warn_if_graph_memory_is_large(
     *,
     algorithm_kind: str,
     sample_env: Any,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     episode_steps_value: int,
 ) -> None:
     num_agents = max(1, len(sample_env.possible_agents))
@@ -159,9 +162,10 @@ def build_graph_algorithm_context(
     run_dir: Path,
     *,
     algorithm_kind: str,
-    model_config_builder: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
-) -> tuple[RllibAlgorithmContext, Dict[str, Dict[str, Any]]]:
+    model_config_builder: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+) -> tuple[RllibAlgorithmContext, dict[str, dict[str, Any]]]:
     from ray.rllib.policy.policy import PolicySpec
+
     from sumo_rl.environment.graph_env import build_graph_parallel_env
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
@@ -215,6 +219,7 @@ def build_graph_algorithm_context(
 def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     from ray.rllib.algorithms.dqn import DQNConfig
     from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+
     from sumo_rl.agents.dcrnn.rllib_module import build_dcrnn_dqn_module_spec
 
     algorithm_kind = str(algorithm_kind or KIND).strip()
@@ -277,7 +282,7 @@ def build_config(cfg: Any, run_dir: Path, *, algorithm_kind: str = KIND):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int) -> dict[str, Any]:
     metrics = extract_rllib_result_metrics(result, algorithm_kind=KIND, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
@@ -293,8 +298,8 @@ def train(
     cfg: Any,
     *,
     algorithm_kind: str = KIND,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     del algorithm_kind
     callbacks_class = training_episode_summary_callbacks_class()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from ray.rllib.algorithms.sac.sac_learner import (
     ACTION_LOG_PROBS,
@@ -37,8 +37,8 @@ class FGSSACTorchLearner(SACTorchLearner):
         *,
         module_id: ModuleID,
         config,
-        batch: Dict[str, Any],
-        fwd_out: Dict[str, TensorType],
+        batch: dict[str, Any],
+        fwd_out: dict[str, TensorType],
     ) -> TensorType:
         torch = __import__("torch")
         alpha = torch.exp(self.curr_log_alpha[module_id])
@@ -59,9 +59,7 @@ class FGSSACTorchLearner(SACTorchLearner):
         if config.twin_q:
             td_error = 0.5 * (td_error + torch.abs(qf_twin_pred - target_q))
 
-        critic_loss = torch.mean(
-            batch["weights"] * torch.nn.HuberLoss(reduction="none", delta=1.0)(qf_pred, target_q)
-        )
+        critic_loss = torch.mean(batch["weights"] * torch.nn.HuberLoss(reduction="none", delta=1.0)(qf_pred, target_q))
         if config.twin_q:
             critic_twin_loss = torch.mean(
                 batch["weights"] * torch.nn.HuberLoss(reduction="none", delta=1.0)(qf_twin_pred, target_q)

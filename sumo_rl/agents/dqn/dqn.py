@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from sumo_rl.agents.rllib_common import (
     apply_env_runner_settings,
@@ -14,26 +15,25 @@ from sumo_rl.agents.rllib_common import (
     completed_training_episodes,
     emit_training_episode_rows,
     emit_validation_if_due,
+    extract_rllib_result_metrics,
     flatten_numeric_metrics,
     plain_dict,
-    extract_rllib_result_metrics,
     training_episode_jump,
     training_episode_summary_callbacks_class,
     training_episode_target,
     training_should_stop,
 )
 
-
 KIND = "dqn"
 
 
-def build_replay_buffer_config(params: Dict[str, Any]) -> Dict[str, Any]:
+def build_replay_buffer_config(params: dict[str, Any]) -> dict[str, Any]:
     explicit = params.get("replay_buffer_config")
     if isinstance(explicit, dict) and explicit:
         return dict(explicit)
 
     buffer_type = str(params.get("replay_buffer_type", "MultiAgentPrioritizedEpisodeReplayBuffer"))
-    config: Dict[str, Any] = {
+    config: dict[str, Any] = {
         "type": buffer_type,
         "capacity": int(params.get("replay_buffer_capacity", 50000)),
     }
@@ -79,7 +79,7 @@ def build_config(cfg: Any, run_dir: Path):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int) -> dict[str, Any]:
     metrics = extract_rllib_result_metrics(result, algorithm_kind=KIND, iteration=iteration)
     learner_metrics = result.get("learners") or result.get("learner")
     if isinstance(learner_metrics, dict):
@@ -94,8 +94,8 @@ def train(
     algo,
     cfg: Any,
     *,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {}) or {}
     del params

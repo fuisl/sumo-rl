@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 from gymnasium import spaces
@@ -46,11 +46,7 @@ class CoLightObservationFunction(ObservationFunction):
 
         for lane_id in self.ts.lanes:
             vehicle_count = len(
-                [
-                    veh
-                    for veh in self.ts.sumo.lane.getLastStepVehicleIDs(lane_id)
-                    if not str(veh).startswith("ghost")
-                ]
+                [veh for veh in self.ts.sumo.lane.getLastStepVehicleIDs(lane_id) if not str(veh).startswith("ghost")]
             )
             value = float(vehicle_count) / self._vehicle_count_scale(lane_id)
             if self.clip_vehicle_counts:
@@ -116,7 +112,7 @@ class CoLightGraphParallelEnv:
         self.possible_agents = [str(agent_id) for agent_id in getattr(env, "possible_agents", getattr(env, "agents", []))]
         self.agents = list(getattr(env, "agents", self.possible_agents))
         self._agent_to_index = {agent_id: index for index, agent_id in enumerate(self.possible_agents)}
-        self._latest_local_obs: Dict[str, np.ndarray] = {}
+        self._latest_local_obs: dict[str, np.ndarray] = {}
         self._refresh_spaces()
 
     def _refresh_spaces(self) -> None:
@@ -185,7 +181,7 @@ class CoLightGraphParallelEnv:
         padded[: min(len(obs), self._node_feature_dim)] = obs[: self._node_feature_dim]
         return padded
 
-    def _graph_obs(self, agent_id: str) -> Dict[str, np.ndarray]:
+    def _graph_obs(self, agent_id: str) -> dict[str, np.ndarray]:
         node_features = np.zeros((self._num_nodes, self._node_feature_dim), dtype=np.float32)
         for node_id, node_index in self._agent_to_index.items():
             if node_id in self._latest_local_obs:
@@ -207,7 +203,7 @@ class CoLightGraphParallelEnv:
             "action_mask": action_mask,
         }
 
-    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
+    def reset(self, seed: int | None = None, options: dict | None = None):
         reset_result = self.env.reset(seed=seed, options=options)
         if isinstance(reset_result, tuple) and len(reset_result) == 2:
             local_obs, infos = reset_result

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from ray.rllib.policy.policy import PolicySpec
 
 from sumo_rl.agents.fgs.graph_env import FGSGraphParallelEnv
+from sumo_rl.agents.fgs.learner import FGSSACTorchLearner
 from sumo_rl.agents.fgs.rllib_module import (
     build_fgs_ppo_module_spec,
     build_fgs_ppo_multi_module_spec,
@@ -15,7 +17,7 @@ from sumo_rl.agents.fgs.rllib_module import (
     build_fgs_sac_multi_module_spec,
     normalize_fgs_model_config,
 )
-from sumo_rl.agents.fgs.learner import FGSSACTorchLearner
+from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.rllib_common import (
     RllibAlgorithmContext,
     apply_env_runner_settings,
@@ -29,16 +31,14 @@ from sumo_rl.agents.rllib_common import (
     scenario_factory_name,
     training_episode_summary_callbacks_class,
 )
-from sumo_rl.agents.ppo import ppo as ppo_agent
 from sumo_rl.agents.sac import sac as sac_agent
 from sumo_rl.experiments.runner import _prepare_env_kwargs
-
 
 KIND = "fgs"
 PPO_KIND = "fgs_ppo"
 
 
-def _fgs_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
+def _fgs_model_config(params: dict[str, Any]) -> dict[str, Any]:
     model_config = normalize_fgs_model_config(params.get("model_config") or {})
     for key in ("twin_q",):
         if key in params and params[key] is not None:
@@ -49,10 +49,10 @@ def _fgs_model_config(params: Dict[str, Any]) -> Dict[str, Any]:
 def build_fgs_parallel_env(
     cfg: Any,
     run_dir: Path,
-    model_config: Dict[str, Any],
-    seed: Optional[int] = None,
+    model_config: dict[str, Any],
+    seed: int | None = None,
     *,
-    use_libsumo: Optional[bool] = None,
+    use_libsumo: bool | None = None,
 ):
     import sumo_rl
 
@@ -87,19 +87,17 @@ def build_fgs_parallel_env(
     )
 
 
-def build_eval_env(cfg: Any, run_dir: Path, seed: Optional[int] = None):
+def build_eval_env(cfg: Any, run_dir: Path, seed: int | None = None):
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
     params = plain_dict(getattr(getattr(cfg, "algorithm", None), "params", {}) or {})
-    return ParallelPettingZooEnv(
-        build_fgs_parallel_env(cfg, run_dir, _fgs_model_config(params), seed=seed, use_libsumo=False)
-    )
+    return ParallelPettingZooEnv(build_fgs_parallel_env(cfg, run_dir, _fgs_model_config(params), seed=seed, use_libsumo=False))
 
 
 def _build_fgs_context(
     cfg: Any,
     run_dir: Path,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     *,
     algorithm_kind: str = KIND,
 ) -> RllibAlgorithmContext:
@@ -130,8 +128,8 @@ def _build_fgs_context(
     finally:
         sample_env.close()
 
-    from ray.tune.registry import register_env
     from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
+    from ray.tune.registry import register_env
 
     env_name = f"sumo_rl_{scenario_factory_name(cfg)}_{algorithm_kind}"
 
@@ -285,7 +283,7 @@ def build_ppo_config(cfg: Any, run_dir: Path):
     return config.callbacks(callbacks_class)
 
 
-def extract_training_metrics(result: Dict[str, Any], iteration: int) -> Dict[str, Any]:
+def extract_training_metrics(result: dict[str, Any], iteration: int) -> dict[str, Any]:
     return sac_agent.extract_training_metrics(result, iteration, algorithm_kind=KIND)
 
 
@@ -294,8 +292,8 @@ def train(
     cfg: Any,
     *,
     algorithm_kind: str = KIND,
-    emit_metrics: Optional[Callable[[Dict[str, Any], int], None]] = None,
-    validate: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    emit_metrics: Callable[[dict[str, Any], int], None] | None = None,
+    validate: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     algorithm_kind = str(algorithm_kind or KIND).strip()
     if algorithm_kind == PPO_KIND:

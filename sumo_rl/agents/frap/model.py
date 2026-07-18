@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 
 def infer_default_phase_pairs(num_movements: int, num_actions: int) -> list[list[int]]:
@@ -41,7 +42,7 @@ def build_competition_mask(phase_pairs: Sequence[Sequence[int]]) -> torch.Tensor
 
 
 def normalize_phase_pairs(
-    phase_pairs: Optional[Iterable[Iterable[int]]],
+    phase_pairs: Iterable[Iterable[int]] | None,
     *,
     num_movements: int,
     num_actions: int,
@@ -54,9 +55,7 @@ def normalize_phase_pairs(
             raise ValueError(f"Each FRAP phase pair must contain exactly two movement indices; got {pair!r}.")
         for movement_index in pair:
             if movement_index < 0 or movement_index >= num_movements:
-                raise ValueError(
-                    f"FRAP phase pair index {movement_index} is outside the movement range [0, {num_movements})."
-                )
+                raise ValueError(f"FRAP phase pair index {movement_index} is outside the movement range [0, {num_movements}).")
     return pairs
 
 
@@ -86,11 +85,11 @@ class FRAPQNetwork(nn.Module):
         *,
         observation_dim: int,
         num_actions: int,
-        phase_pairs: Optional[Iterable[Iterable[int]]] = None,
+        phase_pairs: Iterable[Iterable[int]] | None = None,
         demand_shape: int = 2,
         observation_has_phase: bool = True,
         observation_has_min_green: bool = True,
-        demand_start: Optional[int] = None,
+        demand_start: int | None = None,
         demand_layout: str = "split",
         d_out: int = 4,
         p_out: int = 4,
@@ -134,7 +133,7 @@ class FRAPQNetwork(nn.Module):
         self.register_buffer("competition_mask", build_competition_mask(self.phase_pairs), persistent=False)
 
     @classmethod
-    def from_model_config(cls, observation_space: Any, action_space: Any, model_config: Dict[str, Any]) -> "FRAPQNetwork":
+    def from_model_config(cls, observation_space: Any, action_space: Any, model_config: dict[str, Any]) -> FRAPQNetwork:
         observation_dim = int(observation_space.shape[0])
         num_actions = int(action_space.n)
         return cls(

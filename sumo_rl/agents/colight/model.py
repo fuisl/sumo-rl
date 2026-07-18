@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Dict, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 import torch
 from torch import nn
@@ -89,7 +90,7 @@ class CoLightQNetwork(nn.Module):
         return values
 
     @classmethod
-    def from_model_config(cls, observation_space: Any, action_space: Any, model_config: Dict[str, Any]):
+    def from_model_config(cls, observation_space: Any, action_space: Any, model_config: dict[str, Any]):
         spaces = observation_space.spaces
         return cls(
             node_feature_dim=int(spaces["node_features"].shape[-1]),
@@ -104,7 +105,7 @@ class CoLightQNetwork(nn.Module):
             invalid_action_value=float(model_config.get("invalid_action_value", -1.0e9)),
         )
 
-    def _flatten_edges(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _flatten_edges(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
         node_features = obs["node_features"]
         batch_size, num_nodes = int(node_features.shape[0]), int(node_features.shape[1])
         edge_index = obs["edge_index"].long()
@@ -120,7 +121,7 @@ class CoLightQNetwork(nn.Module):
             return torch.empty((2, 0), dtype=torch.long, device=node_features.device)
         return torch.cat(edges, dim=1)
 
-    def forward(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def forward(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
         node_features = obs["node_features"].float()
         batch_size, num_nodes, feature_dim = node_features.shape
         if int(num_nodes) != self.num_nodes or int(feature_dim) != self.node_feature_dim:

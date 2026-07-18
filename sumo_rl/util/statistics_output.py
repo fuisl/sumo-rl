@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-import xml.etree.ElementTree as ET
 
 
 def _safe_float(value, *, default: float = float("nan")) -> float:
@@ -47,7 +46,7 @@ class StatisticOutputParseResult:
     trip_total_depart_delay: float = float("nan")
 
 
-def _find_first(root: ET.Element, *tags: str) -> Optional[ET.Element]:
+def _find_first(root: ET.Element, *tags: str) -> ET.Element | None:
     for tag in tags:
         element = root.find(f".//{tag}")
         if element is not None:
