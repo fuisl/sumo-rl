@@ -241,6 +241,15 @@ evaluation helper from a notebook, open
 `experiments/manual_checkpoint_evaluation.ipynb` and set `RUN_DIR` plus
 `CHECKPOINT_PATH`.
 
+Trip traces rendered under `visualization/outputs/*/trip_trace.json` can be
+compared as macroscopic fundamental diagrams (MFDs). The plotting entrypoint
+auto-discovers those traces, computes lane-density and production rows from
+the SUMO net, and writes both figures and `mfd_rows.csv`:
+
+```bash
+conda run -n marl python visualization/plot_mfd.py
+```
+
 RLlib runs default to `resources.ray_address=null`, so experiments start a
 local Ray instance unless you opt into cluster discovery. To share one Ray
 scheduler across multiple jobs, start a shared Ray head first, for example

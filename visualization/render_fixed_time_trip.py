@@ -17,9 +17,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--config-file", type=Path, default=None, help="Optional resolved Hydra config YAML.")
     parser.add_argument("--seed", type=int, default=None, help="SUMO seed. Defaults to the first configured eval seed.")
     parser.add_argument("--width", type=int, default=1200, help="Animation width in pixels.")
+    parser.add_argument("--aspect-ratio", type=float, default=None, help="Optional output width/height ratio, e.g. 1.65.")
     parser.add_argument("--fps", type=int, default=12, help="GIF frames per second.")
     parser.add_argument("--frame-count", type=int, default=160, help="Maximum rendered GIF frame count.")
     parser.add_argument("--max-render-vehicles", type=int, default=1200, help="Maximum vehicle dots drawn per frame.")
+    parser.add_argument("--hide-overlay", action="store_true", help="Do not draw the top-left run/status overlay.")
+    parser.add_argument("--hide-legend", action="store_true", help="Do not draw the legend card.")
     return parser.parse_args()
 
 
@@ -31,9 +34,12 @@ def main() -> int:
         config_file=args.config_file,
         seed=args.seed,
         width=args.width,
+        aspect_ratio=args.aspect_ratio,
         fps=args.fps,
         frame_count=args.frame_count,
         max_render_vehicles=args.max_render_vehicles,
+        show_overlay=not args.hide_overlay,
+        show_legend=not args.hide_legend,
     )
     print(f"Wrote trip animation GIF: {paths['animation']}")
     print(f"Wrote live trace JSON: {paths['trace']}")

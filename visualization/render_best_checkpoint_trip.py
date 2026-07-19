@@ -23,6 +23,21 @@ DEFAULT_RUN_DIR = ROOT / "outputs/resco_ingolstadt1__fgs_mlp_gatv2_ppo/2026-06-2
 DEFAULT_OUTPUT_DIR = ROOT / "visualization/outputs/resco_ingolstadt1__fgs_mlp_gatv2_ppo"
 DEFAULT_FIXED_TIME_CONFIG = "presets/resco_ingolstadt21/fixed_time"
 DEFAULT_FIXED_TIME_OUTPUT_DIR = ROOT / "visualization/outputs/resco_ingolstadt21__fixed_time"
+FONT_DIR = ROOT / "visualization/assets/fonts"
+
+STYLE = {
+    "ink": "#141413",
+    "paper": "#faf9f5",
+    "card": "#e8e6dc",
+    "card_alt": "#f1efe7",
+    "mid_gray": "#b0aea5",
+    "road_wash": "#e8e6dc",
+    "road_ink": "#8c8980",
+    "orange": "#d97757",
+    "blue": "#6a9bcc",
+    "green": "#788c5d",
+    "tan": "#c9a35b",
+}
 
 
 @dataclass(frozen=True)
@@ -82,9 +97,12 @@ def render_trip_animation(
     output_path: str | Path,
     *,
     width: int = 1200,
+    aspect_ratio: float | None = None,
     fps: int = 12,
     frame_count: int = 160,
     max_render_vehicles: int = 1200,
+    show_overlay: bool = True,
+    show_legend: bool = True,
 ) -> Path:
     frames = list(trace.get("frames") or [])
     if not frames:
@@ -98,7 +116,7 @@ def render_trip_animation(
     points.extend(tls_positions.values())
     for frame in selected_frames:
         points.extend((float(vehicle["x"]), float(vehicle["y"])) for vehicle in frame.get("vehicles", []))
-    project, height = _projector(points, width)
+    project, height = _projector(points, width, aspect_ratio=aspect_ratio)
 
     max_pressure = max(
         (abs(float(value)) for frame in selected_frames for value in dict(frame.get("pressures") or {}).values()),
@@ -111,14 +129,37 @@ def render_trip_animation(
     )
     max_speed = max(max_speed, 1.0)
 
-    font = ImageFont.load_default()
-    large_font = ImageFont.load_default()
+    font = _load_font(
+        15 if width >= 800 else 13,
+        [
+            FONT_DIR / "LibertinusSans-Regular.otf",
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        ],
+    )
+    large_font = _load_font(
+        21 if width >= 800 else 17,
+        [
+            FONT_DIR / "LibertinusSans-Bold.otf",
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"),
+        ],
+    )
     images = []
     for index, frame in enumerate(selected_frames):
-        image = Image.new("RGB", (width, height), "#f8fafc")
+        image = Image.new("RGB", (width, height), STYLE["paper"])
         draw = ImageDraw.Draw(image)
+        _draw_paper_background(draw, width, height)
         _draw_roads(draw, road_polylines, project)
-        _draw_pressure_bars(draw, tls_positions, dict(frame.get("pressures") or {}), project, max_pressure, font)
+        _draw_pressure_bars(
+            draw,
+            tls_positions,
+            dict(frame.get("pressures") or {}),
+            project,
+            max_pressure,
+            font,
+            show_labels=show_overlay or show_legend,
+        )
         _draw_vehicles(
             draw,
             list(frame.get("vehicles") or []),
@@ -126,17 +167,19 @@ def render_trip_animation(
             max_speed=max_speed,
             max_render_vehicles=max_render_vehicles,
         )
-        _draw_overlay(
-            draw,
-            width=width,
-            frame_index=index,
-            frame_count=len(selected_frames),
-            frame=frame,
-            trace=trace,
-            font=font,
-            large_font=large_font,
-        )
-        _draw_legend(draw, width=width, font=font)
+        if show_overlay:
+            _draw_overlay(
+                draw,
+                width=width,
+                frame_index=index,
+                frame_count=len(selected_frames),
+                frame=frame,
+                trace=trace,
+                font=font,
+                large_font=large_font,
+            )
+        if show_legend:
+            _draw_legend(draw, width=width, font=font)
         images.append(image)
 
     output = Path(output_path)
@@ -160,9 +203,12 @@ def run_best_checkpoint_trip_visualization(
     *,
     best_index: int = 0,
     width: int = 1200,
+    aspect_ratio: float | None = None,
     fps: int = 12,
     frame_count: int = 160,
     max_render_vehicles: int = 1200,
+    show_overlay: bool = True,
+    show_legend: bool = True,
 ) -> dict[str, Path]:
     run_path = Path(run_dir).resolve()
     out_dir = Path(output_dir).resolve()
@@ -183,9 +229,12 @@ def run_best_checkpoint_trip_visualization(
         trace,
         gif_path,
         width=width,
+        aspect_ratio=aspect_ratio,
         fps=fps,
         frame_count=frame_count,
         max_render_vehicles=max_render_vehicles,
+        show_overlay=show_overlay,
+        show_legend=show_legend,
     )
     metadata.update(
         {
@@ -193,9 +242,12 @@ def run_best_checkpoint_trip_visualization(
             "trace_path": str(trace_path),
             "render": {
                 "width": int(width),
+                "aspect_ratio": float(aspect_ratio) if aspect_ratio is not None else None,
                 "fps": int(fps),
                 "frame_count": int(min(frame_count, len(trace.get("frames", [])))),
                 "max_render_vehicles": int(max_render_vehicles),
+                "show_overlay": bool(show_overlay),
+                "show_legend": bool(show_legend),
             },
         }
     )
@@ -215,9 +267,12 @@ def run_fixed_time_trip_visualization(
     config_file: str | Path | None = None,
     seed: int | None = None,
     width: int = 1200,
+    aspect_ratio: float | None = None,
     fps: int = 12,
     frame_count: int = 160,
     max_render_vehicles: int = 1200,
+    show_overlay: bool = True,
+    show_legend: bool = True,
 ) -> dict[str, Path]:
     out_dir = Path(output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -238,9 +293,12 @@ def run_fixed_time_trip_visualization(
         trace,
         gif_path,
         width=width,
+        aspect_ratio=aspect_ratio,
         fps=fps,
         frame_count=frame_count,
         max_render_vehicles=max_render_vehicles,
+        show_overlay=show_overlay,
+        show_legend=show_legend,
     )
     metadata.update(
         {
@@ -248,9 +306,12 @@ def run_fixed_time_trip_visualization(
             "trace_path": str(trace_path),
             "render": {
                 "width": int(width),
+                "aspect_ratio": float(aspect_ratio) if aspect_ratio is not None else None,
                 "fps": int(fps),
                 "frame_count": int(min(frame_count, len(trace.get("frames", [])))),
                 "max_render_vehicles": int(max_render_vehicles),
+                "show_overlay": bool(show_overlay),
+                "show_legend": bool(show_legend),
             },
         }
     )
@@ -635,9 +696,11 @@ def _coerce_positions(raw_positions: dict[str, Any]) -> dict[str, Point]:
     return positions
 
 
-def _projector(points: list[Point], width: int) -> tuple[Callable[[Point], Point], int]:
+def _projector(points: list[Point], width: int, *, aspect_ratio: float | None = None) -> tuple[Callable[[Point], Point], int]:
     if not points:
         points = [(0.0, 0.0), (1.0, 1.0)]
+    if aspect_ratio is not None and aspect_ratio <= 0:
+        raise ValueError("aspect_ratio must be positive when provided.")
     min_x = min(x for x, _ in points)
     max_x = max(x for x, _ in points)
     min_y = min(y for _, y in points)
@@ -646,23 +709,54 @@ def _projector(points: list[Point], width: int) -> tuple[Callable[[Point], Point
         max_x += 1.0
     if min_y == max_y:
         max_y += 1.0
-    height = max(520, min(1600, int(width * (max_y - min_y) / max(max_x - min_x, 1e-6))))
+    if aspect_ratio is None:
+        height = max(520, min(1600, int(width * (max_y - min_y) / max(max_x - min_x, 1e-6))))
+    else:
+        height = max(1, int(round(width / aspect_ratio)))
     padding = 64
-    scale = min((width - 2 * padding) / (max_x - min_x), (height - 2 * padding) / (max_y - min_y))
+    available_width = max(1.0, width - 2 * padding)
+    available_height = max(1.0, height - 2 * padding)
+    scale = min(available_width / (max_x - min_x), available_height / (max_y - min_y))
+    scaled_width = (max_x - min_x) * scale
+    scaled_height = (max_y - min_y) * scale
+    offset_x = (width - scaled_width) / 2.0
+    offset_y = (height - scaled_height) / 2.0
 
     def project(point: Point) -> Point:
-        x = padding + (point[0] - min_x) * scale
-        y = height - (padding + (point[1] - min_y) * scale)
+        x = offset_x + (point[0] - min_x) * scale
+        y = height - (offset_y + (point[1] - min_y) * scale)
         return x, y
 
     return project, height
 
 
+def _load_font(size: int, candidates: list[Path]) -> ImageFont.ImageFont:
+    for path in candidates:
+        if path.exists():
+            try:
+                return ImageFont.truetype(str(path), size=size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+def _draw_paper_background(draw: ImageDraw.ImageDraw, width: int, height: int) -> None:
+    draw.rectangle((0, 0, width - 1, height - 1), outline=STYLE["card"])
+    for index in range(max(width, height) // 18):
+        x = (index * 89 + 37) % max(width, 1)
+        y = (index * 53 + 19) % max(height, 1)
+        if index % 3 == 0:
+            draw.line((x, y, min(width - 1, x + 9), y), fill=STYLE["card_alt"], width=1)
+        elif index % 3 == 1:
+            draw.point((x, y), fill=STYLE["card_alt"])
+
+
 def _draw_roads(draw: ImageDraw.ImageDraw, roads: list[list[Point]], project: Callable[[Point], Point]) -> None:
-    for road in roads:
+    for road_index, road in enumerate(roads):
         points = [_int_point(project(point)) for point in road]
         if len(points) >= 2:
-            draw.line(points, fill="#64748b", width=1)
+            draw.line(_sketch_points(points, amount=1.15, salt=road_index), fill=STYLE["road_wash"], width=4)
+            draw.line(_sketch_points(points, amount=0.65, salt=road_index + 97), fill=STYLE["road_ink"], width=1)
 
 
 def _draw_pressure_bars(
@@ -672,20 +766,23 @@ def _draw_pressure_bars(
     project: Callable[[Point], Point],
     max_pressure: float,
     font: ImageFont.ImageFont,
+    *,
+    show_labels: bool,
 ) -> None:
     for tls_id, point in sorted(tls_positions.items()):
         x, y = _int_point(project(point))
         pressure = float(pressures.get(tls_id, 0.0) or 0.0)
         magnitude = min(1.0, abs(pressure) / max(max_pressure, 1e-6))
-        bar_height = int(round(10 + 34 * magnitude))
-        color = "#dc2626" if pressure < 0 else "#0891b2"
-        draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill="#0f766e", outline="#ffffff", width=2)
-        draw.rounded_rectangle((x + 7, y - bar_height, x + 13, y), radius=2, fill="#e2e8f0")
-        draw.rounded_rectangle((x + 7, y - bar_height, x + 13, y), radius=2, outline="#ffffff")
+        bar_height = int(round(12 + 38 * magnitude))
+        color = STYLE["orange"] if pressure < 0 else STYLE["blue"]
+        _draw_organic_dot(draw, x, y, 7, STYLE["green"], outline=STYLE["paper"], width=2, salt=len(tls_id))
+        _draw_organic_dot(draw, x, y, 3, STYLE["paper"], outline=None, width=0, salt=len(tls_id) + 13)
+        draw.rounded_rectangle((x + 9, y - bar_height, x + 17, y), radius=3, fill=STYLE["card_alt"], outline=STYLE["mid_gray"])
         fill_top = y - int(round(bar_height * magnitude))
-        draw.rounded_rectangle((x + 7, fill_top, x + 13, y), radius=2, fill=color)
-        if magnitude > 0.72:
-            draw.text((x + 16, y - bar_height - 2), tls_id, fill="#0f172a", font=font, stroke_width=2, stroke_fill="#ffffff")
+        if fill_top < y:
+            draw.rounded_rectangle((x + 10, fill_top, x + 16, y - 1), radius=2, fill=color)
+        if show_labels and magnitude > 0.72:
+            draw.text((x + 21, y - bar_height - 3), tls_id, fill=STYLE["ink"], font=font, stroke_width=2, stroke_fill=STYLE["paper"])
 
 
 def _draw_vehicles(
@@ -700,15 +797,15 @@ def _draw_vehicles(
         x, y = _int_point(project((float(vehicle["x"]), float(vehicle["y"]))))
         speed = float(vehicle.get("speed", 0.0) or 0.0)
         if speed < 0.1:
-            fill = "#ef4444"
+            fill = STYLE["orange"]
             radius = 6
         elif speed < 5.0:
-            fill = "#f59e0b"
+            fill = STYLE["tan"]
             radius = 5
         else:
-            fill = "#2563eb"
+            fill = STYLE["blue"]
             radius = 4
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill, outline="#ffffff")
+        _draw_organic_dot(draw, x, y, radius, fill, outline=STYLE["paper"], width=1, salt=len(str(vehicle.get("id", ""))))
 
 
 def _draw_overlay(
@@ -726,34 +823,63 @@ def _draw_overlay(
     title = str(metadata.get("experiment", "best-checkpoint trip"))
     metric = metadata.get("metric_value")
     metric_text = f"delay {float(metric):.3f}" if isinstance(metric, (int, float)) else "best checkpoint"
+    checkpoint_rank = metadata.get("checkpoint_rank")
+    if checkpoint_rank is not None:
+        run_text = f"rank {checkpoint_rank} checkpoint | {metric_text}"
+    else:
+        run_text = f"{metadata.get('algorithm_kind', 'control')} | {metric_text}"
     time_value = float(frame.get("time", 0.0) or 0.0)
     frame_vehicles = list(frame.get("vehicles") or [])
     vehicles = len(frame_vehicles)
     stopped = sum(1 for vehicle in frame_vehicles if float(vehicle.get("speed", 0.0) or 0.0) < 0.1)
+    slow = sum(1 for vehicle in frame_vehicles if 0.1 <= float(vehicle.get("speed", 0.0) or 0.0) < 5.0)
+    moving = max(0, vehicles - slow - stopped)
     progress = 0.0 if frame_count <= 1 else frame_index / (frame_count - 1)
-    box_right = min(width - 18, 520)
-    draw.rounded_rectangle((18, 18, box_right, 128), radius=8, fill="#ffffff", outline="#cbd5e1")
-    draw.text((34, 34), title, fill="#0f172a", font=large_font)
-    draw.text((34, 56), f"rank {metadata.get('checkpoint_rank', 1)} checkpoint | {metric_text}", fill="#334155", font=font)
-    draw.text((34, 76), f"t = {time_value:.0f}s | live: {vehicles} | stopped: {stopped}", fill="#334155", font=font)
-    draw.rounded_rectangle((34, 102, box_right - 34, 110), radius=4, fill="#e2e8f0")
-    draw.rounded_rectangle((34, 102, 34 + int((box_right - 68) * progress), 110), radius=4, fill="#2563eb")
+    box_right = min(width - 18, 590)
+    box_bottom = 148
+    draw.rounded_rectangle((18, 18, box_right, box_bottom), radius=8, fill=STYLE["card"], outline=STYLE["ink"])
+    _draw_organic_dot(draw, 39, 43, 8, STYLE["orange"], outline=STYLE["paper"], width=1, salt=3)
+    title_max_width = max(80, box_right - 66)
+    draw.text((54, 31), _fit_text(draw, title, large_font, title_max_width), fill=STYLE["ink"], font=large_font)
+    draw.text((34, 64), _fit_text(draw, run_text, font, box_right - 68), fill=STYLE["ink"], font=font)
+    stats = f"t = {time_value:.0f}s | flow: {moving} | slow: {slow} | queue: {stopped}"
+    draw.text((34, 87), _fit_text(draw, stats, font, box_right - 68), fill=STYLE["ink"], font=font)
+    track_left = 34
+    track_right = box_right - 34
+    track_top = 121
+    draw.rounded_rectangle((track_left, track_top, track_right, track_top + 10), radius=5, fill=STYLE["card_alt"], outline=STYLE["mid_gray"])
+    if progress > 0.0:
+        fill_right = track_left + int((track_right - track_left) * progress)
+        draw.rounded_rectangle((track_left, track_top, fill_right, track_top + 10), radius=5, fill=STYLE["blue"])
 
 
 def _draw_legend(draw: ImageDraw.ImageDraw, *, width: int, font: ImageFont.ImageFont) -> None:
-    legend_width = 256
+    legend_width = 292
     x = max(18, width - legend_width - 18)
-    y = 18 if width >= 820 else 142
-    row_y = y + 36
-    draw.rounded_rectangle((x, y, x + legend_width, y + 172), radius=8, fill="#ffffff", outline="#cbd5e1")
-    draw.text((x + 16, y + 14), "Legend", fill="#0f172a", font=font)
-    _legend_line(draw, x + 16, row_y, "#64748b", "1px road network", font, line=True)
-    _legend_dot(draw, x + 16, row_y + 24, "#2563eb", "moving vehicle >= 5 m/s", font)
-    _legend_dot(draw, x + 16, row_y + 48, "#f59e0b", "slow vehicle 0.1-5 m/s", font)
-    _legend_dot(draw, x + 16, row_y + 72, "#ef4444", "stopped vehicle < 0.1 m/s", font)
-    _legend_dot(draw, x + 16, row_y + 96, "#0f766e", "traffic signal", font)
-    _legend_bar(draw, x + 16, row_y + 120, "#0891b2", "positive pressure", font)
-    _legend_bar(draw, x + 16, row_y + 144, "#dc2626", "negative pressure", font)
+    y = 18 if width >= 900 else 158
+    row_y = y + 42
+    row_gap = 25
+    rows = [
+        ("line", STYLE["road_ink"], "sketched road network"),
+        ("dot", STYLE["blue"], "moving flow >= 5 m/s"),
+        ("dot", STYLE["tan"], "slow approach 0.1-5 m/s"),
+        ("dot", STYLE["orange"], "queued/stopped < 0.1 m/s"),
+        ("dot", STYLE["green"], "traffic signal"),
+        ("bar", STYLE["blue"], "positive pressure"),
+        ("bar", STYLE["orange"], "negative pressure"),
+    ]
+    card_height = 58 + row_gap * (len(rows) - 1) + 22
+    draw.rounded_rectangle((x, y, x + legend_width, y + card_height), radius=8, fill=STYLE["paper"], outline=STYLE["ink"])
+    draw.rectangle((x + 14, y + 14, x + 31, y + 31), fill=STYLE["green"])
+    draw.text((x + 42, y + 13), "Legend", fill=STYLE["ink"], font=font)
+    for index, (kind, color, label) in enumerate(rows):
+        item_y = row_y + row_gap * index
+        if kind == "line":
+            _legend_line(draw, x + 16, item_y, color, label, font, line=True)
+        elif kind == "dot":
+            _legend_dot(draw, x + 16, item_y, color, label, font)
+        else:
+            _legend_bar(draw, x + 16, item_y, color, label, font)
 
 
 def _legend_line(
@@ -767,18 +893,78 @@ def _legend_line(
     line: bool = False,
 ) -> None:
     if line:
-        draw.line((x, y + 6, x + 20, y + 6), fill=color, width=1)
-    draw.text((x + 30, y), label, fill="#0f172a", font=font)
+        draw.line(_sketch_points([(x, y + 7), (x + 22, y + 7)], amount=0.65, salt=y), fill=color, width=1)
+    draw.text((x + 32, y), label, fill=STYLE["ink"], font=font)
 
 
 def _legend_dot(draw: ImageDraw.ImageDraw, x: int, y: int, color: str, label: str, font: ImageFont.ImageFont) -> None:
-    draw.ellipse((x + 4, y + 1, x + 16, y + 13), fill=color, outline="#ffffff")
-    draw.text((x + 30, y), label, fill="#0f172a", font=font)
+    _draw_organic_dot(draw, x + 10, y + 7, 6, color, outline=STYLE["paper"], width=1, salt=y)
+    draw.text((x + 32, y), label, fill=STYLE["ink"], font=font)
 
 
 def _legend_bar(draw: ImageDraw.ImageDraw, x: int, y: int, color: str, label: str, font: ImageFont.ImageFont) -> None:
-    draw.rounded_rectangle((x + 7, y, x + 13, y + 14), radius=2, fill=color)
-    draw.text((x + 30, y), label, fill="#0f172a", font=font)
+    draw.rounded_rectangle((x + 7, y, x + 15, y + 17), radius=3, fill=STYLE["card_alt"], outline=STYLE["ink"])
+    draw.rounded_rectangle((x + 9, y + 5, x + 13, y + 16), radius=2, fill=color)
+    draw.text((x + 32, y), label, fill=STYLE["ink"], font=font)
+
+
+def _sketch_points(points: list[tuple[int, int]], *, amount: float, salt: int) -> list[tuple[int, int]]:
+    sketched = []
+    for index, (x, y) in enumerate(points):
+        dx = _jitter(x, y, index + salt, amount)
+        dy = _jitter(y, x, index + salt + 1009, amount)
+        sketched.append((int(round(x + dx)), int(round(y + dy))))
+    return sketched
+
+
+def _draw_organic_dot(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    radius: int,
+    fill: str,
+    *,
+    outline: str | None,
+    width: int,
+    salt: int,
+) -> None:
+    sides = 12
+    points = []
+    for index in range(sides):
+        angle = 2.0 * math.pi * index / sides
+        wobble = 1.0 + 0.12 * _jitter(x + radius, y - radius, index + salt, 1.0)
+        px = x + math.cos(angle) * radius * wobble
+        py = y + math.sin(angle) * radius * wobble
+        points.append((int(round(px)), int(round(py))))
+    draw.polygon(points, fill=fill)
+    if outline is not None and width > 0:
+        draw.line(points + [points[0]], fill=outline, width=width)
+
+
+def _jitter(x: float, y: float, salt: int, amount: float) -> float:
+    value = math.sin(x * 12.9898 + y * 78.233 + salt * 37.719) * 43758.5453
+    return (value - math.floor(value) - 0.5) * 2.0 * amount
+
+
+def _fit_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> str:
+    if _text_width(draw, text, font) <= max_width:
+        return text
+    suffix = "..."
+    available = max(0, max_width - _text_width(draw, suffix, font))
+    clipped = ""
+    for char in text:
+        if _text_width(draw, clipped + char, font) > available:
+            break
+        clipped += char
+    return clipped.rstrip() + suffix
+
+
+def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+    try:
+        left, _top, right, _bottom = draw.textbbox((0, 0), text, font=font)
+        return int(right - left)
+    except AttributeError:
+        return int(draw.textsize(text, font=font)[0])
 
 
 def _int_point(point: Point) -> tuple[int, int]:
@@ -810,9 +996,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory for GIF and JSON.")
     parser.add_argument("--best-index", type=int, default=0, help="Retained best-validation checkpoint index, sorted by rank.")
     parser.add_argument("--width", type=int, default=1200, help="Animation width in pixels.")
+    parser.add_argument("--aspect-ratio", type=float, default=None, help="Optional output width/height ratio, e.g. 1.65.")
     parser.add_argument("--fps", type=int, default=12, help="GIF frames per second.")
     parser.add_argument("--frame-count", type=int, default=160, help="Maximum rendered GIF frame count.")
     parser.add_argument("--max-render-vehicles", type=int, default=1200, help="Maximum vehicle dots drawn per frame.")
+    parser.add_argument("--hide-overlay", action="store_true", help="Do not draw the top-left run/status overlay.")
+    parser.add_argument("--hide-legend", action="store_true", help="Do not draw the legend card.")
     return parser.parse_args()
 
 
@@ -823,9 +1012,12 @@ def main() -> int:
         args.output_dir,
         best_index=args.best_index,
         width=args.width,
+        aspect_ratio=args.aspect_ratio,
         fps=args.fps,
         frame_count=args.frame_count,
         max_render_vehicles=args.max_render_vehicles,
+        show_overlay=not args.hide_overlay,
+        show_legend=not args.hide_legend,
     )
     print(f"Wrote trip animation GIF: {paths['animation']}")
     print(f"Wrote live trace JSON: {paths['trace']}")
