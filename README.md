@@ -241,6 +241,120 @@ Supported-surface note:
 - Treat DCRNN/FGS ablation variants such as `ppo_dcrnn_mlp`, `dqn_dcrnn_mlp`, and `fgsv2` as experimental unless that matrix explicitly promotes them later.
 - Treat `dcrnn` as an alias for `dqn_dcrnn` and `sac_custom` as an alias for `sac_mlp`.
 
+### Slurm and tmux quick runbook
+
+On the GPU server, submit GPU training and long-running jobs through Slurm.
+Do not run `python experiments/rllib.py ...`, `nohup`, Docker/CUDA, or other
+long compute workloads directly from a normal SSH shell outside a Slurm
+allocation.
+
+For a PPO Cologne3 smoke run with 10 episodes and 300 SUMO seconds per episode,
+create a Slurm script such as `scripts/slurm_ppo_cologne3_smoke.sh`:
+
+```bash
+#!/usr/bin/env bash
+#SBATCH --job-name=sumo-rl-ppo-cologne3-smoke
+#SBATCH --partition=gpu
+#SBATCH --account=lab
+#SBATCH --qos=normal
+#SBATCH --gres=gpu:a100:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=24G
+#SBATCH --time=02:00:00
+#SBATCH --output=outputs/slurm/ppo-cologne3-smoke-%j.out
+
+set -euo pipefail
+
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+
+if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+  source .venv/bin/activate
+fi
+
+export SUMO_HOME="${SUMO_HOME:-$(python -c 'import sumo; print(sumo.SUMO_HOME)')}"
+export PYTHONPATH="$SUMO_HOME/tools:${PYTHONPATH:-}"
+export RAY_TMPDIR="${SLURM_TMPDIR:-$PWD/.ray_tmp}"
+
+mkdir -p outputs/slurm "$RAY_TMPDIR"
+
+echo "SLURM_JOB_ID=${SLURM_JOB_ID:-local}"
+echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "SUMO_HOME=$SUMO_HOME"
+echo "RAY_TMPDIR=$RAY_TMPDIR"
+nvidia-smi -L
+
+python -u experiments/rllib.py \
+  algorithm=ppo \
+  scenario=resco_cologne3 \
+  experiment.episodes=10 \
+  experiment.episode_seconds=300 \
+  experiment.validation_interval_episodes=5 \
+  experiment.eval_episodes=2 \
+  logging=disabled \
+  logging.checkpoint_every_episodes=5 \
+  "resources.ray_num_cpus=${SLURM_CPUS_PER_TASK:-8}" \
+  resources.native_num_threads=1 \
+  resources.cuda_visible_devices=null
+```
+
+Check the exact GPU names advertised by the cluster before submitting:
+
+```bash
+sinfo -N -o "%N %G"
+```
+
+If the cluster advertises a smaller MIG profile such as
+`gpu:a100_3g.20gb:1` or `gpu:a100_2g.10gb:1`, prefer the smallest profile that
+fits the run and adjust `--gres`, `--cpus-per-task`, and `--mem` together.
+
+Submit the job from the repository root:
+
+```bash
+mkdir -p outputs/slurm
+sbatch scripts/slurm_ppo_cologne3_smoke.sh
+```
+
+`sbatch` jobs do not need `tmux`; Slurm keeps the job running after SSH
+disconnects. Use `tmux` for persistent monitoring terminals:
+
+```bash
+tmux new -s slurm-watch
+squeue --me
+tail -f outputs/slurm/ppo-cologne3-smoke-<jobid>.out
+```
+
+Detach and reconnect:
+
+```bash
+# Press Ctrl-b d to detach.
+tmux attach -t slurm-watch
+```
+
+Monitor allocation, CPU, memory, and GPU usage:
+
+```bash
+squeue -j <jobid>
+scontrol show job <jobid>
+sstat -j <jobid>.batch --format=JobID,AveCPU,AveRSS,MaxRSS
+nvidia-smi
+watch -n 2 nvidia-smi
+```
+
+If you need an interactive shell inside an existing allocation for debugging or
+monitoring, open a separate SSH terminal or tmux window and share the allocation:
+
+```bash
+srun --jobid=<jobid> --overlap --pty bash -l
+```
+
+That shell does not receive extra resources; it shares the job's allocated CPU,
+RAM, and GPU. Exit it when finished. Cancel a job only when needed:
+
+```bash
+scancel <jobid>
+```
+
 ## Citing
 
 <!-- start citation -->
