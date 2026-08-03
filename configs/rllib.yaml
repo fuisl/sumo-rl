@@ -23,14 +23,14 @@ resources:
   # Ray CPU resources are logical scheduler slots; native thread caps keep
   # Torch/NumPy/BLAS-style libraries from oversubscribing those slots.
   # Default to a local Ray instance for reproducible standalone runs.
-  # Override with ray_address=auto or an explicit Ray head address to join
-  # a shared cluster when you want cluster-managed resources.
+  # On SLURM, pass resources.ray_num_cpus from SLURM_CPUS_PER_TASK and keep
+  # ray_address=null unless the cluster explicitly provides a shared Ray head.
   ray_address: null
-  ray_num_cpus: 16
+  ray_num_cpus: 2
   native_num_threads: 1
-  # Physical CUDA device ids to expose to this run. With "1", the selected GPU
-  # appears inside the process as local CUDA index 0.
-  cuda_visible_devices: "1"
+  # Preserve CUDA_VISIBLE_DEVICES from the scheduler by default. Set this only
+  # for manual runs where you need to pin physical GPU ids yourself.
+  cuda_visible_devices: null
 
 algorithm:
   params:

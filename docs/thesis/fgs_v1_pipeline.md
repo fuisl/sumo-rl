@@ -33,7 +33,8 @@ python experiments/rllib.py algorithm=fgs scenario=resco_grid4x4
 For a short smoke run:
 
 ```bash
-conda run -n marl python experiments/rllib.py \
+source .venv/bin/activate
+python experiments/rllib.py \
   algorithm=fgs \
   scenario=single_intersection \
   experiment.episodes=1 \
@@ -53,17 +54,12 @@ python experiments/rllib.py --config-name presets/resco_cologne8/fgs_frap_gatv2_
 python experiments/rllib.py --config-name presets/resco_cologne8/fgs_mlp_gatv2_sac
 ```
 
-RLlib configs default to `resources.ray_address=auto`. For shared GPU runs,
-start a Ray head first, then launch one or more FGS jobs:
+RLlib configs default to a local Ray instance. On SLURM, use the remote-server
+runbook:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1
-python experiments/rllib.py --config-name presets/resco_cologne8/fgs_mlp_gat_sac
+sbatch scripts/slurm_cologne3_smoke.sh
 ```
-
-With a pre-started Ray head, cluster resources come from `ray start`, not from
-`resources.ray_num_cpus` or `algorithm.params.ray_num_gpus`. For isolated local
-debugging, set `resources.ray_address=null`.
 
 ## Startup Chain
 
@@ -72,8 +68,8 @@ The startup path is:
 1. `experiments/rllib.py`
 2. Hydra composes `configs/rllib.yaml`, one `configs/scenario/*.yaml`, and
    `configs/algorithm/fgs.yaml` or a scenario-first preset.
-3. `experiments/rllib.py` checks `SUMO_HOME`, sets optional
-   `CUDA_VISIBLE_DEVICES`, and calls `sumo_rl.experiments.rllib_runner.train_rllib(cfg)`.
+3. `experiments/rllib.py` checks `SUMO_HOME` and calls
+   `sumo_rl.experiments.rllib_runner.train_rllib(cfg)`.
 4. `train_rllib()` validates `cfg.algorithm.kind == "fgs"`, creates the Hydra
    run directory, initializes W&B and the local CSV logger, and starts or joins Ray.
 5. `rllib_runner._algorithm_module("fgs")` imports `sumo_rl.agents.fgs.fgs`.
@@ -317,9 +313,10 @@ The important metric sinks are:
 Use these commands after changing FGS v1 wiring:
 
 ```bash
-conda run -n marl python -m pytest tests/test_fgs.py
-conda run -n marl python -m pytest tests/test_rllib_config_defaults.py
-conda run -n marl python experiments/rllib.py \
+source .venv/bin/activate
+python -m pytest tests/models/test_fgs.py
+python -m pytest tests/core/test_rllib_config_defaults.py
+python experiments/rllib.py \
   algorithm=fgs \
   scenario=single_intersection \
   experiment.episodes=1 \
@@ -332,12 +329,14 @@ Use the larger regression bundle when changes touch shared RLlib SAC, FRAP,
 CoLight-style attention, or runner metrics:
 
 ```bash
-conda run -n marl python -m pytest \
-  tests/test_fgs.py \
-  tests/test_sac_discrete.py \
-  tests/test_frap.py \
-  tests/test_colight.py \
-  tests/test_rllib_runner.py
+source .venv/bin/activate
+python -m pytest \
+  tests/models/test_fgs.py \
+  tests/models/test_sac_build_config.py \
+  tests/models/test_sac_model_config.py \
+  tests/models/test_frap.py \
+  tests/models/test_colight.py \
+  tests/runner/test_train_rllib.py
 ```
 
 ## Common Failure Points
@@ -355,5 +354,5 @@ If FGS does not start, check these in order:
 7. The observation layout is still compatible with
    `[phase_one_hot, min_green, density, queue]`.
 8. Action masks are valid for heterogeneous action spaces.
-9. For GPU runs, `resources.cuda_visible_devices` exposes the intended physical
-   GPU and `algorithm.params.local_gpu_idx` usually remains `0`.
+9. On SLURM GPU runs, keep `resources.cuda_visible_devices=null` and
+   `algorithm.params.local_gpu_idx=0`.

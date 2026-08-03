@@ -46,6 +46,10 @@ source ~/.bashrc
 ```
 Important: for the thesis RLlib experiments, backend selection is controlled through Hydra config instead of the global `LIBSUMO_AS_TRACI` environment variable. The PPO, DQN, and selected SAC algorithm configs enable Libsumo for training with `env.kwargs.use_libsumo=true`, while validation stays on TraCI by default through `logging.eval_use_libsumo=false`.
 
+For rootless remote or SLURM servers, install the thesis stack with
+`python -m pip install -e ".[server]"`; see
+[docs/thesis/remote_server.md](docs/thesis/remote_server.md).
+
 ### Install SUMO-RL
 
 Stable release version is available through pip
@@ -63,9 +67,7 @@ pip install -e .
 For the thesis RLlib experiments, install the extra dependencies as needed:
 
 ```bash
-pip install -e ".[experiments]"
-pip install -e ".[rllib]"
-pip install -e ".[rllib-custom]"
+pip install -e ".[server]"
 ```
 
 ### Development hooks

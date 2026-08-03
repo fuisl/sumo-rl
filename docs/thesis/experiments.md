@@ -16,6 +16,7 @@ role-specific contributor notes, reference notes, or archive material.
 
 - Installation and optional thesis extras: [`README.md`](../../README.md) and the Optional Install section on this page
 - Experiment launch, validation, resume, rollout export, and W&B: this page
+- Remote server and non-root Libsumo workflow: [docs/thesis/remote_server.md](remote_server.md)
 - Fixed-time/manual control reference: [docs/thesis/manual_control.md](manual_control.md)
 - Static baseline reference: [docs/thesis/static_baselines.md](static_baselines.md)
 - Contributor engineering architecture notes: [docs/thesis/engineering_guide.md](engineering_guide.md)
@@ -191,7 +192,7 @@ The recorder restores the checkpoint, runs one evaluation rollout with
 `render_mode=rgb_array`, and writes an MP4 file. Use `--frame-skip` to reduce
 video size or `--max-steps` for a short smoke recording. The MP4 writer needs
 either OpenCV or `imageio` plus `imageio-ffmpeg` installed; the
-`.[experiments]`, `.[rendering]`, and `.[all]` extras include the `imageio`
+`.[server]`, `.[experiments]`, and `.[rendering]` extras include the `imageio`
 path. You can pass extra Hydra overrides for static controllers with repeated
 `--override` flags, for example `--override env.kwargs.num_seconds=600`.
 
@@ -264,11 +265,12 @@ flowchart LR
     end
 ```
 
-For the intended smoke path, use the `marl` conda environment:
+For the intended smoke path, activate the project virtual environment first:
 
 ```bash
-conda run -n marl python -m pytest tests/models/test_fgs.py tests/models/test_sac_build_config.py tests/models/test_sac_model_config.py tests/models/test_frap.py tests/models/test_colight.py
-conda run -n marl python experiments/rllib.py algorithm=fgs scenario=single_intersection experiment.episodes=1 experiment.episode_seconds=60 logging=disabled
+source .venv/bin/activate
+python -m pytest tests/models/test_fgs.py tests/models/test_sac_build_config.py tests/models/test_sac_model_config.py tests/models/test_frap.py tests/models/test_colight.py
+python experiments/rllib.py algorithm=fgs scenario=single_intersection experiment.episodes=1 experiment.episode_seconds=60 logging=disabled
 ```
 
 Method references: FRAP, "Learning Phase Competition for Traffic Signal
@@ -304,11 +306,10 @@ By default the downloader writes matching runs to
 `summary.json`, and `history.jsonl` for each exported run.
 
 ## Optional Install
-To use the Hydra and W&B experiment layer, install the optional extras:
+For the full thesis training and testing stack, install the server extra:
+
 ```bash
-pip install -e ".[experiments]"
-pip install -e ".[rllib]"
-pip install -e ".[rllib-custom]"
+pip install -e ".[server]"
 ```
 
 ## Notes

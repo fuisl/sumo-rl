@@ -17,6 +17,8 @@ def _compose(config_name: str, overrides: list[str] | None = None):
 
 def _assert_rllib_ray_defaults(cfg):
     assert cfg.resources.ray_address is None
+    assert cfg.resources.ray_num_cpus == 2
+    assert cfg.resources.cuda_visible_devices is None
     assert cfg.algorithm.params.ray_num_gpus == "auto"
     assert cfg.algorithm.params.num_env_runners == 0
     assert cfg.algorithm.params.num_envs_per_env_runner == 1

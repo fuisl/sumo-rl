@@ -123,23 +123,9 @@ horizon is derived from the environment `delta_time` when needed. For example,
 steps. Training logs use sampled env steps (`logging.train_log_freq_steps`), while
 RLlib validation cadence is controlled by `experiment.validation_interval_episodes`
 by default. The step-based `logging.eval_freq` remains a fallback when the episode
-interval is not set. The shared RLlib config also caps local CPU use with
-`resources.ray_num_cpus=2` and `resources.native_num_threads=1`, but RLlib
-presets default to `resources.ray_address=null`; this starts a local Ray
-instance for the current process and skips shared-cluster discovery. To use a
-shared cluster, start one head with the desired CPU/GPU capacity before
-launching jobs and override with `resources.ray_address=auto` or an explicit
-head address. To pin the shared head to physical GPU 1, start it with
-`CUDA_VISIBLE_DEVICES=1 ray start --head --num-cpus=8 --num-gpus=1`. The shared default
-keeps EnvRunner sampling in-process with `algorithm.params.num_env_runners=0`
-and uses one learner actor per experiment so Ray can account for CPU/GPU
-reservations; the default `algorithm.params.num_gpus_per_learner=0.1` lets
-several learner actors share one selected GPU, while `1` reserves it
-exclusively. Set
-`resources.cuda_visible_devices` in `configs/rllib.yaml`
-or on the command line to choose the physical GPU; the selected GPU is exposed
-inside the run as local CUDA index 0, so `algorithm.params.local_gpu_idx` should
-usually stay `0`.
+interval is not set. The shared RLlib config starts a local Ray instance with
+conservative resource defaults. For SLURM-specific overrides, use
+`docs/thesis/remote_server.md`.
 
 SAC presets inherit `algorithm.params.training_intensity=1.0` and
 `algorithm.params.train_batch_size_per_learner=64` from `sac_builtin`. This
