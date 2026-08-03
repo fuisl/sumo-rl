@@ -55,6 +55,7 @@ def reward_formula_text(
     reward_weights: Any = None,
     reward_penalty_lambda: Any = None,
     reward_nash_epsilon: Any = None,
+    reward_nsw_window_cycle_multiplier: Any = None,
 ) -> str:
     if isinstance(reward_fn, list):
         if reward_weights is not None:
@@ -75,15 +76,23 @@ def reward_formula_text(
         return "average vehicle speed for the signal"
     if reward_name == "nash-average-speed":
         epsilon = 0.1 if reward_nash_epsilon is None else float(reward_nash_epsilon)
+        multiplier = (
+            1.0 if reward_nsw_window_cycle_multiplier is None else float(reward_nsw_window_cycle_multiplier)
+        )
         return (
-            f"geometric_mean(phase_average_speed + {epsilon}) across green phases, "
-            "where empty phases use average_speed = 1.0"
+            f"geometric_mean(window_mean_phase_average_speed + {epsilon}) across green phases, "
+            f"where the rolling window is {multiplier} * fixed_time_cycle_length for each signal "
+            "and empty phases use average_speed = 1.0"
         )
     if reward_name == "weighted-nash-average-speed":
         epsilon = 0.1 if reward_nash_epsilon is None else float(reward_nash_epsilon)
+        multiplier = (
+            1.0 if reward_nsw_window_cycle_multiplier is None else float(reward_nsw_window_cycle_multiplier)
+        )
         return (
-            f"exp(sum(phase_weight * log(phase_average_speed + {epsilon}))) across green phases, "
-            "where phase_weight = phase_max_waiting_time / sum(phase_max_waiting_time), "
+            f"exp(sum(window_phase_weight * log(window_mean_phase_average_speed + {epsilon}))) across green phases, "
+            f"where the rolling window is {multiplier} * fixed_time_cycle_length for each signal, "
+            "window_phase_weight = window_max_phase_waiting_time / sum(window_max_phase_waiting_time), "
             "empty phases use average_speed = 1.0 and max_waiting_time = 0, "
             "and zero total max waiting falls back to uniform phase weights"
         )

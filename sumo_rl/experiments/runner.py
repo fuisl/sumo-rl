@@ -662,8 +662,15 @@ def _reward_formula_text(
     reward_weights: Any = None,
     reward_penalty_lambda: Any = None,
     reward_nash_epsilon: Any = None,
+    reward_nsw_window_cycle_multiplier: Any = None,
 ) -> str:
-    return _metric_reward_formula_text(reward_fn, reward_weights, reward_penalty_lambda, reward_nash_epsilon)
+    return _metric_reward_formula_text(
+        reward_fn,
+        reward_weights,
+        reward_penalty_lambda,
+        reward_nash_epsilon,
+        reward_nsw_window_cycle_multiplier,
+    )
 
 
 def _reward_metadata_from_env(env) -> Dict[str, Any]:
@@ -672,6 +679,7 @@ def _reward_metadata_from_env(env) -> Dict[str, Any]:
     reward_weights = getattr(base_env, "reward_weights", None)
     reward_penalty_lambda = getattr(base_env, "reward_penalty_lambda", None)
     reward_nash_epsilon = getattr(base_env, "reward_nash_epsilon", None)
+    reward_nsw_window_cycle_multiplier = getattr(base_env, "reward_nsw_window_cycle_multiplier", None)
     reward_name = None
 
     if isinstance(reward_fn, list):
@@ -690,6 +698,7 @@ def _reward_metadata_from_env(env) -> Dict[str, Any]:
             reward_weights,
             reward_penalty_lambda,
             reward_nash_epsilon,
+            reward_nsw_window_cycle_multiplier,
         ),
         "reward/source": "sumo_rl.environment.traffic_signal.TrafficSignal.compute_reward",
         "reward/scope": "per-agent environment reward",

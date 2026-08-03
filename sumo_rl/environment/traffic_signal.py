@@ -2,7 +2,9 @@
 
 import os
 import sys
+from collections import deque
 from collections.abc import Callable
+from math import ceil
 
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")
@@ -65,6 +67,7 @@ class TrafficSignal:
         reward_weights: list[float],
         reward_penalty_lambda: float,
         reward_nash_epsilon: float,
+        reward_nsw_window_cycle_multiplier: float,
         sumo,
     ):
         """Initializes a TrafficSignal object.
@@ -83,6 +86,8 @@ class TrafficSignal:
             reward_weights (List[float]): The weights of the reward function.
             reward_penalty_lambda (float): Coefficient for penalty-based reward functions.
             reward_nash_epsilon (float): Positive smoothing term added to Nash-style phase utilities.
+            reward_nsw_window_cycle_multiplier (float): Multiplier applied to the fixed-time cycle length
+                to size the rolling NSW reward window.
             sumo (Sumo): The Sumo instance.
         """
         self.id = ts_id
@@ -102,10 +107,14 @@ class TrafficSignal:
         self.reward_weights = reward_weights
         self.reward_penalty_lambda = float(reward_penalty_lambda)
         self.reward_nash_epsilon = float(reward_nash_epsilon)
+        self.reward_nsw_window_cycle_multiplier = float(reward_nsw_window_cycle_multiplier)
         self.sumo = sumo
         self._last_fixed_cycle_phase_index = None
         self._phase_stats_cache_step = None
         self._phase_stats_cache = None
+        self.fixed_cycle_length_seconds = 1.0
+        self.reward_nsw_window_seconds = 1
+        self._nsw_window_samples = deque(maxlen=1)
 
         if type(self.reward_fn) is list:
             self.reward_dim = len(self.reward_fn)
@@ -144,6 +153,12 @@ class TrafficSignal:
 
     def _build_phases(self):
         phases = self.sumo.trafficlight.getAllProgramLogics(self.id)[0].phases
+        self.fixed_cycle_length_seconds = self._derive_fixed_cycle_length_seconds(phases)
+        self.reward_nsw_window_seconds = self._compute_nsw_window_seconds(
+            self.fixed_cycle_length_seconds,
+            self.reward_nsw_window_cycle_multiplier,
+        )
+        self._nsw_window_samples = deque(maxlen=self.reward_nsw_window_seconds)
         if self.env.fixed_ts:
             self.fixed_cycle_phases = list(phases)
             self.green_phases = [phase for index, phase in enumerate(phases) if index % 2 == 0]
@@ -179,6 +194,20 @@ class TrafficSignal:
         logic.phases = self.all_phases
         self.sumo.trafficlight.setProgramLogic(self.id, logic)
         self.sumo.trafficlight.setRedYellowGreenState(self.id, self.all_phases[0].state)
+
+    @staticmethod
+    def _derive_fixed_cycle_length_seconds(phases) -> float:
+        cycle_length = 0.0
+        for phase in phases:
+            try:
+                cycle_length += float(getattr(phase, "duration", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return max(1.0, cycle_length)
+
+    @staticmethod
+    def _compute_nsw_window_seconds(cycle_length_seconds: float, cycle_multiplier: float) -> int:
+        return max(1, int(ceil(float(cycle_length_seconds) * float(cycle_multiplier))))
 
     def _build_phase_lanes(self) -> list[list[str]]:
         phase_lanes = []
@@ -294,7 +323,7 @@ class TrafficSignal:
 
     def _nash_average_speed_reward(self):
         epsilon = float(getattr(self, "reward_nash_epsilon", self.NASH_AVERAGE_SPEED_EPSILON))
-        phase_average_speeds = self.get_phase_average_speeds()
+        phase_average_speeds, _phase_max_waiting_times = self.get_windowed_phase_speed_wait_stats()
         if not phase_average_speeds:
             return self.get_average_speed() + epsilon
 
@@ -303,12 +332,12 @@ class TrafficSignal:
 
     def _weighted_nash_average_speed_reward(self):
         epsilon = float(getattr(self, "reward_nash_epsilon", self.NASH_AVERAGE_SPEED_EPSILON))
-        phase_average_speeds = self.get_phase_average_speeds()
+        phase_average_speeds, phase_max_waiting_times = self.get_windowed_phase_speed_wait_stats()
         if not phase_average_speeds:
             return self.get_average_speed() + epsilon
 
         phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + epsilon
-        phase_max_waiting_times = np.asarray(self.get_phase_max_waiting_times(), dtype=np.float64)
+        phase_max_waiting_times = np.asarray(phase_max_waiting_times, dtype=np.float64)
 
         if phase_max_waiting_times.size != phase_utilities.size:
             phase_max_waiting_times = np.zeros_like(phase_utilities)
@@ -495,6 +524,56 @@ class TrafficSignal:
     def get_phase_max_waiting_times(self) -> list[float]:
         """Returns the max current waiting time among the vehicles served by each green phase."""
         return [stats["max_waiting_time"] for stats in self._get_phase_speed_wait_stats()]
+
+    def record_nsw_window_sample(self) -> None:
+        """Record one SUMO-second sample for windowed NSW rewards."""
+
+        stats = self._get_phase_speed_wait_stats()
+        self._nsw_window_samples.append(
+            {
+                "average_speeds": [float(item["average_speed"]) for item in stats],
+                "max_waiting_times": [float(item["max_waiting_time"]) for item in stats],
+            }
+        )
+
+    def get_windowed_phase_speed_wait_stats(self) -> tuple[list[float], list[float]]:
+        """Returns per-phase mean speeds and max waits over the configured NSW window."""
+
+        raw_samples = getattr(self, "_nsw_window_samples", None)
+        if raw_samples is None:
+            speeds = [float(value) for value in self.get_phase_average_speeds()]
+            try:
+                waits = [float(value) for value in self.get_phase_max_waiting_times()]
+            except AttributeError:
+                waits = [0.0 for _ in speeds]
+            return speeds, waits
+
+        samples = list(raw_samples)
+        if not samples:
+            stats = self._get_phase_speed_wait_stats()
+            return (
+                [float(item["average_speed"]) for item in stats],
+                [float(item["max_waiting_time"]) for item in stats],
+            )
+
+        phase_count = max((len(sample["average_speeds"]) for sample in samples), default=0)
+        if phase_count == 0:
+            return [], []
+
+        window_average_speeds = []
+        window_max_waiting_times = []
+        for phase_index in range(phase_count):
+            speeds = [
+                sample["average_speeds"][phase_index] for sample in samples if phase_index < len(sample["average_speeds"])
+            ]
+            waits = [
+                sample["max_waiting_times"][phase_index]
+                for sample in samples
+                if phase_index < len(sample["max_waiting_times"])
+            ]
+            window_average_speeds.append(1.0 if not speeds else float(np.mean(speeds)))
+            window_max_waiting_times.append(0.0 if not waits else float(max(waits)))
+        return window_average_speeds, window_max_waiting_times
 
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""

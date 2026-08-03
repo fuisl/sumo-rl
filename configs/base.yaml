@@ -21,6 +21,7 @@ env:
     add_system_info: true
     add_per_agent_info: true
     tripinfo_output_name: null
+    reward_nsw_window_cycle_multiplier: 1.0
 
 algorithm:
   kind: static_max_pressure

@@ -143,6 +143,9 @@ class SumoEnvironment(gym.Env):
             that subtract an extra queue-aware waiting-time penalty. Default: 0.1
         reward_nash_epsilon (float): Positive smoothing term added to phase utilities
             for Nash-style average-speed rewards. Default: 0.1
+        reward_nsw_window_cycle_multiplier (float): Positive multiplier applied to
+            each signal's fixed-time cycle length to size the rolling NSW reward window.
+            Default: 1.0
         observation_class (ObservationFunction): Inherited class which has both the
             observation function and observation space.
         add_system_info (bool): If true, it computes system metrics like total queue,
@@ -189,6 +192,7 @@ class SumoEnvironment(gym.Env):
         reward_weights: list[float] | None = None,
         reward_penalty_lambda: float = 0.1,
         reward_nash_epsilon: float = 0.1,
+        reward_nsw_window_cycle_multiplier: float = 1.0,
         observation_class: type[ObservationFunction] = DefaultObservationFunction,
         add_system_info: bool = True,
         add_per_agent_info: bool = False,
@@ -220,6 +224,7 @@ class SumoEnvironment(gym.Env):
 
         assert delta_time > yellow_time, "Time between actions must be at least greater than yellow time."
         assert max_green > min_green, "Max green time must be greater than min green time."
+        assert reward_nsw_window_cycle_multiplier > 0, "NSW reward window cycle multiplier must be positive."
 
         self.begin_time = begin_time
         self.sim_max_time = begin_time + num_seconds
@@ -236,6 +241,7 @@ class SumoEnvironment(gym.Env):
         self.reward_weights = reward_weights
         self.reward_penalty_lambda = float(reward_penalty_lambda)
         self.reward_nash_epsilon = float(reward_nash_epsilon)
+        self.reward_nsw_window_cycle_multiplier = float(reward_nsw_window_cycle_multiplier)
         self.sumo_seed = sumo_seed
         if isinstance(self.sumo_seed, int):
             self.sumo_seed &= 0x7FFFFFFF  # Ensure 32 bit non-negative seed
@@ -309,6 +315,7 @@ class SumoEnvironment(gym.Env):
                 self.reward_weights,
                 self.reward_penalty_lambda,
                 self.reward_nash_epsilon,
+                self.reward_nsw_window_cycle_multiplier,
                 conn,
             )
             for ts in self.ts_ids
@@ -564,6 +571,8 @@ class SumoEnvironment(gym.Env):
         if self.fixed_ts:
             for traffic_signal in self.traffic_signals.values():
                 traffic_signal.sync_fixed_time_state()
+        for traffic_signal in self.traffic_signals.values():
+            traffic_signal.record_nsw_window_sample()
         self.num_arrived_vehicles += self.sumo.simulation.getArrivedNumber()
         self.num_departed_vehicles += self.sumo.simulation.getDepartedNumber()
         self.num_teleported_vehicles += self.sumo.simulation.getEndingTeleportNumber()
