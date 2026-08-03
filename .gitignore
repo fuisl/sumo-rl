@@ -126,3 +126,5 @@ wandb_*/
 experiments/artifacts/
 
 PLANS.md
+
+.ray_tmp/
