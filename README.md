@@ -55,7 +55,8 @@ Important: for the thesis RLlib experiments, backend selection is controlled thr
 
 For rootless remote or SLURM servers, install the thesis stack with
 `python -m pip install -e ".[server]"`; see
-[docs/thesis/remote_server.md](docs/thesis/remote_server.md).
+[docs/thesis/remote_server.md](docs/thesis/remote_server.md). For the standard
+SLURM training process, follow [RUNNING.md](RUNNING.md).
 
 ### Install SUMO-RL
 
