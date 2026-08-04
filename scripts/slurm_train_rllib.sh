@@ -19,6 +19,15 @@ fi
 
 mkdir -p outputs/slurm
 
+ENV_FILE="${ENV_FILE:-.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  echo "Loading environment from $ENV_FILE"
+  set -a
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+  set +a
+fi
+
 echo "=== SLURM JOB ALLOCATION ==="
 echo "Job ID:        ${SLURM_JOB_ID:-local}"
 echo "Job name:      ${SLURM_JOB_NAME:-local}"
@@ -73,14 +82,7 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
 fi
 
 if [[ -z "${WANDB_API_KEY:-}" ]]; then
-  WANDB_ENV_FILE="${WANDB_ENV_FILE:-.env}"
-  if [[ -f "$WANDB_ENV_FILE" ]]; then
-    echo "Loading W&B environment from $WANDB_ENV_FILE"
-    set -a
-    # shellcheck source=/dev/null
-    source "$WANDB_ENV_FILE"
-    set +a
-  fi
+  echo "WANDB_API_KEY is not set after loading ${ENV_FILE}; using any existing W&B login on this server."
 fi
 
 if [[ " $* " != *" logging=disabled "* ]]; then
