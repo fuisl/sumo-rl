@@ -80,8 +80,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ray-num-gpus",
         type=float,
-        default=0.0,
-        help="Number of GPUs to expose to the local Ray instance during RLlib validation.",
+        default=None,
+        help="Optional override for GPUs exposed to local Ray during RLlib validation. Defaults to the saved config.",
+    )
+    parser.add_argument(
+        "--ray-num-cpus",
+        type=int,
+        default=None,
+        help="Optional override for CPUs exposed to local Ray during RLlib validation. Defaults to the saved config.",
+    )
+    parser.add_argument(
+        "--native-num-threads",
+        type=int,
+        default=None,
+        help="Optional override for native Torch/NumPy/BLAS thread caps during RLlib validation. Defaults to the saved config.",
     )
     return parser.parse_args()
 
@@ -183,6 +195,12 @@ def _prepare_cfg_for_seed(cfg, *, seed: int, seed_dir: Path, args: argparse.Name
     prepared.env.kwargs.statistic_output_name = str(seed_dir / "statistics" / "statistics")
     prepared.env.kwargs.keep_statistic_output = True
     prepared.env.kwargs.use_gui = bool(args.use_gui or args.record_seed == seed)
+    if getattr(prepared, "resources", None) is None:
+        prepared.resources = OmegaConf.create({})
+    if args.ray_num_cpus is not None:
+        prepared.resources.ray_num_cpus = int(args.ray_num_cpus)
+    if args.native_num_threads is not None:
+        prepared.resources.native_num_threads = int(args.native_num_threads)
     prepared.experiment.eval_seeds = [int(seed)]
     prepared.experiment.eval_episodes = 1
     prepared.experiment.seed = int(seed)
@@ -684,6 +702,7 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
     from sumo_rl.experiments.rllib_runner import (
         _build_algorithm_config,
         _build_eval_env,
+        _init_rllib_ray_runtime,
         _resolve_sumo_base_env,
         _restore_checkpoint,
         _sync_env_runner_weights_for_evaluation,
@@ -695,12 +714,7 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
     algorithm_kind = str(cfg.algorithm.kind)
     checkpoint_path = Path(payload["checkpoint_path"]).resolve()
     ray_init_start = time.perf_counter()
-    ray.init(
-        ignore_reinit_error=True,
-        include_dashboard=False,
-        log_to_driver=False,
-        num_gpus=float(payload.get("ray_num_gpus", 0.0) or 0.0),
-    )
+    ray_runtime = _init_rllib_ray_runtime(cfg, ray, ray_num_gpus_override=payload.get("ray_num_gpus"))
     ray_init_seconds = time.perf_counter() - ray_init_start
     algo = None
     eval_env = None
@@ -759,6 +773,8 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
         resource_timings = {
             "validation_wall_clock_seconds": time.perf_counter() - overall_start,
             "ray_init_seconds": ray_init_seconds,
+            "ray_num_cpus": ray_runtime.get("ray_num_cpus"),
+            "ray_num_gpus": ray_runtime.get("ray_num_gpus"),
             "checkpoint_restore_seconds": checkpoint_restore_seconds,
             "env_build_seconds": env_build_seconds,
             "evaluation_seconds": evaluation_seconds,
@@ -1059,7 +1075,7 @@ def main() -> None:
                 "diagnostic_demand_ablation": str(args.diagnostic_demand_ablation or "none"),
                 "max_decision_steps": args.max_decision_steps,
                 "progress_log_steps": args.progress_log_steps,
-                "ray_num_gpus": float(args.ray_num_gpus),
+                "ray_num_gpus": None if args.ray_num_gpus is None else float(args.ray_num_gpus),
                 "args": vars(args),
             }
         )

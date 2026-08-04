@@ -143,6 +143,8 @@ bash scripts/submit_slurm.sh scripts/slurm_validate_ingolstadt7_diagnostic.sh \
   MAX_DECISION_STEPS=30 \
   PROGRESS_LOG_STEPS=1 \
   RAY_NUM_GPUS=1 \
+  RAY_NUM_CPUS=4 \
+  NATIVE_NUM_THREADS=1 \
   DIAGNOSTIC_DEMAND_ABLATION=none
 ```
 
