@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 from sumo_rl.experiments.validation_metrics import aggregate_numeric_rows, enrich_seed_row, format_metric_value
 from sumo_rl.util.tripinfo import collect_tripinfo_metrics
+from sumo_rl.util.tripinfo import is_ghost_vehicle as _is_ghost_vehicle
 
 
 def _parse_args() -> argparse.Namespace:
@@ -468,6 +469,66 @@ def _apply_diagnostic_phase_lane_override(eval_env, junction_id: str) -> str:
     return "ingolstadt7_gneJ143_phase_2_10425609_upstream"
 
 
+def _gnej143_target_lanes(traffic_signal) -> list[str]:
+    candidate_lanes = [
+        "10425609#0_1",
+        "10425609#0_2",
+        "10425609#0_3",
+        "10425609#1_1",
+        "10425609#1_2",
+        "10425609#1_3",
+    ]
+    known_lanes = _sumo_lane_ids(traffic_signal)
+    if not known_lanes:
+        return candidate_lanes
+    return [lane for lane in candidate_lanes if lane in known_lanes]
+
+
+def _add_gnej143_target_road_counts(row: Dict[str, Any], traffic_signal) -> None:
+    """Add raw lane counts matching the visual diagnostic notebook for gneJ143."""
+    lane_domain = getattr(getattr(traffic_signal, "sumo", None), "lane", None)
+    vehicle_domain = getattr(getattr(traffic_signal, "sumo", None), "vehicle", None)
+    if lane_domain is None or vehicle_domain is None:
+        return
+
+    lane_ids = _gnej143_target_lanes(traffic_signal)
+    row["diagnostic_target_lanes"] = json.dumps(lane_ids)
+    row["diagnostic_target_edges"] = json.dumps(["10425609#0", "10425609#1"])
+
+    edge_vehicle_counts = {"10425609#0": 0, "10425609#1": 0}
+    edge_queue_counts = {"10425609#0": 0, "10425609#1": 0}
+    edge_raw_vehicle_counts = {"10425609#0": 0, "10425609#1": 0}
+    edge_raw_queue_counts = {"10425609#0": 0, "10425609#1": 0}
+    for lane in lane_ids:
+        raw_vehicle_ids = [str(vehicle_id) for vehicle_id in lane_domain.getLastStepVehicleIDs(lane)]
+        vehicle_ids = [vehicle_id for vehicle_id in raw_vehicle_ids if not _is_ghost_vehicle(vehicle_id)]
+        raw_stopped_vehicle_ids = [
+            vehicle_id for vehicle_id in raw_vehicle_ids if float(vehicle_domain.getSpeed(vehicle_id)) < 0.1
+        ]
+        stopped_vehicle_ids = [vehicle_id for vehicle_id in raw_stopped_vehicle_ids if not _is_ghost_vehicle(vehicle_id)]
+
+        row[f"target_lane/{lane}/vehicle_count"] = len(vehicle_ids)
+        row[f"target_lane/{lane}/queue_count"] = len(stopped_vehicle_ids)
+        row[f"target_lane/{lane}/raw_vehicle_count"] = len(raw_vehicle_ids)
+        row[f"target_lane/{lane}/raw_queue_count"] = len(raw_stopped_vehicle_ids)
+        row[f"target_lane/{lane}/vehicle_ids"] = json.dumps(vehicle_ids)
+        row[f"target_lane/{lane}/stopped_vehicle_ids"] = json.dumps(stopped_vehicle_ids)
+
+        edge = lane.rsplit("_", 1)[0]
+        if edge not in edge_vehicle_counts:
+            continue
+        edge_vehicle_counts[edge] += len(vehicle_ids)
+        edge_queue_counts[edge] += len(stopped_vehicle_ids)
+        edge_raw_vehicle_counts[edge] += len(raw_vehicle_ids)
+        edge_raw_queue_counts[edge] += len(raw_stopped_vehicle_ids)
+
+    for edge in ("10425609#0", "10425609#1"):
+        row[f"target_edge/{edge}/vehicle_count"] = edge_vehicle_counts[edge]
+        row[f"target_edge/{edge}/queue_count"] = edge_queue_counts[edge]
+        row[f"target_edge/{edge}/raw_vehicle_count"] = edge_raw_vehicle_counts[edge]
+        row[f"target_edge/{edge}/raw_queue_count"] = edge_raw_queue_counts[edge]
+
+
 def _sumo_lane_ids(traffic_signal) -> set[str]:
     lane_domain = getattr(getattr(traffic_signal, "sumo", None), "lane", None)
     get_id_list = getattr(lane_domain, "getIDList", None)
@@ -666,6 +727,8 @@ def _build_junction_diagnostic_row(
         row[f"phase_{phase_index}/window_avg_speed"] = window_average_speeds[phase_index] if phase_index < len(window_average_speeds) else ""
         row[f"phase_{phase_index}/total_wait"] = phase_total_waiting_times[phase_index] if phase_index < len(phase_total_waiting_times) else ""
         row[f"phase_{phase_index}/window_max_wait"] = window_max_waiting_times[phase_index] if phase_index < len(window_max_waiting_times) else ""
+    if junction_id == "gneJ143":
+        _add_gnej143_target_road_counts(row, traffic_signal)
     return row
 
 
