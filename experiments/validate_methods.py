@@ -310,6 +310,7 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
 
     obs, _ = eval_env.reset(seed=seed)
     diagnostic_junction = str(record_state.get("diagnostic_junction") or "")
+    diagnostic_phase_lane_override = _apply_diagnostic_phase_lane_override(eval_env, diagnostic_junction)
     diagnostic_max_steps = record_state.get("diagnostic_max_steps")
     max_decision_steps = record_state.get("max_decision_steps")
     progress_log_steps = int(record_state.get("progress_log_steps") or 0)
@@ -370,6 +371,7 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
                         chosen_action=actions[diagnostic_junction],
                         ablated_action=ablated_action,
                         ablation_status=ablation_status,
+                        phase_lane_override=diagnostic_phase_lane_override,
                     )
                 )
         action_latency_seconds.append(time.perf_counter() - action_start)
@@ -429,6 +431,41 @@ def _phase_total_waiting_times(traffic_signal) -> list[float]:
             total_wait += float(traffic_signal.sumo.vehicle.getWaitingTime(veh))
         totals.append(total_wait)
     return totals
+
+
+def _apply_diagnostic_phase_lane_override(eval_env, junction_id: str) -> str:
+    """Apply narrow diagnostic-only phase lane corrections for known RESCO issues."""
+    if junction_id != "gneJ143":
+        return ""
+
+    base_env = _resolve_validation_sumo_base_env(eval_env)
+    traffic_signals = getattr(base_env, "traffic_signals", {})
+    traffic_signal = traffic_signals.get(junction_id)
+    if traffic_signal is None:
+        return ""
+
+    phase_lanes = getattr(traffic_signal, "phase_lanes", None)
+    if not phase_lanes or len(phase_lanes) <= 2:
+        return ""
+
+    replacement_lanes = [
+        "201956821#0_1",
+        "201956821#0_2",
+        "201956821#0_3",
+    ]
+    available_lanes = set(getattr(traffic_signal, "lanes_length", {}) or {})
+    if available_lanes:
+        replacement_lanes = [lane for lane in replacement_lanes if lane in available_lanes or lane.startswith("201956821#0_")]
+
+    if not replacement_lanes:
+        return ""
+
+    updated_phase_lanes = [list(lanes) for lanes in phase_lanes]
+    updated_phase_lanes[2] = list(dict.fromkeys(replacement_lanes))
+    traffic_signal.phase_lanes = updated_phase_lanes
+    traffic_signal._phase_stats_cache_step = None
+    traffic_signal._phase_stats_cache = None
+    return "ingolstadt7_gneJ143_phase_2_201956821_upstream"
 
 
 def _ablate_default_vector_demand(obs: Any, traffic_signal) -> Any | None:
@@ -524,6 +561,25 @@ def _find_env_attr(env: Any, attr_name: str) -> Any:
     return None
 
 
+def _resolve_validation_sumo_base_env(env: Any) -> Any:
+    queue = [env]
+    visited = set()
+    fallback = env
+    while queue:
+        current = queue.pop(0)
+        if current is None or id(current) in visited:
+            continue
+        visited.add(id(current))
+        fallback = current
+        if hasattr(current, "traffic_signals") and hasattr(current, "sim_step"):
+            return current
+        for child_attr in ("base_env", "env", "aec_env", "unwrapped", "gym_env", "par_env", "venv"):
+            candidate = getattr(current, child_attr, None)
+            if candidate is not None and candidate is not current:
+                queue.append(candidate)
+    return fallback
+
+
 def _build_junction_diagnostic_row(
     eval_env,
     *,
@@ -533,10 +589,9 @@ def _build_junction_diagnostic_row(
     chosen_action: Any,
     ablated_action: Any = None,
     ablation_status: str = "disabled",
+    phase_lane_override: str = "",
 ) -> Dict[str, Any]:
-    from sumo_rl.experiments.rllib_runner import _resolve_sumo_base_env
-
-    base_env = _resolve_sumo_base_env(eval_env)
+    base_env = _resolve_validation_sumo_base_env(eval_env)
     traffic_signal = base_env.traffic_signals[junction_id]
     chosen_phase = int(np.asarray(chosen_action).reshape(-1)[0])
     ablated_phase = ""
@@ -562,6 +617,7 @@ def _build_junction_diagnostic_row(
         "sim_step": float(getattr(base_env, "sim_step", float("nan"))),
         "decision_step": int(decision_step),
         "junction_id": junction_id,
+        "phase_lane_override": phase_lane_override,
         "active_phase_before": int(getattr(traffic_signal, "green_phase", -1)),
         "chosen_phase": chosen_phase,
         "demand_ablation_status": ablation_status,
