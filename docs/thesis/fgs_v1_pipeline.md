@@ -58,7 +58,10 @@ RLlib configs default to a local Ray instance. On SLURM, use the remote-server
 runbook:
 
 ```bash
-sbatch scripts/slurm_cologne3_smoke.sh
+bash scripts/submit_slurm.sh --profile scripts/slurm_train_rllib.sh \
+  algorithm=fgs \
+  scenario=resco_grid4x4 \
+  logging=disabled
 ```
 
 ## Startup Chain
