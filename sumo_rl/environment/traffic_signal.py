@@ -1,10 +1,16 @@
 """This module contains the TrafficSignal class, which represents a traffic signal in the simulation."""
 
+# ruff: noqa: E402
+
 import os
 import sys
 from collections import deque
 from collections.abc import Callable
 from math import ceil
+
+from ..util.env import load_repo_env
+
+load_repo_env()
 
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")

@@ -1,11 +1,17 @@
 """SUMO Environment for Traffic Signal Control."""
 
+# ruff: noqa: E402
+
 import os
 import sys
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
+
+from ..util.env import load_repo_env
+
+load_repo_env()
 
 if "SUMO_HOME" in os.environ:
     tools = os.path.join(os.environ["SUMO_HOME"], "tools")

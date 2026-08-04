@@ -44,6 +44,13 @@ Don't forget to set SUMO_HOME variable (default sumo installation path is /usr/s
 echo 'export SUMO_HOME="/usr/share/sumo"' >> ~/.bashrc
 source ~/.bashrc
 ```
+Alternatively, create a repo-local `.env` file:
+```bash
+cp .env.example .env
+```
+The package loads this file on import, so notebooks can use `sumo_rl` without
+manually exporting `SUMO_HOME` in every kernel.
+
 Important: for the thesis RLlib experiments, backend selection is controlled through Hydra config instead of the global `LIBSUMO_AS_TRACI` environment variable. The PPO, DQN, and selected SAC algorithm configs enable Libsumo for training with `env.kwargs.use_libsumo=true`, while validation stays on TraCI by default through `logging.eval_use_libsumo=false`.
 
 For rootless remote or SLURM servers, install the thesis stack with
