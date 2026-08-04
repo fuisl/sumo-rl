@@ -54,7 +54,7 @@ def test_diff_waiting_time_with_unchosen_phase_penalty_reward_ignores_zero_queue
 def test_nash_average_speed_reward_uses_phase_geometric_mean() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
     signal.reward_nash_epsilon = 0.1
-    signal.get_phase_average_speeds = lambda: [0.5, 0.5, 0.5]
+    signal.get_windowed_phase_speed_wait_stats = lambda: ([0.5, 0.5, 0.5], [0.0, 0.0, 0.0])
 
     reward = signal._nash_average_speed_reward()
 
@@ -64,8 +64,7 @@ def test_nash_average_speed_reward_uses_phase_geometric_mean() -> None:
 def test_weighted_nash_average_speed_reward_emphasizes_high_wait_phase() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
     signal.reward_nash_epsilon = 0.1
-    signal.get_phase_average_speeds = lambda: [0.9, 0.2]
-    signal.get_phase_max_waiting_times = lambda: [2.0, 8.0]
+    signal.get_windowed_phase_speed_wait_stats = lambda: ([0.9, 0.2], [2.0, 8.0])
 
     reward = signal._weighted_nash_average_speed_reward()
 
@@ -76,8 +75,7 @@ def test_weighted_nash_average_speed_reward_emphasizes_high_wait_phase() -> None
 def test_weighted_nash_average_speed_reward_uses_uniform_weights_when_waits_are_zero() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
     signal.reward_nash_epsilon = 0.1
-    signal.get_phase_average_speeds = lambda: [1.0, 1.0, 1.0]
-    signal.get_phase_max_waiting_times = lambda: [0.0, 0.0, 0.0]
+    signal.get_windowed_phase_speed_wait_stats = lambda: ([1.0, 1.0, 1.0], [0.0, 0.0, 0.0])
 
     reward = signal._weighted_nash_average_speed_reward()
 
@@ -87,7 +85,7 @@ def test_weighted_nash_average_speed_reward_uses_uniform_weights_when_waits_are_
 def test_nash_average_speed_reward_uses_configured_epsilon() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
     signal.reward_nash_epsilon = 0.01
-    signal.get_phase_average_speeds = lambda: [0.5, 0.5]
+    signal.get_windowed_phase_speed_wait_stats = lambda: ([0.5, 0.5], [0.0, 0.0])
 
     reward = signal._nash_average_speed_reward()
 
@@ -131,6 +129,27 @@ def test_windowed_nsw_stats_trim_to_configured_window_and_warm_up() -> None:
     assert waits == pytest.approx([3.0])
 
 
+def test_windowed_nsw_vehicle_counts_trim_to_configured_window_and_warm_up() -> None:
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal._nsw_window_samples = deque(maxlen=2)
+    stats_by_step = iter(
+        [
+            [{"average_speed": 0.2, "max_waiting_time": 1.0, "vehicle_count": 2}],
+            [{"average_speed": 0.4, "max_waiting_time": 3.0, "vehicle_count": 4}],
+            [{"average_speed": 1.0, "max_waiting_time": 2.0, "vehicle_count": 8}],
+        ]
+    )
+    signal._get_phase_speed_wait_stats = lambda: next(stats_by_step)
+
+    signal.record_nsw_window_sample()
+    assert signal.get_windowed_phase_vehicle_counts() == pytest.approx([2.0])
+
+    signal.record_nsw_window_sample()
+    signal.record_nsw_window_sample()
+
+    assert signal.get_windowed_phase_vehicle_counts() == pytest.approx([6.0])
+
+
 def test_windowed_nash_average_speed_reward_uses_window_mean_phase_speeds() -> None:
     signal = TrafficSignal.__new__(TrafficSignal)
     signal.reward_nash_epsilon = 0.1
@@ -162,6 +181,35 @@ def test_windowed_weighted_nash_average_speed_reward_uses_window_max_waits() -> 
     reward = signal._weighted_nash_average_speed_reward()
 
     expected = math.exp((4.0 / 12.0) * math.log(0.6 + 0.1) + (8.0 / 12.0) * math.log(0.4 + 0.1))
+    assert reward == pytest.approx(expected)
+
+
+def test_windowed_vehicle_weighted_nash_average_speed_reward_uses_window_mean_vehicle_counts() -> None:
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.reward_nash_epsilon = 0.1
+    signal._nsw_window_samples = deque(
+        [
+            {"average_speeds": [0.8, 0.2], "max_waiting_times": [2.0, 1.0], "vehicle_counts": [2, 8]},
+            {"average_speeds": [0.4, 0.6], "max_waiting_times": [4.0, 8.0], "vehicle_counts": [6, 2]},
+        ],
+        maxlen=5,
+    )
+
+    reward = signal._vehicle_weighted_nash_average_speed_reward()
+
+    expected = math.exp((4.0 / 9.0) * math.log(0.6 + 0.1) + (5.0 / 9.0) * math.log(0.4 + 0.1))
+    assert reward == pytest.approx(expected)
+
+
+def test_vehicle_weighted_nash_average_speed_reward_uses_uniform_weights_when_counts_are_zero() -> None:
+    signal = TrafficSignal.__new__(TrafficSignal)
+    signal.reward_nash_epsilon = 0.1
+    signal.get_windowed_phase_speed_wait_stats = lambda: ([0.3, 0.7], [0.0, 0.0])
+    signal.get_windowed_phase_vehicle_counts = lambda: [0.0, 0.0]
+
+    reward = signal._vehicle_weighted_nash_average_speed_reward()
+
+    expected = math.exp(0.5 * math.log(0.4) + 0.5 * math.log(0.8))
     assert reward == pytest.approx(expected)
 
 

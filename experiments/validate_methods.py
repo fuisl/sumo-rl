@@ -675,8 +675,14 @@ def _build_junction_diagnostic_row(
     else:
         window_average_speeds = list(phase_average_speeds)
         window_max_waiting_times = [float(value) for value in traffic_signal.get_phase_max_waiting_times()]
+    get_windowed_vehicle_counts = getattr(traffic_signal, "get_windowed_phase_vehicle_counts", None)
+    if callable(get_windowed_vehicle_counts):
+        window_vehicle_counts = get_windowed_vehicle_counts()
+    else:
+        window_vehicle_counts = list(phase_vehicle_counts)
     window_average_speeds = [float(value) for value in window_average_speeds]
     window_max_waiting_times = [float(value) for value in window_max_waiting_times]
+    window_vehicle_counts = [float(value) for value in window_vehicle_counts]
     phase_total_waiting_times = _phase_total_waiting_times(traffic_signal)
 
     argmax_count = _argmax([float(value) for value in phase_vehicle_counts])
@@ -710,6 +716,7 @@ def _build_junction_diagnostic_row(
         "chosen_is_argmax_total_wait": chosen_phase == argmax_total_wait,
         "chosen_is_argmax_window_max_wait": chosen_phase == argmax_window_max_wait,
         "phase_vehicle_counts": json.dumps(phase_vehicle_counts),
+        "phase_window_vehicle_counts": json.dumps(window_vehicle_counts),
         "phase_queue_counts": json.dumps(phase_queue_counts),
         "phase_current_avg_speeds": json.dumps(phase_average_speeds),
         "phase_window_avg_speeds": json.dumps(window_average_speeds),
@@ -722,6 +729,9 @@ def _build_junction_diagnostic_row(
     }
     for phase_index in range(max(len(phase_vehicle_counts), len(window_average_speeds))):
         row[f"phase_{phase_index}/vehicle_count"] = phase_vehicle_counts[phase_index] if phase_index < len(phase_vehicle_counts) else ""
+        row[f"phase_{phase_index}/window_vehicle_count"] = (
+            window_vehicle_counts[phase_index] if phase_index < len(window_vehicle_counts) else ""
+        )
         row[f"phase_{phase_index}/queue_count"] = phase_queue_counts[phase_index] if phase_index < len(phase_queue_counts) else ""
         row[f"phase_{phase_index}/current_avg_speed"] = phase_average_speeds[phase_index] if phase_index < len(phase_average_speeds) else ""
         row[f"phase_{phase_index}/window_avg_speed"] = window_average_speeds[phase_index] if phase_index < len(window_average_speeds) else ""

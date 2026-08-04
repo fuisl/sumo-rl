@@ -356,6 +356,26 @@ class TrafficSignal:
 
         return float(np.exp(np.sum(phase_weights * np.log(phase_utilities))))
 
+    def _vehicle_weighted_nash_average_speed_reward(self):
+        epsilon = float(getattr(self, "reward_nash_epsilon", self.NASH_AVERAGE_SPEED_EPSILON))
+        phase_average_speeds, _phase_max_waiting_times = self.get_windowed_phase_speed_wait_stats()
+        if not phase_average_speeds:
+            return self.get_average_speed() + epsilon
+
+        phase_utilities = np.asarray(phase_average_speeds, dtype=np.float64) + epsilon
+        phase_vehicle_counts = np.asarray(self.get_windowed_phase_vehicle_counts(), dtype=np.float64)
+
+        if phase_vehicle_counts.size != phase_utilities.size:
+            phase_vehicle_counts = np.zeros_like(phase_utilities)
+
+        total_phase_vehicle_count = float(np.sum(phase_vehicle_counts))
+        if total_phase_vehicle_count > 0.0:
+            phase_weights = phase_vehicle_counts / total_phase_vehicle_count
+        else:
+            phase_weights = np.full_like(phase_utilities, 1.0 / float(phase_utilities.size))
+
+        return float(np.exp(np.sum(phase_weights * np.log(phase_utilities))))
+
     def _queue_reward(self):
         return -self.get_total_queued()
 
@@ -523,6 +543,10 @@ class TrafficSignal:
             for phase_lanes in self.phase_lanes
         ]
 
+    def get_phase_vehicle_counts(self) -> list[int]:
+        """Returns vehicle counts for the lane groups served by each green phase."""
+        return [len(self._get_unique_phase_vehicle_ids(phase_lanes)) for phase_lanes in self.phase_lanes]
+
     def get_phase_average_speeds(self) -> list[float]:
         """Returns mean normalized speed ratios for the vehicles served by each green phase."""
         return [stats["average_speed"] for stats in self._get_phase_speed_wait_stats()]
@@ -539,6 +563,7 @@ class TrafficSignal:
             {
                 "average_speeds": [float(item["average_speed"]) for item in stats],
                 "max_waiting_times": [float(item["max_waiting_time"]) for item in stats],
+                "vehicle_counts": [int(item.get("vehicle_count", 0)) for item in stats],
             }
         )
 
@@ -581,6 +606,32 @@ class TrafficSignal:
             window_max_waiting_times.append(0.0 if not waits else float(max(waits)))
         return window_average_speeds, window_max_waiting_times
 
+    def get_windowed_phase_vehicle_counts(self) -> list[float]:
+        """Returns per-phase mean vehicle counts over the configured NSW window."""
+
+        raw_samples = getattr(self, "_nsw_window_samples", None)
+        if raw_samples is None:
+            return [float(value) for value in self.get_phase_vehicle_counts()]
+
+        samples = list(raw_samples)
+        if not samples:
+            stats = self._get_phase_speed_wait_stats()
+            return [float(item["vehicle_count"]) for item in stats]
+
+        phase_count = max((len(sample.get("vehicle_counts", [])) for sample in samples), default=0)
+        if phase_count == 0:
+            return []
+
+        window_vehicle_counts = []
+        for phase_index in range(phase_count):
+            counts = [
+                sample["vehicle_counts"][phase_index]
+                for sample in samples
+                if phase_index < len(sample.get("vehicle_counts", []))
+            ]
+            window_vehicle_counts.append(0.0 if not counts else float(np.mean(counts)))
+        return window_vehicle_counts
+
     def get_total_co2(self) -> float:
         """Returns the total CO2 emissions (mg/s) of the vehicles in the incoming lanes of the intersection."""
         return sum(self.sumo.vehicle.getCO2Emission(veh) for veh in self._get_veh_list())
@@ -607,7 +658,7 @@ class TrafficSignal:
         for phase_lanes in self.phase_lanes:
             phase_vehicles = self._get_unique_phase_vehicle_ids(phase_lanes)
             if not phase_vehicles:
-                phase_stats.append({"average_speed": 1.0, "max_waiting_time": 0.0})
+                phase_stats.append({"average_speed": 1.0, "max_waiting_time": 0.0, "vehicle_count": 0})
                 continue
 
             normalized_speeds = []
@@ -620,6 +671,7 @@ class TrafficSignal:
                 {
                     "average_speed": float(np.mean(normalized_speeds)),
                     "max_waiting_time": max_waiting_time,
+                    "vehicle_count": len(phase_vehicles),
                 }
             )
 
@@ -659,6 +711,7 @@ class TrafficSignal:
         "average-speed": _average_speed_reward,
         "nash-average-speed": _nash_average_speed_reward,
         "weighted-nash-average-speed": _weighted_nash_average_speed_reward,
+        "vehicle-weighted-nash-average-speed": _vehicle_weighted_nash_average_speed_reward,
         "queue": _queue_reward,
         "normalized-queue": _normalized_queue_reward,
         "pressure": _pressure_reward,

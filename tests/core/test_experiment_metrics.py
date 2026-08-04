@@ -338,6 +338,47 @@ def test_resco_summary_row_includes_windowed_nash_average_speed_formula() -> Non
     )
 
 
+def test_resco_summary_row_includes_vehicle_weighted_nash_average_speed_formula() -> None:
+    class DummyBaseEnv:
+        def __init__(self) -> None:
+            self.metrics = []
+            self.sumo = None
+            self.reward_fn = "vehicle-weighted-nash-average-speed"
+            self.reward_weights = None
+            self.reward_penalty_lambda = None
+            self.reward_nash_epsilon = 0.05
+            self.reward_nsw_window_cycle_multiplier = 2.0
+            self.last_episode_summary = {
+                "episode/index": 3.0,
+                "episode/steps": 3600.0,
+                "sim_step": 3600.0,
+                "resco_avg_delay": 12.0,
+                "resco_avg_delay_std": 1.25,
+                "resco_trip_time": 34.0,
+                "resco_wait": 7.0,
+                "resco_wait_std": 0.5,
+                "resco_queue": 2.5,
+                "resco_max_queue": 9.0,
+            }
+            self.last_episode_final_info = {}
+            self.last_lane_waiting_times = {"agent_a": []}
+            self.last_episode_lane_waiting_times = {"agent_a": [1.0, 3.0]}
+            self.traffic_signals = {"agent_a": object()}
+
+        def finalize_episode_summary(self):
+            return dict(self.last_episode_summary)
+
+    row = _build_episode_benchmark_summary_row(DummyBaseEnv(), extra={"algorithm/kind": "fixed_time"})
+
+    assert row["reward/formula"] == (
+        "exp(sum(window_phase_vehicle_weight * log(window_mean_phase_average_speed + 0.05))) across green phases, "
+        "where the rolling window is 2.0 * fixed_time_cycle_length for each signal, "
+        "window_phase_vehicle_weight = window_mean_phase_vehicle_count / sum(window_mean_phase_vehicle_count), "
+        "empty phases use average_speed = 1.0 and vehicle_count = 0, "
+        "and zero total vehicle count falls back to uniform phase weights"
+    )
+
+
 def test_final_eval_summary_row_uses_standard_final_metric_names() -> None:
     class DummyBaseEnv:
         def __init__(self) -> None:

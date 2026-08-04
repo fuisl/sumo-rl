@@ -96,6 +96,18 @@ def reward_formula_text(
             "empty phases use average_speed = 1.0 and max_waiting_time = 0, "
             "and zero total max waiting falls back to uniform phase weights"
         )
+    if reward_name == "vehicle-weighted-nash-average-speed":
+        epsilon = 0.1 if reward_nash_epsilon is None else float(reward_nash_epsilon)
+        multiplier = (
+            1.0 if reward_nsw_window_cycle_multiplier is None else float(reward_nsw_window_cycle_multiplier)
+        )
+        return (
+            f"exp(sum(window_phase_vehicle_weight * log(window_mean_phase_average_speed + {epsilon}))) across green phases, "
+            f"where the rolling window is {multiplier} * fixed_time_cycle_length for each signal, "
+            "window_phase_vehicle_weight = window_mean_phase_vehicle_count / sum(window_mean_phase_vehicle_count), "
+            "empty phases use average_speed = 1.0 and vehicle_count = 0, "
+            "and zero total vehicle count falls back to uniform phase weights"
+        )
     if reward_name == "queue":
         return "- total queued vehicles for the signal"
     if reward_name == "normalized-queue":
