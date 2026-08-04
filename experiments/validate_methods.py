@@ -77,6 +77,12 @@ def _parse_args() -> argparse.Namespace:
         default=50,
         help="Print validation progress every N decision steps. Use 0 to disable.",
     )
+    parser.add_argument(
+        "--ray-num-gpus",
+        type=float,
+        default=0.0,
+        help="Number of GPUs to expose to the local Ray instance during RLlib validation.",
+    )
     return parser.parse_args()
 
 
@@ -689,7 +695,12 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
     algorithm_kind = str(cfg.algorithm.kind)
     checkpoint_path = Path(payload["checkpoint_path"]).resolve()
     ray_init_start = time.perf_counter()
-    ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False, num_gpus=0)
+    ray.init(
+        ignore_reinit_error=True,
+        include_dashboard=False,
+        log_to_driver=False,
+        num_gpus=float(payload.get("ray_num_gpus", 0.0) or 0.0),
+    )
     ray_init_seconds = time.perf_counter() - ray_init_start
     algo = None
     eval_env = None
@@ -1048,6 +1059,7 @@ def main() -> None:
                 "diagnostic_demand_ablation": str(args.diagnostic_demand_ablation or "none"),
                 "max_decision_steps": args.max_decision_steps,
                 "progress_log_steps": args.progress_log_steps,
+                "ray_num_gpus": float(args.ray_num_gpus),
                 "args": vars(args),
             }
         )
