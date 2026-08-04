@@ -11,6 +11,14 @@ if str(ROOT) not in sys.path:
 from experiments import validate_methods
 
 
+class DummyLaneDomain:
+    def __init__(self, lane_ids):
+        self._lane_ids = list(lane_ids)
+
+    def getIDList(self):
+        return list(self._lane_ids)
+
+
 def test_gnej143_diagnostic_override_replaces_phase_2_with_upstream_lanes():
     traffic_signal = SimpleNamespace(
         phase_lanes=[
@@ -25,23 +33,55 @@ def test_gnej143_diagnostic_override_replaces_phase_2_with_upstream_lanes():
         },
         _phase_stats_cache_step=123,
         _phase_stats_cache=[{"average_speed": 1.0, "max_waiting_time": 0.0}],
+        sumo=SimpleNamespace(
+            lane=DummyLaneDomain(
+                [
+                    "201956821#0_1",
+                    "201956821#0_2",
+                    "201956821#0_3",
+                    "10425609#0_1",
+                    "10425609#0_2",
+                    "10425609#0_3",
+                    "201956821#1.68_1",
+                ]
+            )
+        ),
     )
     env = SimpleNamespace(sim_step=0, traffic_signals={"gneJ143": traffic_signal})
 
     label = validate_methods._apply_diagnostic_phase_lane_override(env, "gneJ143")
 
-    assert label == "ingolstadt7_gneJ143_phase_2_201956821_upstream"
+    assert label == "ingolstadt7_gneJ143_phase_2_10425609_upstream"
     assert traffic_signal.phase_lanes == [
         ["phase_0_lane"],
         ["phase_1_lane"],
         [
-            "201956821#0_1",
-            "201956821#0_2",
-            "201956821#0_3",
+            "10425609#0_1",
+            "10425609#0_2",
+            "10425609#0_3",
         ],
     ]
     assert traffic_signal._phase_stats_cache_step is None
     assert traffic_signal._phase_stats_cache is None
+
+
+def test_gnej143_diagnostic_override_uses_only_known_upstream_lanes():
+    traffic_signal = SimpleNamespace(
+        phase_lanes=[
+            ["phase_0_lane"],
+            ["phase_1_lane"],
+            ["201956821#1.68_1"],
+        ],
+        _phase_stats_cache_step=None,
+        _phase_stats_cache=None,
+        sumo=SimpleNamespace(lane=DummyLaneDomain(["10425609#0_1", "10425609#0_2"])),
+    )
+    env = SimpleNamespace(sim_step=0, traffic_signals={"gneJ143": traffic_signal})
+
+    label = validate_methods._apply_diagnostic_phase_lane_override(env, "gneJ143")
+
+    assert label == "ingolstadt7_gneJ143_phase_2_10425609_upstream"
+    assert traffic_signal.phase_lanes[2] == ["10425609#0_1", "10425609#0_2"]
 
 
 def test_diagnostic_override_ignores_other_junctions():

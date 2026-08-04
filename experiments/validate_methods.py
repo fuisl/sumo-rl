@@ -449,13 +449,13 @@ def _apply_diagnostic_phase_lane_override(eval_env, junction_id: str) -> str:
         return ""
 
     replacement_lanes = [
-        "201956821#0_1",
-        "201956821#0_2",
-        "201956821#0_3",
+        "10425609#0_1",
+        "10425609#0_2",
+        "10425609#0_3",
     ]
-    available_lanes = set(getattr(traffic_signal, "lanes_length", {}) or {})
-    if available_lanes:
-        replacement_lanes = [lane for lane in replacement_lanes if lane in available_lanes or lane.startswith("201956821#0_")]
+    known_lanes = _sumo_lane_ids(traffic_signal)
+    if known_lanes:
+        replacement_lanes = [lane for lane in replacement_lanes if lane in known_lanes]
 
     if not replacement_lanes:
         return ""
@@ -465,7 +465,15 @@ def _apply_diagnostic_phase_lane_override(eval_env, junction_id: str) -> str:
     traffic_signal.phase_lanes = updated_phase_lanes
     traffic_signal._phase_stats_cache_step = None
     traffic_signal._phase_stats_cache = None
-    return "ingolstadt7_gneJ143_phase_2_201956821_upstream"
+    return "ingolstadt7_gneJ143_phase_2_10425609_upstream"
+
+
+def _sumo_lane_ids(traffic_signal) -> set[str]:
+    lane_domain = getattr(getattr(traffic_signal, "sumo", None), "lane", None)
+    get_id_list = getattr(lane_domain, "getIDList", None)
+    if not callable(get_id_list):
+        return set()
+    return {str(lane_id) for lane_id in get_id_list()}
 
 
 def _ablate_default_vector_demand(obs: Any, traffic_signal) -> Any | None:
@@ -600,7 +608,12 @@ def _build_junction_diagnostic_row(
     phase_vehicle_counts = [len(traffic_signal._get_unique_phase_vehicle_ids(lanes)) for lanes in traffic_signal.phase_lanes]
     phase_queue_counts = [int(value) for value in traffic_signal.get_phase_queued_counts()]
     phase_average_speeds = [float(value) for value in traffic_signal.get_phase_average_speeds()]
-    window_average_speeds, window_max_waiting_times = traffic_signal.get_windowed_phase_speed_wait_stats()
+    get_windowed_stats = getattr(traffic_signal, "get_windowed_phase_speed_wait_stats", None)
+    if callable(get_windowed_stats):
+        window_average_speeds, window_max_waiting_times = get_windowed_stats()
+    else:
+        window_average_speeds = list(phase_average_speeds)
+        window_max_waiting_times = [float(value) for value in traffic_signal.get_phase_max_waiting_times()]
     window_average_speeds = [float(value) for value in window_average_speeds]
     window_max_waiting_times = [float(value) for value in window_max_waiting_times]
     phase_total_waiting_times = _phase_total_waiting_times(traffic_signal)
