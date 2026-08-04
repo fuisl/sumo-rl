@@ -8,7 +8,7 @@ Usage:
 
 Examples:
   bash scripts/submit_slurm.sh --profile scripts/slurm_train_rllib.sh \
-    algorithm=ppo scenario=resco_ingolstadt7 logging=wandb logging.mode=online
+    algorithm=ppo scenario=resco_ingolstadt7
 
   bash scripts/submit_slurm.sh scripts/slurm_train_rllib.sh \
     --mem=14G --time=08:00:00 --job-name=sumo-rl-ppo-ingolstadt7 \
@@ -136,6 +136,7 @@ if [[ "$profile" == true ]]; then
     experiment.episodes=5
     experiment.validation_interval_episodes=5
     experiment.eval_episodes=1
+    logging=disabled
   )
 fi
 
@@ -147,7 +148,7 @@ if [[ ${#sbatch_args[@]} -gt 0 || ${#profile_sbatch_args[@]} -gt 0 ]]; then
   echo "SBATCH options: ${profile_sbatch_args[*]} ${sbatch_args[*]}"
 fi
 if [[ ${#profile_hydra_args[@]} -gt 0 || ${#hydra_args[@]} -gt 0 ]]; then
-  echo "Hydra overrides: ${profile_hydra_args[*]} ${hydra_args[*]}"
+  echo "Hydra overrides: ${hydra_args[*]} ${profile_hydra_args[*]}"
 fi
 
-sbatch "${profile_sbatch_args[@]}" "${sbatch_args[@]}" "$script" "${profile_hydra_args[@]}" "${hydra_args[@]}"
+sbatch "${profile_sbatch_args[@]}" "${sbatch_args[@]}" "$script" "${hydra_args[@]}" "${profile_hydra_args[@]}"

@@ -79,7 +79,6 @@ Use the following status labels consistently:
 - Top-level `experiments/` is reserved for supported launchers and utilities.
 - Archive/reference notebooks and analysis helpers live under `experiments/archive/`.
 - Archive workflows may write ignored local outputs under `experiments/artifacts/`, but that tree is not part of the supported run artifact contract.
-- Use `python scripts/cleanup_local_artifacts.py --dry-run` to preview local artifact cleanup and `python scripts/cleanup_local_artifacts.py --yes` to remove the known ignored run directories safely.
 
 ## Hydra
 Hydra is the experiment composition layer for the thesis workflow.

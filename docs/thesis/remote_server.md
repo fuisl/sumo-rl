@@ -4,6 +4,9 @@ Use this workflow for a Linux or SLURM server without root, conda, or
 micromamba. The supported install is a project-local Python `venv` with SUMO
 provided by the `eclipse-sumo` wheel.
 
+For the day-to-day SLURM process, start with the root [RUNNING.md](../../RUNNING.md)
+guide.
+
 ## Install
 
 ```bash
@@ -23,32 +26,18 @@ Use a specific interpreter when needed:
 PYTHON_BIN=python3.11 bash scripts/setup_remote_venv.sh
 ```
 
-## Smoke Tests
-
-Interactive Cologne3 smoke:
-
-```bash
-bash scripts/smoke_cologne3.sh
-```
-
-Shorter smoke while iterating:
-
-```bash
-EPISODES=3 EPISODE_SECONDS=120 RAY_CPUS=4 bash scripts/smoke_cologne3.sh
-```
+## Profile Runs
 
 SLURM profile smoke:
 
 ```bash
 bash scripts/submit_slurm.sh --profile scripts/slurm_train_rllib.sh \
   algorithm=ppo \
-  scenario=resco_cologne3 \
-  logging=disabled
+  scenario=resco_cologne3
 ```
 
-The interactive smoke script runs fixed-time, static max-pressure, PPO, and DQN
-on Cologne3. Defaults are 15 episodes and 300 simulation seconds. The SLURM
-example uses the reusable RLlib runner in 5-episode profile mode.
+Profile mode uses the reusable RLlib runner for a 5-episode SLURM job with
+W&B disabled. Use it to check wiring, runtime, and memory before full training.
 
 ## SLURM Workflow
 
@@ -59,9 +48,7 @@ generic runner instead of editing or copying per-experiment scripts:
 ```bash
 bash scripts/submit_slurm.sh --profile scripts/slurm_train_rllib.sh \
   algorithm=ppo \
-  scenario=resco_ingolstadt7 \
-  logging=wandb \
-  logging.mode=online
+  scenario=resco_ingolstadt7
 ```
 
 Profile mode submits a 5-episode inspection run with:
@@ -70,6 +57,7 @@ Profile mode submits a 5-episode inspection run with:
 experiment.episodes=5
 experiment.validation_interval_episodes=5
 experiment.eval_episodes=1
+logging=disabled
 --mem=16G
 --time=00:30:00
 ```
@@ -88,7 +76,8 @@ checkpointing, evaluation, SUMO scenario variance, and Ray object-store peaks
 can increase memory use.
 
 Submit the full run with explicit resource overrides, without editing tracked
-scripts:
+scripts. If `WANDB_API_KEY` is set in the environment, the SLURM runner logs in
+before starting online W&B training:
 
 ```bash
 bash scripts/submit_slurm.sh scripts/slurm_train_rllib.sh \
@@ -135,6 +124,9 @@ The standard loop is:
 - Use `resources.ray_address=null` unless the cluster explicitly provides a
   shared Ray head.
 - Use `--mem`, not `--mem-per-cpu`, for these single-node Ray/SUMO jobs.
+- Some clusters do not export `SLURM_MEM_PER_NODE`; trust `sacct ReqMem` and
+  the allocation report in the job log when the wrapper submitted an explicit
+  `--mem`.
 - Keep custom generated job scripts under `outputs/slurm/` if they are needed;
   tracked scripts should stay reusable.
 

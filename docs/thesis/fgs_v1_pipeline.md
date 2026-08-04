@@ -60,8 +60,7 @@ runbook:
 ```bash
 bash scripts/submit_slurm.sh --profile scripts/slurm_train_rllib.sh \
   algorithm=fgs \
-  scenario=resco_grid4x4 \
-  logging=disabled
+  scenario=resco_grid4x4
 ```
 
 ## Startup Chain
