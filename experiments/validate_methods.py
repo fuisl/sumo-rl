@@ -65,6 +65,18 @@ def _parse_args() -> argparse.Namespace:
         default="zero",
         help="For diagnostic-junction, also recompute the policy action after masking density/queue-like demand features.",
     )
+    parser.add_argument(
+        "--max-decision-steps",
+        type=int,
+        default=None,
+        help="Optional early stop after this many validation decision steps. Useful for diagnostics.",
+    )
+    parser.add_argument(
+        "--progress-log-steps",
+        type=int,
+        default=50,
+        help="Print validation progress every N decision steps. Use 0 to disable.",
+    )
     return parser.parse_args()
 
 
@@ -275,6 +287,8 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
     obs, _ = eval_env.reset(seed=seed)
     diagnostic_junction = str(record_state.get("diagnostic_junction") or "")
     diagnostic_max_steps = record_state.get("diagnostic_max_steps")
+    max_decision_steps = record_state.get("max_decision_steps")
+    progress_log_steps = int(record_state.get("progress_log_steps") or 0)
     diagnostic_rows: list[Dict[str, Any]] = []
     action_traces: Dict[str, list[int]] = {}
     action_space_sizes: Dict[str, int] = {}
@@ -285,10 +299,17 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
     for agent_id in agent_ids:
         action_traces[agent_id] = []
         phase_queue_traces[agent_id] = []
+    if diagnostic_junction and diagnostic_junction not in agent_ids:
+        raise KeyError(
+            f"Diagnostic junction {diagnostic_junction!r} is not an active agent. "
+            f"Available agents: {', '.join(agent_ids)}"
+        )
     done = False
     decision_steps = 0
     while not done:
         decision_steps += 1
+        if progress_log_steps > 0 and (decision_steps == 1 or decision_steps % progress_log_steps == 0):
+            print(f"[seed {seed}] validation decision step {decision_steps}", flush=True)
         action_start = time.perf_counter()
         actions = {}
         for agent_id, agent_obs in obs.items():
@@ -356,6 +377,9 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
             or all(bool(terminations.get(agent_id, False)) for agent_id in agent_ids)
             or all(bool(truncations.get(agent_id, False)) for agent_id in agent_ids)
         )
+        if max_decision_steps is not None and decision_steps >= int(max_decision_steps):
+            print(f"[seed {seed}] stopping early after {decision_steps} validation decision steps", flush=True)
+            done = True
     return total_reward, action_traces, action_space_sizes, phase_queue_traces, action_latency_seconds, decision_steps, diagnostic_rows
 
 
@@ -624,6 +648,8 @@ def _run_seed_worker(payload: Dict[str, Any]) -> Dict[str, Any]:
         "diagnostic_junction": payload.get("diagnostic_junction") or "",
         "diagnostic_max_steps": payload.get("diagnostic_max_steps"),
         "diagnostic_demand_ablation": payload.get("diagnostic_demand_ablation") or "none",
+        "max_decision_steps": payload.get("max_decision_steps"),
+        "progress_log_steps": payload.get("progress_log_steps"),
     }
     try:
         if payload["controller"] == "rllib":
@@ -727,6 +753,7 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
             "evaluation_seconds": evaluation_seconds,
             "video_record_seconds": evaluation_seconds if record_state.get("enabled") else 0.0,
             "decision_steps": decision_steps,
+            "early_stop_decision_steps": payload.get("max_decision_steps"),
             "action_latency_seconds": action_latency_seconds,
             "control_interval_seconds": decision_interval_seconds(cfg),
         }
@@ -1019,6 +1046,8 @@ def main() -> None:
                 "diagnostic_junction": str(args.diagnostic_junction or ""),
                 "diagnostic_max_steps": args.diagnostic_max_steps,
                 "diagnostic_demand_ablation": str(args.diagnostic_demand_ablation or "none"),
+                "max_decision_steps": args.max_decision_steps,
+                "progress_log_steps": args.progress_log_steps,
                 "args": vars(args),
             }
         )
