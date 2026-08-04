@@ -72,7 +72,18 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
   source .venv/bin/activate
 fi
 
-if [[ " $* " == *" logging=wandb "* && " $* " != *" logging=disabled "* ]]; then
+if [[ -z "${WANDB_API_KEY:-}" ]]; then
+  WANDB_ENV_FILE="${WANDB_ENV_FILE:-.env}"
+  if [[ -f "$WANDB_ENV_FILE" ]]; then
+    echo "Loading W&B environment from $WANDB_ENV_FILE"
+    set -a
+    # shellcheck source=/dev/null
+    source "$WANDB_ENV_FILE"
+    set +a
+  fi
+fi
+
+if [[ " $* " != *" logging=disabled "* ]]; then
   if [[ -n "${WANDB_API_KEY:-}" ]]; then
     python -c 'import os, wandb; wandb.login(key=os.environ["WANDB_API_KEY"], relogin=True)'
   else
