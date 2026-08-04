@@ -19,6 +19,15 @@ fi
 
 mkdir -p outputs/slurm
 
+ENV_FILE="${ENV_FILE:-.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  echo "Loading environment from $ENV_FILE"
+  set -a
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+  set +a
+fi
+
 echo "=== SLURM JOB ALLOCATION ==="
 echo "Job ID:        ${SLURM_JOB_ID:-local}"
 echo "Job name:      ${SLURM_JOB_NAME:-local}"
@@ -72,7 +81,11 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
   source .venv/bin/activate
 fi
 
-if [[ " $* " == *" logging=wandb "* && " $* " != *" logging=disabled "* ]]; then
+if [[ -z "${WANDB_API_KEY:-}" ]]; then
+  echo "WANDB_API_KEY is not set after loading ${ENV_FILE}; using any existing W&B login on this server."
+fi
+
+if [[ " $* " != *" logging=disabled "* ]]; then
   if [[ -n "${WANDB_API_KEY:-}" ]]; then
     python -c 'import os, wandb; wandb.login(key=os.environ["WANDB_API_KEY"], relogin=True)'
   else

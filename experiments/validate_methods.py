@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 from sumo_rl.experiments.validation_metrics import aggregate_numeric_rows, enrich_seed_row, format_metric_value
 from sumo_rl.util.tripinfo import collect_tripinfo_metrics
+from sumo_rl.util.tripinfo import is_ghost_vehicle as _is_ghost_vehicle
 
 
 def _parse_args() -> argparse.Namespace:
@@ -310,6 +311,7 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
 
     obs, _ = eval_env.reset(seed=seed)
     diagnostic_junction = str(record_state.get("diagnostic_junction") or "")
+    diagnostic_phase_lane_override = _apply_diagnostic_phase_lane_override(eval_env, diagnostic_junction)
     diagnostic_max_steps = record_state.get("diagnostic_max_steps")
     max_decision_steps = record_state.get("max_decision_steps")
     progress_log_steps = int(record_state.get("progress_log_steps") or 0)
@@ -370,6 +372,7 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
                         chosen_action=actions[diagnostic_junction],
                         ablated_action=ablated_action,
                         ablation_status=ablation_status,
+                        phase_lane_override=diagnostic_phase_lane_override,
                     )
                 )
         action_latency_seconds.append(time.perf_counter() - action_start)
@@ -429,6 +432,109 @@ def _phase_total_waiting_times(traffic_signal) -> list[float]:
             total_wait += float(traffic_signal.sumo.vehicle.getWaitingTime(veh))
         totals.append(total_wait)
     return totals
+
+
+def _apply_diagnostic_phase_lane_override(eval_env, junction_id: str) -> str:
+    """Apply narrow diagnostic-only phase lane corrections for known RESCO issues."""
+    if junction_id != "gneJ143":
+        return ""
+
+    base_env = _resolve_validation_sumo_base_env(eval_env)
+    traffic_signals = getattr(base_env, "traffic_signals", {})
+    traffic_signal = traffic_signals.get(junction_id)
+    if traffic_signal is None:
+        return ""
+
+    phase_lanes = getattr(traffic_signal, "phase_lanes", None)
+    if not phase_lanes or len(phase_lanes) <= 2:
+        return ""
+
+    replacement_lanes = [
+        "10425609#0_1",
+        "10425609#0_2",
+        "10425609#0_3",
+    ]
+    known_lanes = _sumo_lane_ids(traffic_signal)
+    if known_lanes:
+        replacement_lanes = [lane for lane in replacement_lanes if lane in known_lanes]
+
+    if not replacement_lanes:
+        return ""
+
+    updated_phase_lanes = [list(lanes) for lanes in phase_lanes]
+    updated_phase_lanes[2] = list(dict.fromkeys(replacement_lanes))
+    traffic_signal.phase_lanes = updated_phase_lanes
+    traffic_signal._phase_stats_cache_step = None
+    traffic_signal._phase_stats_cache = None
+    return "ingolstadt7_gneJ143_phase_2_10425609_upstream"
+
+
+def _gnej143_target_lanes(traffic_signal) -> list[str]:
+    candidate_lanes = [
+        "10425609#0_1",
+        "10425609#0_2",
+        "10425609#0_3",
+        "10425609#1_1",
+        "10425609#1_2",
+        "10425609#1_3",
+    ]
+    known_lanes = _sumo_lane_ids(traffic_signal)
+    if not known_lanes:
+        return candidate_lanes
+    return [lane for lane in candidate_lanes if lane in known_lanes]
+
+
+def _add_gnej143_target_road_counts(row: Dict[str, Any], traffic_signal) -> None:
+    """Add raw lane counts matching the visual diagnostic notebook for gneJ143."""
+    lane_domain = getattr(getattr(traffic_signal, "sumo", None), "lane", None)
+    vehicle_domain = getattr(getattr(traffic_signal, "sumo", None), "vehicle", None)
+    if lane_domain is None or vehicle_domain is None:
+        return
+
+    lane_ids = _gnej143_target_lanes(traffic_signal)
+    row["diagnostic_target_lanes"] = json.dumps(lane_ids)
+    row["diagnostic_target_edges"] = json.dumps(["10425609#0", "10425609#1"])
+
+    edge_vehicle_counts = {"10425609#0": 0, "10425609#1": 0}
+    edge_queue_counts = {"10425609#0": 0, "10425609#1": 0}
+    edge_raw_vehicle_counts = {"10425609#0": 0, "10425609#1": 0}
+    edge_raw_queue_counts = {"10425609#0": 0, "10425609#1": 0}
+    for lane in lane_ids:
+        raw_vehicle_ids = [str(vehicle_id) for vehicle_id in lane_domain.getLastStepVehicleIDs(lane)]
+        vehicle_ids = [vehicle_id for vehicle_id in raw_vehicle_ids if not _is_ghost_vehicle(vehicle_id)]
+        raw_stopped_vehicle_ids = [
+            vehicle_id for vehicle_id in raw_vehicle_ids if float(vehicle_domain.getSpeed(vehicle_id)) < 0.1
+        ]
+        stopped_vehicle_ids = [vehicle_id for vehicle_id in raw_stopped_vehicle_ids if not _is_ghost_vehicle(vehicle_id)]
+
+        row[f"target_lane/{lane}/vehicle_count"] = len(vehicle_ids)
+        row[f"target_lane/{lane}/queue_count"] = len(stopped_vehicle_ids)
+        row[f"target_lane/{lane}/raw_vehicle_count"] = len(raw_vehicle_ids)
+        row[f"target_lane/{lane}/raw_queue_count"] = len(raw_stopped_vehicle_ids)
+        row[f"target_lane/{lane}/vehicle_ids"] = json.dumps(vehicle_ids)
+        row[f"target_lane/{lane}/stopped_vehicle_ids"] = json.dumps(stopped_vehicle_ids)
+
+        edge = lane.rsplit("_", 1)[0]
+        if edge not in edge_vehicle_counts:
+            continue
+        edge_vehicle_counts[edge] += len(vehicle_ids)
+        edge_queue_counts[edge] += len(stopped_vehicle_ids)
+        edge_raw_vehicle_counts[edge] += len(raw_vehicle_ids)
+        edge_raw_queue_counts[edge] += len(raw_stopped_vehicle_ids)
+
+    for edge in ("10425609#0", "10425609#1"):
+        row[f"target_edge/{edge}/vehicle_count"] = edge_vehicle_counts[edge]
+        row[f"target_edge/{edge}/queue_count"] = edge_queue_counts[edge]
+        row[f"target_edge/{edge}/raw_vehicle_count"] = edge_raw_vehicle_counts[edge]
+        row[f"target_edge/{edge}/raw_queue_count"] = edge_raw_queue_counts[edge]
+
+
+def _sumo_lane_ids(traffic_signal) -> set[str]:
+    lane_domain = getattr(getattr(traffic_signal, "sumo", None), "lane", None)
+    get_id_list = getattr(lane_domain, "getIDList", None)
+    if not callable(get_id_list):
+        return set()
+    return {str(lane_id) for lane_id in get_id_list()}
 
 
 def _ablate_default_vector_demand(obs: Any, traffic_signal) -> Any | None:
@@ -524,6 +630,25 @@ def _find_env_attr(env: Any, attr_name: str) -> Any:
     return None
 
 
+def _resolve_validation_sumo_base_env(env: Any) -> Any:
+    queue = [env]
+    visited = set()
+    fallback = env
+    while queue:
+        current = queue.pop(0)
+        if current is None or id(current) in visited:
+            continue
+        visited.add(id(current))
+        fallback = current
+        if hasattr(current, "traffic_signals") and hasattr(current, "sim_step"):
+            return current
+        for child_attr in ("base_env", "env", "aec_env", "unwrapped", "gym_env", "par_env", "venv"):
+            candidate = getattr(current, child_attr, None)
+            if candidate is not None and candidate is not current:
+                queue.append(candidate)
+    return fallback
+
+
 def _build_junction_diagnostic_row(
     eval_env,
     *,
@@ -533,10 +658,9 @@ def _build_junction_diagnostic_row(
     chosen_action: Any,
     ablated_action: Any = None,
     ablation_status: str = "disabled",
+    phase_lane_override: str = "",
 ) -> Dict[str, Any]:
-    from sumo_rl.experiments.rllib_runner import _resolve_sumo_base_env
-
-    base_env = _resolve_sumo_base_env(eval_env)
+    base_env = _resolve_validation_sumo_base_env(eval_env)
     traffic_signal = base_env.traffic_signals[junction_id]
     chosen_phase = int(np.asarray(chosen_action).reshape(-1)[0])
     ablated_phase = ""
@@ -545,7 +669,12 @@ def _build_junction_diagnostic_row(
     phase_vehicle_counts = [len(traffic_signal._get_unique_phase_vehicle_ids(lanes)) for lanes in traffic_signal.phase_lanes]
     phase_queue_counts = [int(value) for value in traffic_signal.get_phase_queued_counts()]
     phase_average_speeds = [float(value) for value in traffic_signal.get_phase_average_speeds()]
-    window_average_speeds, window_max_waiting_times = traffic_signal.get_windowed_phase_speed_wait_stats()
+    get_windowed_stats = getattr(traffic_signal, "get_windowed_phase_speed_wait_stats", None)
+    if callable(get_windowed_stats):
+        window_average_speeds, window_max_waiting_times = get_windowed_stats()
+    else:
+        window_average_speeds = list(phase_average_speeds)
+        window_max_waiting_times = [float(value) for value in traffic_signal.get_phase_max_waiting_times()]
     window_average_speeds = [float(value) for value in window_average_speeds]
     window_max_waiting_times = [float(value) for value in window_max_waiting_times]
     phase_total_waiting_times = _phase_total_waiting_times(traffic_signal)
@@ -562,6 +691,7 @@ def _build_junction_diagnostic_row(
         "sim_step": float(getattr(base_env, "sim_step", float("nan"))),
         "decision_step": int(decision_step),
         "junction_id": junction_id,
+        "phase_lane_override": phase_lane_override,
         "active_phase_before": int(getattr(traffic_signal, "green_phase", -1)),
         "chosen_phase": chosen_phase,
         "demand_ablation_status": ablation_status,
@@ -597,6 +727,8 @@ def _build_junction_diagnostic_row(
         row[f"phase_{phase_index}/window_avg_speed"] = window_average_speeds[phase_index] if phase_index < len(window_average_speeds) else ""
         row[f"phase_{phase_index}/total_wait"] = phase_total_waiting_times[phase_index] if phase_index < len(phase_total_waiting_times) else ""
         row[f"phase_{phase_index}/window_max_wait"] = window_max_waiting_times[phase_index] if phase_index < len(window_max_waiting_times) else ""
+    if junction_id == "gneJ143":
+        _add_gnej143_target_road_counts(row, traffic_signal)
     return row
 
 

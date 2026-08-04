@@ -167,6 +167,9 @@ class SumoEnvironment(gym.Env):
             route_file and ignore the actions given in the :meth:`step` method.
         sumo_warnings (bool): If true, it will print SUMO warnings.
         additional_sumo_cmd (str): Additional SUMO command line arguments.
+        ingolstadt7_gnej143_phase2_upstream (bool): If true, replace gneJ143 phase 2
+            lane accounting and local lane observations from 10425609#1_* to
+            10425609#0_* for the Ingolstadt7 diagnostic network.
         render_mode (str): Mode of rendering. Can be 'human' or 'rgb_array'. Default: None
     """
 
@@ -212,6 +215,7 @@ class SumoEnvironment(gym.Env):
         fixed_ts: bool = False,
         sumo_warnings: bool = True,
         additional_sumo_cmd: str | None = None,
+        ingolstadt7_gnej143_phase2_upstream: bool = False,
         render_mode: str | None = None,
     ) -> None:
         """Initialize the environment."""
@@ -254,6 +258,7 @@ class SumoEnvironment(gym.Env):
         self.fixed_ts = fixed_ts
         self.sumo_warnings = sumo_warnings
         self.additional_sumo_cmd = additional_sumo_cmd
+        self.ingolstadt7_gnej143_phase2_upstream = bool(ingolstadt7_gnej143_phase2_upstream)
         self.add_system_info = add_system_info
         self.add_per_agent_info = add_per_agent_info
         self.tripinfo_output_name = tripinfo_output_name
@@ -326,6 +331,40 @@ class SumoEnvironment(gym.Env):
             )
             for ts in self.ts_ids
         }
+        if self.ingolstadt7_gnej143_phase2_upstream:
+            self._apply_ingolstadt7_gnej143_phase2_upstream_override(conn)
+
+    def _apply_ingolstadt7_gnej143_phase2_upstream_override(self, conn) -> None:
+        traffic_signal = self.traffic_signals.get("gneJ143")
+        if traffic_signal is None:
+            return
+
+        target_lanes = ["10425609#0_1", "10425609#0_2", "10425609#0_3"]
+        known_lanes = {str(lane_id) for lane_id in conn.lane.getIDList()}
+        missing_lanes = [lane for lane in target_lanes if lane not in known_lanes]
+        if missing_lanes:
+            raise ValueError(
+                f"Cannot apply Ingolstadt7 gneJ143 phase-2 upstream override; unknown SUMO lanes: {missing_lanes}"
+            )
+
+        if len(getattr(traffic_signal, "phase_lanes", []) or []) <= 2:
+            return
+
+        updated_phase_lanes = [list(lanes) for lanes in traffic_signal.phase_lanes]
+        updated_phase_lanes[2] = target_lanes
+        traffic_signal.phase_lanes = updated_phase_lanes
+
+        lane_replacements = {
+            "10425609#1_1": "10425609#0_1",
+            "10425609#1_2": "10425609#0_2",
+            "10425609#1_3": "10425609#0_3",
+        }
+        traffic_signal.lanes = list(dict.fromkeys(lane_replacements.get(lane, lane) for lane in traffic_signal.lanes))
+        for lane in target_lanes:
+            traffic_signal.lanes_length[lane] = conn.lane.getLength(lane)
+        traffic_signal.observation_space = traffic_signal.observation_fn.observation_space()
+        traffic_signal._phase_stats_cache_step = None
+        traffic_signal._phase_stats_cache = None
 
     @staticmethod
     def _sumo_cmd_has_option(sumo_cmd: list[str], *options: str) -> bool:
