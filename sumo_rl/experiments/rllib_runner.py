@@ -2104,6 +2104,101 @@ def _apply_cpu_thread_limit(num_threads: Optional[int]) -> Dict[str, str]:
     return env_vars
 
 
+def _init_rllib_ray_runtime(
+    cfg: DictConfig,
+    ray_module: Any,
+    *,
+    ray_num_gpus_override: Any = None,
+) -> Dict[str, Any]:
+    params = _plain_dict(getattr(cfg.algorithm, "params", {}) or {})
+    runtime_params = _rllib_runtime_params(cfg)
+    ray_num_cpus = _optional_positive_int(runtime_params.get("ray_num_cpus", 2), setting_name="ray_num_cpus")
+    native_num_threads = _optional_positive_int(
+        runtime_params.get("native_num_threads", 1),
+        setting_name="native_num_threads",
+    )
+    ray_address = _ray_address(runtime_params.get("ray_address", os.environ.get("RAY_ADDRESS")))
+    cpu_thread_env = _apply_cpu_thread_limit(native_num_threads)
+    cuda_env = _cuda_visible_devices_env(runtime_params.get("cuda_visible_devices"))
+    for env_var, value in cuda_env.items():
+        os.environ[env_var] = value
+    ray_num_gpus_source = (
+        ray_num_gpus_override
+        if ray_num_gpus_override is not None
+        else params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto"))
+    )
+    ray_num_gpus = _resolve_num_gpus(ray_num_gpus_source)
+    runtime_env_vars = dict(cpu_thread_env)
+    runtime_env_vars.update(cuda_env)
+    local_ray_startup = not _is_existing_ray_address(ray_address)
+    if local_ray_startup:
+        _clear_ray_auto_discovery_state(ray_module)
+    ray_init_kwargs: Dict[str, Any] = {
+        "ignore_reinit_error": True,
+        "log_to_driver": False,
+    }
+    if local_ray_startup:
+        ray_init_kwargs["address"] = "local"
+    elif ray_address is not None:
+        ray_init_kwargs["address"] = ray_address
+    if local_ray_startup:
+        ray_init_kwargs["include_dashboard"] = False
+        ray_init_kwargs["num_gpus"] = ray_num_gpus
+        if ray_num_cpus is not None:
+            ray_init_kwargs["num_cpus"] = ray_num_cpus
+    if runtime_env_vars:
+        ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
+    connected_to_existing_cluster = not local_ray_startup
+    try:
+        ray_module.init(**ray_init_kwargs)
+    except ConnectionError:
+        if not _is_auto_ray_address(ray_address):
+            raise
+        ray_module.shutdown()
+        _clear_ray_auto_discovery_state(ray_module)
+        fallback_ray_init_kwargs: Dict[str, Any] = {
+            "address": "local",
+            "ignore_reinit_error": True,
+            "log_to_driver": False,
+            "include_dashboard": False,
+            "num_gpus": ray_num_gpus,
+        }
+        if ray_num_cpus is not None:
+            fallback_ray_init_kwargs["num_cpus"] = ray_num_cpus
+        if runtime_env_vars:
+            fallback_ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
+        print("RLlib Ray connection: address=auto but no running Ray cluster was found; starting a local Ray instance.")
+        ray_module.init(**fallback_ray_init_kwargs)
+        ray_address = None
+        connected_to_existing_cluster = False
+    print(
+        "RLlib CPU allocation: "
+        f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
+        f"native_num_threads={native_num_threads if native_num_threads is not None else 'preserve-env'}."
+    )
+    if connected_to_existing_cluster:
+        print(
+            "RLlib Ray connection: "
+            f"address={ray_address}; using existing cluster resources "
+            "instead of local ray_num_cpus/ray_num_gpus startup values."
+        )
+    else:
+        print(f"RLlib Ray connection: address={ray_address or 'local'}; local Ray instance is managed by this process.")
+    _print_ray_resource_summary(ray_module)
+    if cuda_env:
+        print(f"RLlib CUDA_VISIBLE_DEVICES={cuda_env['CUDA_VISIBLE_DEVICES']}.")
+    return {
+        "ray_num_cpus": ray_num_cpus,
+        "native_num_threads": native_num_threads,
+        "ray_num_gpus": ray_num_gpus,
+        "ray_num_gpus_source": ray_num_gpus_source,
+        "ray_address": ray_address,
+        "connected_to_existing_cluster": connected_to_existing_cluster,
+        "runtime_env_vars": runtime_env_vars,
+        "cuda_visible_devices": cuda_env.get("CUDA_VISIBLE_DEVICES", ""),
+    }
+
+
 def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
     requested_algorithm_kind = str(getattr(cfg.algorithm, "kind", "") or "").strip()
     if requested_algorithm_kind not in SUPPORTED_RLLIB_ALGORITHMS:
@@ -2125,78 +2220,7 @@ def train_rllib(cfg: DictConfig) -> Dict[str, Any]:
 
     import ray
 
-    params = _plain_dict(getattr(cfg.algorithm, "params", {}) or {})
-    runtime_params = _rllib_runtime_params(cfg)
-    ray_num_cpus = _optional_positive_int(runtime_params.get("ray_num_cpus", 2), setting_name="ray_num_cpus")
-    native_num_threads = _optional_positive_int(
-        runtime_params.get("native_num_threads", 1),
-        setting_name="native_num_threads",
-    )
-    ray_address = _ray_address(runtime_params.get("ray_address", os.environ.get("RAY_ADDRESS")))
-    cpu_thread_env = _apply_cpu_thread_limit(native_num_threads)
-    cuda_env = _cuda_visible_devices_env(runtime_params.get("cuda_visible_devices"))
-    for env_var, value in cuda_env.items():
-        os.environ[env_var] = value
-    ray_num_gpus = _resolve_num_gpus(params.get("ray_num_gpus", params.get("num_gpus_per_learner", "auto")))
-    runtime_env_vars = dict(cpu_thread_env)
-    runtime_env_vars.update(cuda_env)
-    local_ray_startup = not _is_existing_ray_address(ray_address)
-    if local_ray_startup:
-        _clear_ray_auto_discovery_state(ray)
-    ray_init_kwargs: Dict[str, Any] = {
-        "ignore_reinit_error": True,
-        "log_to_driver": False,
-    }
-    if local_ray_startup:
-        ray_init_kwargs["address"] = "local"
-    elif ray_address is not None:
-        ray_init_kwargs["address"] = ray_address
-    if local_ray_startup:
-        ray_init_kwargs["include_dashboard"] = False
-        ray_init_kwargs["num_gpus"] = ray_num_gpus
-        if ray_num_cpus is not None:
-            ray_init_kwargs["num_cpus"] = ray_num_cpus
-    if runtime_env_vars:
-        ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
-    connected_to_existing_cluster = not local_ray_startup
-    try:
-        ray.init(**ray_init_kwargs)
-    except ConnectionError:
-        if not _is_auto_ray_address(ray_address):
-            raise
-        ray.shutdown()
-        _clear_ray_auto_discovery_state(ray)
-        fallback_ray_init_kwargs: Dict[str, Any] = {
-            "address": "local",
-            "ignore_reinit_error": True,
-            "log_to_driver": False,
-            "include_dashboard": False,
-            "num_gpus": ray_num_gpus,
-        }
-        if ray_num_cpus is not None:
-            fallback_ray_init_kwargs["num_cpus"] = ray_num_cpus
-        if runtime_env_vars:
-            fallback_ray_init_kwargs["runtime_env"] = {"env_vars": runtime_env_vars}
-        print("RLlib Ray connection: address=auto but no running Ray cluster was found; starting a local Ray instance.")
-        ray.init(**fallback_ray_init_kwargs)
-        ray_address = None
-        connected_to_existing_cluster = False
-    print(
-        "RLlib CPU allocation: "
-        f"ray_num_cpus={ray_num_cpus if ray_num_cpus is not None else 'auto'}, "
-        f"native_num_threads={native_num_threads if native_num_threads is not None else 'preserve-env'}."
-    )
-    if connected_to_existing_cluster:
-        print(
-            "RLlib Ray connection: "
-            f"address={ray_address}; using existing cluster resources "
-            "instead of local ray_num_cpus/ray_num_gpus startup values."
-        )
-    else:
-        print(f"RLlib Ray connection: address={ray_address or 'local'}; local Ray instance is managed by this process.")
-    _print_ray_resource_summary(ray)
-    if cuda_env:
-        print(f"RLlib CUDA_VISIBLE_DEVICES={cuda_env['CUDA_VISIBLE_DEVICES']}.")
+    _init_rllib_ray_runtime(cfg, ray)
     algo = None
     final_summary: Dict[str, Any] = {}
     best_validation_state = _init_best_validation_checkpoint_state(run_dir, algorithm_kind, logging_cfg)

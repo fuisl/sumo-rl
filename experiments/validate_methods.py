@@ -52,6 +52,49 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--frame-skip", type=int, default=1)
     parser.add_argument("--use-gui", action="store_true")
+    parser.add_argument("--diagnostic-junction", default=None, help="Traffic signal id to trace at each RLlib decision step, e.g. gnej143.")
+    parser.add_argument(
+        "--diagnostic-max-steps",
+        type=int,
+        default=None,
+        help="Optional maximum number of diagnostic rows to keep per seed.",
+    )
+    parser.add_argument(
+        "--diagnostic-demand-ablation",
+        choices=("none", "zero"),
+        default="zero",
+        help="For diagnostic-junction, also recompute the policy action after masking density/queue-like demand features.",
+    )
+    parser.add_argument(
+        "--max-decision-steps",
+        type=int,
+        default=None,
+        help="Optional early stop after this many validation decision steps. Useful for diagnostics.",
+    )
+    parser.add_argument(
+        "--progress-log-steps",
+        type=int,
+        default=50,
+        help="Print validation progress every N decision steps. Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--ray-num-gpus",
+        type=float,
+        default=None,
+        help="Optional override for GPUs exposed to local Ray during RLlib validation. Defaults to the saved config.",
+    )
+    parser.add_argument(
+        "--ray-num-cpus",
+        type=int,
+        default=None,
+        help="Optional override for CPUs exposed to local Ray during RLlib validation. Defaults to the saved config.",
+    )
+    parser.add_argument(
+        "--native-num-threads",
+        type=int,
+        default=None,
+        help="Optional override for native Torch/NumPy/BLAS thread caps during RLlib validation. Defaults to the saved config.",
+    )
     return parser.parse_args()
 
 
@@ -152,6 +195,12 @@ def _prepare_cfg_for_seed(cfg, *, seed: int, seed_dir: Path, args: argparse.Name
     prepared.env.kwargs.statistic_output_name = str(seed_dir / "statistics" / "statistics")
     prepared.env.kwargs.keep_statistic_output = True
     prepared.env.kwargs.use_gui = bool(args.use_gui or args.record_seed == seed)
+    if getattr(prepared, "resources", None) is None:
+        prepared.resources = OmegaConf.create({})
+    if args.ray_num_cpus is not None:
+        prepared.resources.ray_num_cpus = int(args.ray_num_cpus)
+    if args.native_num_threads is not None:
+        prepared.resources.native_num_threads = int(args.native_num_threads)
     prepared.experiment.eval_seeds = [int(seed)]
     prepared.experiment.eval_episodes = 1
     prepared.experiment.seed = int(seed)
@@ -260,6 +309,11 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
     )
 
     obs, _ = eval_env.reset(seed=seed)
+    diagnostic_junction = str(record_state.get("diagnostic_junction") or "")
+    diagnostic_max_steps = record_state.get("diagnostic_max_steps")
+    max_decision_steps = record_state.get("max_decision_steps")
+    progress_log_steps = int(record_state.get("progress_log_steps") or 0)
+    diagnostic_rows: list[Dict[str, Any]] = []
     action_traces: Dict[str, list[int]] = {}
     action_space_sizes: Dict[str, int] = {}
     phase_queue_traces: Dict[str, list[Dict[str, Any]]] = {}
@@ -269,10 +323,17 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
     for agent_id in agent_ids:
         action_traces[agent_id] = []
         phase_queue_traces[agent_id] = []
+    if diagnostic_junction and diagnostic_junction not in agent_ids:
+        raise KeyError(
+            f"Diagnostic junction {diagnostic_junction!r} is not an active agent. "
+            f"Available agents: {', '.join(agent_ids)}"
+        )
     done = False
     decision_steps = 0
     while not done:
         decision_steps += 1
+        if progress_log_steps > 0 and (decision_steps == 1 or decision_steps % progress_log_steps == 0):
+            print(f"[seed {seed}] validation decision step {decision_steps}", flush=True)
         action_start = time.perf_counter()
         actions = {}
         for agent_id, agent_obs in obs.items():
@@ -284,6 +345,33 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
                 policy_id=_policy_id_for_agent(str(agent_id), policy_mode),
                 algorithm_kind=algorithm_kind,
             )
+        if diagnostic_junction and diagnostic_junction in actions:
+            if diagnostic_max_steps is None or len(diagnostic_rows) < int(diagnostic_max_steps):
+                ablated_action = None
+                ablation_status = "disabled"
+                if str(record_state.get("diagnostic_demand_ablation") or "none") != "none":
+                    ablated_obs = _ablate_demand_observation(eval_env, diagnostic_junction, obs[diagnostic_junction])
+                    if ablated_obs is None:
+                        ablation_status = "unsupported_observation"
+                    else:
+                        ablated_action = _compute_single_action(
+                            algo,
+                            ablated_obs,
+                            policy_id=_policy_id_for_agent(str(diagnostic_junction), policy_mode),
+                            algorithm_kind=algorithm_kind,
+                        )
+                        ablation_status = "ok"
+                diagnostic_rows.append(
+                    _build_junction_diagnostic_row(
+                        eval_env,
+                        junction_id=diagnostic_junction,
+                        decision_step=decision_steps,
+                        seed=seed,
+                        chosen_action=actions[diagnostic_junction],
+                        ablated_action=ablated_action,
+                        ablation_status=ablation_status,
+                    )
+                )
         action_latency_seconds.append(time.perf_counter() - action_start)
         for agent_id, action in actions.items():
             action_value = int(np.asarray(action).reshape(-1)[0])
@@ -291,6 +379,11 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
             action_space_sizes[agent_id] = max(int(action_space_sizes.get(agent_id, 0)), action_value + 1)
         obs, rewards, terminations, truncations, _ = eval_env.step(actions)
         total_reward += float(sum(float(value) for value in rewards.values()))
+        if diagnostic_rows and diagnostic_rows[-1].get("junction_id") == diagnostic_junction:
+            row_decision_step = int(float(diagnostic_rows[-1].get("decision_step", -1)))
+            if row_decision_step == decision_steps:
+                reward_value = rewards.get(diagnostic_junction)
+                diagnostic_rows[-1]["realized_reward"] = "" if reward_value is None else float(reward_value)
         snapshot = _collect_phase_queue_snapshot(eval_env, agent_ids)
         for agent_id, item in snapshot.items():
             phase_queue_traces[agent_id].append(
@@ -308,7 +401,203 @@ def _run_rllib_seed_episode(algo, eval_env, *, seed: int, algorithm_kind: str, p
             or all(bool(terminations.get(agent_id, False)) for agent_id in agent_ids)
             or all(bool(truncations.get(agent_id, False)) for agent_id in agent_ids)
         )
-    return total_reward, action_traces, action_space_sizes, phase_queue_traces, action_latency_seconds, decision_steps
+        if max_decision_steps is not None and decision_steps >= int(max_decision_steps):
+            print(f"[seed {seed}] stopping early after {decision_steps} validation decision steps", flush=True)
+            done = True
+    return total_reward, action_traces, action_space_sizes, phase_queue_traces, action_latency_seconds, decision_steps, diagnostic_rows
+
+
+def _argmax(values: list[float]) -> int | None:
+    finite_items = [(index, float(value)) for index, value in enumerate(values) if np.isfinite(float(value))]
+    if not finite_items:
+        return None
+    return max(finite_items, key=lambda item: item[1])[0]
+
+
+def _argmin(values: list[float]) -> int | None:
+    finite_items = [(index, float(value)) for index, value in enumerate(values) if np.isfinite(float(value))]
+    if not finite_items:
+        return None
+    return min(finite_items, key=lambda item: item[1])[0]
+
+
+def _phase_total_waiting_times(traffic_signal) -> list[float]:
+    totals = []
+    for phase_lanes in getattr(traffic_signal, "phase_lanes", []) or []:
+        total_wait = 0.0
+        for veh in traffic_signal._get_unique_phase_vehicle_ids(phase_lanes):
+            total_wait += float(traffic_signal.sumo.vehicle.getWaitingTime(veh))
+        totals.append(total_wait)
+    return totals
+
+
+def _ablate_default_vector_demand(obs: Any, traffic_signal) -> Any | None:
+    array = np.asarray(obs)
+    if array.ndim != 1:
+        return None
+    num_phases = int(getattr(traffic_signal, "num_green_phases", 0) or 0)
+    lane_count = len(getattr(traffic_signal, "lanes", []) or [])
+    demand_start = num_phases + 1
+    demand_width = 2 * lane_count
+    if num_phases <= 0 or demand_width <= 0 or array.shape[0] < demand_start + demand_width:
+        return None
+    ablated = np.array(array, copy=True)
+    ablated[demand_start : demand_start + demand_width] = 0.0
+    return ablated
+
+
+def _ablate_demand_observation(eval_env, junction_id: str, agent_obs: Any) -> Any | None:
+    from sumo_rl.experiments.rllib_runner import _resolve_sumo_base_env
+
+    base_env = _resolve_sumo_base_env(eval_env)
+    traffic_signal = base_env.traffic_signals[junction_id]
+    vector_ablation = _ablate_default_vector_demand(agent_obs, traffic_signal)
+    if vector_ablation is not None:
+        return vector_ablation
+    graph_history_ablation = _ablate_graph_history_demand(eval_env, junction_id, agent_obs)
+    if graph_history_ablation is not None:
+        return graph_history_ablation
+    if not isinstance(agent_obs, dict) or "node_features" not in agent_obs:
+        return None
+
+    node_features = np.asarray(agent_obs["node_features"])
+    if node_features.ndim != 2:
+        return None
+    agent_to_index = getattr(eval_env, "_agent_to_index", None)
+    if not isinstance(agent_to_index, dict):
+        agent_to_index = getattr(getattr(eval_env, "env", None), "_agent_to_index", None)
+    node_index = agent_to_index.get(junction_id) if isinstance(agent_to_index, dict) else None
+    if node_index is None or int(node_index) >= node_features.shape[0]:
+        ego_index = agent_obs.get("ego_index")
+        try:
+            node_index = int(np.asarray(ego_index).reshape(-1)[0])
+        except (TypeError, ValueError, IndexError):
+            return None
+
+    ablated = {key: np.array(value, copy=True) if isinstance(value, np.ndarray) else value for key, value in agent_obs.items()}
+    node_features_copy = np.array(node_features, copy=True)
+    local_ablation = _ablate_default_vector_demand(node_features_copy[int(node_index)], traffic_signal)
+    if local_ablation is None:
+        return None
+    node_features_copy[int(node_index)] = local_ablation
+    ablated["node_features"] = node_features_copy
+    return ablated
+
+
+def _ablate_graph_history_demand(eval_env, junction_id: str, agent_obs: Any) -> Any | None:
+    array = np.asarray(agent_obs)
+    if array.ndim != 3:
+        return None
+    graph = _find_env_attr(eval_env, "graph")
+    ts_index = getattr(graph, "ts_index", None)
+    node_index = ts_index.get(junction_id) if isinstance(ts_index, dict) else None
+    if node_index is None or int(node_index) >= array.shape[1]:
+        return None
+    density_offset = getattr(graph, "density_offset", None)
+    queue_offset = getattr(graph, "queue_offset", None)
+    max_lanes = getattr(graph, "max_lanes", None)
+    if density_offset is None or queue_offset is None or max_lanes is None:
+        return None
+    ablated = np.array(array, copy=True)
+    node_index = int(node_index)
+    max_lanes = int(max_lanes)
+    ablated[:, node_index, int(density_offset) : int(density_offset) + max_lanes] = 0.0
+    ablated[:, node_index, int(queue_offset) : int(queue_offset) + max_lanes] = 0.0
+    return ablated
+
+
+def _find_env_attr(env: Any, attr_name: str) -> Any:
+    queue = [env]
+    visited = set()
+    while queue:
+        current = queue.pop(0)
+        if current is None or id(current) in visited:
+            continue
+        visited.add(id(current))
+        value = getattr(current, attr_name, None)
+        if value is not None:
+            return value
+        for child_attr in ("base_env", "env", "aec_env", "unwrapped", "gym_env", "par_env", "venv"):
+            candidate = getattr(current, child_attr, None)
+            if candidate is not None and candidate is not current:
+                queue.append(candidate)
+    return None
+
+
+def _build_junction_diagnostic_row(
+    eval_env,
+    *,
+    junction_id: str,
+    decision_step: int,
+    seed: int,
+    chosen_action: Any,
+    ablated_action: Any = None,
+    ablation_status: str = "disabled",
+) -> Dict[str, Any]:
+    from sumo_rl.experiments.rllib_runner import _resolve_sumo_base_env
+
+    base_env = _resolve_sumo_base_env(eval_env)
+    traffic_signal = base_env.traffic_signals[junction_id]
+    chosen_phase = int(np.asarray(chosen_action).reshape(-1)[0])
+    ablated_phase = ""
+    if ablated_action is not None:
+        ablated_phase = int(np.asarray(ablated_action).reshape(-1)[0])
+    phase_vehicle_counts = [len(traffic_signal._get_unique_phase_vehicle_ids(lanes)) for lanes in traffic_signal.phase_lanes]
+    phase_queue_counts = [int(value) for value in traffic_signal.get_phase_queued_counts()]
+    phase_average_speeds = [float(value) for value in traffic_signal.get_phase_average_speeds()]
+    window_average_speeds, window_max_waiting_times = traffic_signal.get_windowed_phase_speed_wait_stats()
+    window_average_speeds = [float(value) for value in window_average_speeds]
+    window_max_waiting_times = [float(value) for value in window_max_waiting_times]
+    phase_total_waiting_times = _phase_total_waiting_times(traffic_signal)
+
+    argmax_count = _argmax([float(value) for value in phase_vehicle_counts])
+    argmax_queue = _argmax([float(value) for value in phase_queue_counts])
+    argmin_current_speed = _argmin(phase_average_speeds)
+    argmin_window_speed = _argmin(window_average_speeds)
+    argmax_total_wait = _argmax(phase_total_waiting_times)
+    argmax_window_max_wait = _argmax(window_max_waiting_times)
+
+    row: Dict[str, Any] = {
+        "seed": int(seed),
+        "sim_step": float(getattr(base_env, "sim_step", float("nan"))),
+        "decision_step": int(decision_step),
+        "junction_id": junction_id,
+        "active_phase_before": int(getattr(traffic_signal, "green_phase", -1)),
+        "chosen_phase": chosen_phase,
+        "demand_ablation_status": ablation_status,
+        "demand_ablated_phase": ablated_phase,
+        "demand_ablation_changed_action": "" if ablated_phase == "" else chosen_phase != ablated_phase,
+        "argmax_vehicle_count": "" if argmax_count is None else int(argmax_count),
+        "argmax_queue_count": "" if argmax_queue is None else int(argmax_queue),
+        "argmin_current_avg_speed": "" if argmin_current_speed is None else int(argmin_current_speed),
+        "argmin_window_avg_speed": "" if argmin_window_speed is None else int(argmin_window_speed),
+        "argmax_total_wait": "" if argmax_total_wait is None else int(argmax_total_wait),
+        "argmax_window_max_wait": "" if argmax_window_max_wait is None else int(argmax_window_max_wait),
+        "chosen_is_argmax_vehicle_count": chosen_phase == argmax_count,
+        "chosen_is_argmax_queue_count": chosen_phase == argmax_queue,
+        "chosen_is_argmin_current_avg_speed": chosen_phase == argmin_current_speed,
+        "chosen_is_argmin_window_avg_speed": chosen_phase == argmin_window_speed,
+        "chosen_is_argmax_total_wait": chosen_phase == argmax_total_wait,
+        "chosen_is_argmax_window_max_wait": chosen_phase == argmax_window_max_wait,
+        "phase_vehicle_counts": json.dumps(phase_vehicle_counts),
+        "phase_queue_counts": json.dumps(phase_queue_counts),
+        "phase_current_avg_speeds": json.dumps(phase_average_speeds),
+        "phase_window_avg_speeds": json.dumps(window_average_speeds),
+        "phase_total_waiting_times": json.dumps(phase_total_waiting_times),
+        "phase_window_max_waiting_times": json.dumps(window_max_waiting_times),
+        "reward_name": str(getattr(traffic_signal, "reward_fn", "")),
+        "reward_nsw_window_seconds": int(getattr(traffic_signal, "reward_nsw_window_seconds", 0)),
+        "reward_nash_epsilon": float(getattr(traffic_signal, "reward_nash_epsilon", float("nan"))),
+        "realized_reward": "",
+    }
+    for phase_index in range(max(len(phase_vehicle_counts), len(window_average_speeds))):
+        row[f"phase_{phase_index}/vehicle_count"] = phase_vehicle_counts[phase_index] if phase_index < len(phase_vehicle_counts) else ""
+        row[f"phase_{phase_index}/queue_count"] = phase_queue_counts[phase_index] if phase_index < len(phase_queue_counts) else ""
+        row[f"phase_{phase_index}/current_avg_speed"] = phase_average_speeds[phase_index] if phase_index < len(phase_average_speeds) else ""
+        row[f"phase_{phase_index}/window_avg_speed"] = window_average_speeds[phase_index] if phase_index < len(window_average_speeds) else ""
+        row[f"phase_{phase_index}/total_wait"] = phase_total_waiting_times[phase_index] if phase_index < len(phase_total_waiting_times) else ""
+        row[f"phase_{phase_index}/window_max_wait"] = window_max_waiting_times[phase_index] if phase_index < len(window_max_waiting_times) else ""
+    return row
 
 
 def _run_static_seed_episode(env, *, policy, record_state: Dict[str, Any]):
@@ -380,6 +669,11 @@ def _run_seed_worker(payload: Dict[str, Any]) -> Dict[str, Any]:
         "video_path": str((record_output_dir / f"seed_{seed}.mp4").resolve()),
         "screenshot_path": Path(temp_dir_ctx.name) / "frame.png",
         "frames_written": 0,
+        "diagnostic_junction": payload.get("diagnostic_junction") or "",
+        "diagnostic_max_steps": payload.get("diagnostic_max_steps"),
+        "diagnostic_demand_ablation": payload.get("diagnostic_demand_ablation") or "none",
+        "max_decision_steps": payload.get("max_decision_steps"),
+        "progress_log_steps": payload.get("progress_log_steps"),
     }
     try:
         if payload["controller"] == "rllib":
@@ -408,6 +702,7 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
     from sumo_rl.experiments.rllib_runner import (
         _build_algorithm_config,
         _build_eval_env,
+        _init_rllib_ray_runtime,
         _resolve_sumo_base_env,
         _restore_checkpoint,
         _sync_env_runner_weights_for_evaluation,
@@ -419,7 +714,7 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
     algorithm_kind = str(cfg.algorithm.kind)
     checkpoint_path = Path(payload["checkpoint_path"]).resolve()
     ray_init_start = time.perf_counter()
-    ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False, num_gpus=0)
+    ray_runtime = _init_rllib_ray_runtime(cfg, ray, ray_num_gpus_override=payload.get("ray_num_gpus"))
     ray_init_seconds = time.perf_counter() - ray_init_start
     algo = None
     eval_env = None
@@ -437,7 +732,15 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
         eval_env = _build_eval_env(cfg, Path(payload["run_dir"]).resolve(), payload["seed"], algorithm_kind=algorithm_kind, policy_mode=mode)
         env_build_seconds = time.perf_counter() - env_build_start
         evaluation_start = time.perf_counter()
-        episode_reward, action_traces, action_space_sizes, phase_queue_traces, action_latency_seconds, decision_steps = _run_rllib_seed_episode(
+        (
+            episode_reward,
+            action_traces,
+            action_space_sizes,
+            phase_queue_traces,
+            action_latency_seconds,
+            decision_steps,
+            diagnostic_rows,
+        ) = _run_rllib_seed_episode(
             algo,
             eval_env,
             seed=payload["seed"],
@@ -470,11 +773,14 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
         resource_timings = {
             "validation_wall_clock_seconds": time.perf_counter() - overall_start,
             "ray_init_seconds": ray_init_seconds,
+            "ray_num_cpus": ray_runtime.get("ray_num_cpus"),
+            "ray_num_gpus": ray_runtime.get("ray_num_gpus"),
             "checkpoint_restore_seconds": checkpoint_restore_seconds,
             "env_build_seconds": env_build_seconds,
             "evaluation_seconds": evaluation_seconds,
             "video_record_seconds": evaluation_seconds if record_state.get("enabled") else 0.0,
             "decision_steps": decision_steps,
+            "early_stop_decision_steps": payload.get("max_decision_steps"),
             "action_latency_seconds": action_latency_seconds,
             "control_interval_seconds": decision_interval_seconds(cfg),
         }
@@ -495,6 +801,13 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
         row["statistic_output_path"] = str(statistic_output_path) if statistic_output_path is not None else ""
         if record_state.get("enabled"):
             row["record/video_path"] = record_state["video_path"]
+        diagnostic_path = ""
+        if diagnostic_rows:
+            diagnostic_dir = seed_dir / "diagnostics"
+            diagnostic_path = str((diagnostic_dir / f"{payload.get('diagnostic_junction')}_decisions.csv").resolve())
+            _save_csv(Path(diagnostic_path), diagnostic_rows)
+            _save_json(diagnostic_dir / f"{payload.get('diagnostic_junction')}_decisions.json", diagnostic_rows)
+            row["diagnostic/decision_trace_path"] = diagnostic_path
         return {
             "seed": payload["seed"],
             "status": "ok",
@@ -504,6 +817,8 @@ def _run_rllib_seed_worker(payload: Dict[str, Any], seed_dir: Path, record_state
                 "action_space_sizes": action_space_sizes,
                 "phase_queue_traces": phase_queue_traces,
                 "tripinfo_series": _collect_tripinfo_series(tripinfo_path),
+                "junction_diagnostics": diagnostic_rows,
+                "junction_diagnostics_path": diagnostic_path,
             },
         }
     finally:
@@ -755,6 +1070,12 @@ def main() -> None:
                 "width": int(args.width),
                 "height": int(args.height),
                 "disable_completed_view": bool(args.disable_completed_view),
+                "diagnostic_junction": str(args.diagnostic_junction or ""),
+                "diagnostic_max_steps": args.diagnostic_max_steps,
+                "diagnostic_demand_ablation": str(args.diagnostic_demand_ablation or "none"),
+                "max_decision_steps": args.max_decision_steps,
+                "progress_log_steps": args.progress_log_steps,
+                "ray_num_gpus": None if args.ray_num_gpus is None else float(args.ray_num_gpus),
                 "args": vars(args),
             }
         )
@@ -794,6 +1115,17 @@ def main() -> None:
     _save_json(output_dir / "raw_results.json", results)
     _save_csv(output_dir / "seed_rows.csv", rows)
     _save_csv(output_dir / "summary.csv", [summary_row])
+    diagnostic_rows = [
+        row
+        for result in results
+        if result.get("status") == "ok"
+        for row in result.get("artifacts", {}).get("junction_diagnostics", [])
+    ]
+    if diagnostic_rows:
+        diagnostic_dir = output_dir / "diagnostics"
+        diagnostic_label = str(args.diagnostic_junction or "junction")
+        _save_json(diagnostic_dir / f"{diagnostic_label}_decisions_all_seeds.json", diagnostic_rows)
+        _save_csv(diagnostic_dir / f"{diagnostic_label}_decisions_all_seeds.csv", diagnostic_rows)
     if successful:
         _save_validation_plots(output_dir, cfg, successful, results)
     if any(result.get("status") != "ok" for result in results):

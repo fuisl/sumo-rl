@@ -123,3 +123,35 @@ resco_cologne3  PPO        weighted-nash-average-speed  4     6G      <fill>  a1
 ```
 
 Use this record to pick resources for the next run instead of guessing.
+
+## 6. Run A Checkpoint Validation Diagnostic
+
+Use the validation diagnostic Slurm script to inspect one junction from a saved
+RLlib run without keeping an SSH terminal busy. `RUN_DIR` is required and should
+point to the Hydra run directory that contains `.hydra/` and `checkpoints/`.
+
+```bash
+bash scripts/submit_slurm.sh scripts/slurm_validate_ingolstadt7_diagnostic.sh \
+  --job-name=sumo-rl-validate-gneJ143 \
+  --cpus-per-task=4 \
+  --mem=8G \
+  --gres=gpu:a100_2g.10gb:1 \
+  --time=00:30:00 \
+  RUN_DIR=outputs/rllib/2026-08-04_03-47-17 \
+  SEED=0 \
+  JUNCTION=gneJ143 \
+  MAX_DECISION_STEPS=30 \
+  PROGRESS_LOG_STEPS=1 \
+  RAY_NUM_GPUS=1 \
+  RAY_NUM_CPUS=4 \
+  NATIVE_NUM_THREADS=1 \
+  DIAGNOSTIC_DEMAND_ABLATION=none
+```
+
+The diagnostic writes the usual validation outputs plus per-junction traces
+under the validation run directory:
+
+```text
+seed_<seed>/diagnostics/<junction>_decisions.csv
+diagnostics/<junction>_decisions_all_seeds.csv
+```
